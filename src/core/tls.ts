@@ -38,7 +38,7 @@ import { X509Certificate } from 'node:crypto';
 import * as config from '../lib/config';
 import { ValidationError } from '../lib/errors';
 import { joinPath } from '../lib/home';
-import { socketErrorText } from '../lib/format';
+import { isTruthy, socketErrorText } from '../lib/format';
 import { capture } from '../seams/exec';
 
 /** The edge's Traefik, which is the multi-instance preset's too (`config.TRAEFIK_TAG`). */
@@ -802,6 +802,55 @@ export async function verify(
       ? await certificateAccepted(host, port, timeout, servername, cafile)
       : out.trusted;
   return out;
+}
+
+/**
+ * What THIS host really serves for a workspace's name, asked where its bytes actually go.
+ *
+ * ONE PROBE FOR BOTH FRONT-ENDS. `tls-status` learnt both rules below in 2.1.1 and the GUI's
+ * Check TLS, which asked on its own, learnt neither: it reported a CDN's certificate as a
+ * Kubernetes workspace's, and the cluster's placeholder as a Docker workspace's.
+ */
+export async function probeServed(
+  host: string,
+  port: number,
+  extra: Record<string, unknown>,
+  // `ask` is `verify` as the caller reaches it, so a stand-in for this module's `verify` is
+  // the one asked: a call from in here would bypass it.
+  { cafile = '', ask = verify }: { cafile?: string; ask?: typeof verify } = {},
+): Promise<TlsReport> {
+  const withCa = cafile === '' ? {} : { cafile };
+  // On a Kubernetes workspace this box is not in the path at all: the certificate is a
+  // Secret in the cluster and the cluster's ingress holds :443. Probing loopback there
+  // reaches whatever else is listening here, which reported a healthy EKS workspace as
+  // broken. So the NAME is what gets probed when TLS terminates elsewhere.
+  if (String(extra.tls_terminates ?? '') === 'cluster') {
+    // THE ORIGIN, when this box's edge passes the name through to the cluster: the name
+    // itself may be answered by a CDN in front, and behind Cloudflare this reported its
+    // certificate (Google Trust Services WE1) as the workspace's, exit 0, while the cluster
+    // served its ingress default -- which hid a certificate that never issued. The recorded
+    // ingress endpoint, asked with the name as SNI, is what the edge hands the bytes to.
+    const origin = /^(.+):(\d+)$/u.exec(String(extra.ingress_endpoint ?? ''));
+    if (isTruthy(extra.edge) && origin !== null) {
+      return await ask(String(origin[1]), { port: Number(origin[2]), sni: host, ...withCa });
+    }
+    return await ask(host, { port, ...withCa });
+  }
+  // BOTH LOOPBACK FAMILIES, because one of them may not be ours: k3s's ServiceLB DNATs
+  // IPv4 :443 into the cluster, so 127.0.0.1 answered `CN = TRAEFIK DEFAULT CERT` while
+  // [::1] -- the houston edge -- served the real one. The first answer that is not a
+  // fallback wins; if every family answers with a placeholder, that IS the finding -- and a
+  // family that refuses does not replace it: with IPv6 off, [::1]'s refusal read as
+  // "nothing serving" over the placeholder IPv4 had found.
+  let report: TlsReport | null = null;
+  for (const probe of ['127.0.0.1', '::1']) {
+    const answer = await ask(probe, { port, sni: host, ...withCa });
+    if (report === null || !report.serving || (answer.serving && !answer.fallback)) {
+      report = answer;
+    }
+    if (report.serving && !report.fallback) break;
+  }
+  return report as TlsReport;
 }
 
 /**

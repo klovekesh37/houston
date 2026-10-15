@@ -16,6 +16,7 @@ import { add } from '../../../src/core/users';
 import type * as CreateDockerNS from '../../../src/core/lifecycle/create-docker';
 import {
   carryOwnership,
+  claimTypedName,
   mayChown,
   mayDestroy,
   maySetPrivilegedFields,
@@ -158,6 +159,40 @@ describe('the recorded owner', () => {
     expect((await mayDestroy('alice-rc8-5-1', 'bob'))[0]).toBe(false);
   });
 
+  it('asks again under the lock, so a hand-over cannot give away what was handed on meanwhile', async () => {
+    // The owner was asked before the wait for the lock: alice's hand-over to carol, queued
+    // behind a backup, overwrote the hand-over to bob that landed while it waited.
+    await add('alice', GOOD, 'member');
+    await add('bob', GOOD, 'member');
+    await add('carol', GOOD, 'member');
+    await workspace('alice-x', 'alice');
+    const { reproLock } = require('../../../src/core/runner/locks') as {
+      reproLock: <T>(name: string, body: () => Promise<T>) => Promise<T>;
+    };
+    const gate = { release: (): void => undefined, taken: false };
+    const held = reproLock(
+      'alice-x',
+      () =>
+        new Promise<void>((done) => {
+          gate.release = done;
+          gate.taken = true;
+        }),
+    );
+    for (let wait = 0; wait < 200 && !gate.taken; wait += 1) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    const handing = setOwner('alice-x', 'carol', { by: 'alice' }).then(
+      () => '',
+      (error: Error) => error.message,
+    );
+    await new Promise((done) => setTimeout(done, 200));
+    await workspace('alice-x', 'bob');
+    gate.release();
+    await held;
+    expect(await handing).toContain('only bob or an admin can hand it over');
+    expect(await ownerOf('alice-x')).toBe('bob');
+  });
+
   it('can still be handed over by the owner or an admin, and claimed when nobody owns it', async () => {
     // Handing a ticket on is the reason `chown` is a verb at all.
     await add('root', GOOD, 'admin');
@@ -168,6 +203,23 @@ describe('the recorded owner', () => {
     expect((await setOwner('alice-rc8-5-1', 'alice', { by: 'root' })).to).toBe('alice');
     await workspace('rc8-5-1');
     expect((await setOwner('rc8-5-1', 'bob', { by: 'bob' })).to).toBe('bob');
+  });
+
+  it("refuses to build on a typed name that could be somebody else's or the caller's own", async () => {
+    // `up --name test` took the exact `test` whenever alice could act on it -- an unowned one
+    // is anyone's -- while her own `alice-test` sat there: `--force` rebuilt the wrong one.
+    await add('alice', GOOD, 'member');
+    await workspace('alice-test', 'alice');
+    await workspace('test');
+    const { createReq } = jest.requireActual('../../../src/core/lifecycle/types') as typeof TypesNS;
+    const typed = () => createReq({ version: '8.5.1', name: 'test', actor: 'alice' });
+    await expect(claimTypedName(typed())).rejects.toThrow(/could mean 'test'[\s\S]*'alice-test'/u);
+    // Somebody else's `test` is never taken as typed, so it is not ambiguous: hers is meant.
+    await add('bob', GOOD, 'member');
+    await workspace('test', 'bob');
+    const req = typed();
+    await claimTypedName(req);
+    expect(req.exactName).toBe(false);
   });
 
   it('refuses a new owner nobody can sign in as with the name quoted as earlier releases quote it', async () => {

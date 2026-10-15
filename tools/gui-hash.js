@@ -5,7 +5,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const EXPECTED = '523f8658407b6806a0bac865dc76c58c69c02cebf278953e005f991bf81d6864';
+const EXPECTED = 'd156744b46b0ee8ed99d4d497a92d81a94a525188d2ef936a183d1d7d83dff53';
+// Re-recorded for a cluster's Prepare and Forget offered to admins only, as the server now
+// allows them only to admins.
+// Re-recorded for a member's view of a colleague's workspace: no Stop, Restart, Logs, Env
+// vars or action pane, the owner named, the admin login shown as hidden; the CLI default
+// offered to admins (and on a box without accounts); a colleague's backups not restorable.
 // Re-recorded for a create's toasts naming the workspace, as Activity does, not the version.
 // Re-recorded for the create dialog's footer cleared once its job has stopped or failed.
 // Re-recorded for Okta sign-in: the account chip's Okta name, the People page's Okta email,

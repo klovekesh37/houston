@@ -139,6 +139,10 @@ function record(name: string, extra: Record<string, unknown>, publicUrl: string)
 }
 
 const ACME = { tls: 'acme', tls_ports: [443], tls_email: 'o@e.com' };
+// What compose printed on a production box whose edge could not restart.
+const EDGE_DOCKER_ERROR =
+  'Error response from daemon: failed to create task for container: unable to start unit ' +
+  '"docker-5db7.scope": Unit docker-5db7.scope was already loaded or has a fragment file.';
 const GOOD = report({
   serving: true,
   issuer: 'CN = houston local CA',
@@ -365,7 +369,11 @@ function mocked(world: World): { dialled: string[] } {
       routes: e.routes ?? [],
       attached: e.attached ?? [],
     }),
-    up: async () => ({ returncode: e.up ?? 0, stdout: '', stderr: '' }),
+    up: async () => ({
+      returncode: e.up ?? 0,
+      stdout: '',
+      stderr: (e.up ?? 0) === 0 ? '' : `${EDGE_DOCKER_ERROR}\n`,
+    }),
     logs: async () => e.logs ?? 0,
     deleteHost: async () => ({ ...(e.deletion as Deletion) }),
   }));

@@ -2,12 +2,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type * as ConfigNS from '../../../src/lib/config';
 import type { Event } from '../../../src/lib/events';
 import type { KubectlResult } from '../../../src/core/kube/exec';
 
 import type * as PruningNS from '../../../src/core/lifecycle/pruning';
 import type * as JournalNS from '../../../src/core/journal';
 import type * as RecordNS from '../../../src/core/runner/record';
+import type * as PathsNS from '../../../src/core/runner/paths';
 import type * as ErrorsNS from '../../../src/lib/errors';
 
 it('Grafana public URL regression: pruning a TLS workspace removes its shared-namespace resources', async () => {
@@ -40,6 +42,30 @@ it('Grafana public URL regression: pruning a TLS workspace removes its shared-na
   }
 });
 
+/**
+ * Every workspace reads as down. The removal asks again under its lock whether a workspace may
+ * still go; the cases that are about HOW it goes start from one that may.
+ */
+const DOWN_CHECKS = [
+  '../../../src/core/kube/status',
+  '../../../src/core/runner/queries',
+  '../../../src/core/lifecycle/preconditions',
+];
+function everythingDown(): void {
+  jest.doMock('../../../src/core/kube/status', () => ({
+    ...jest.requireActual('../../../src/core/kube/status'),
+    workloadExists: async () => false,
+  }));
+  jest.doMock('../../../src/core/runner/queries', () => ({
+    ...jest.requireActual('../../../src/core/runner/queries'),
+    projectStates: async () => ({}),
+  }));
+  jest.doMock('../../../src/core/lifecycle/preconditions', () => ({
+    ...jest.requireActual('../../../src/core/lifecycle/preconditions'),
+    requireDocker: async () => undefined,
+  }));
+}
+
 interface Seen {
   message: string;
   level: string;
@@ -64,6 +90,7 @@ type Mode = (typeof MODES)[number];
 
 describe('removing one workspace', () => {
   afterEach(() => {
+    for (const id of DOWN_CHECKS) jest.dontMock(id);
     jest.resetModules();
   });
 
@@ -84,6 +111,7 @@ describe('removing one workspace', () => {
 
   async function load(mode: Mode): Promise<typeof PruningNS> {
     jest.resetModules();
+    everythingDown();
     const errors = require('../../../src/lib/errors') as typeof ErrorsNS;
     jest.doMock('../../../src/core/runner/engine', () => ({
       ...jest.requireActual('../../../src/core/runner/engine'),
@@ -246,6 +274,8 @@ describe('a whole prune', () => {
     namespaces?: string[];
     context?: string;
     owners?: Record<string, string | null>;
+    /** Namespaces another houston home marked as its own; every other one is this home's. */
+    elsewhere?: string[];
     deleteCluster?: () => Promise<boolean>;
     down?: (name: string) => Promise<number>;
     running?: Record<string, string>;
@@ -291,6 +321,7 @@ describe('a whole prune', () => {
       // `null` is "could not read the label" and must survive the stub as itself.
       namespaceOwner: async (ns: string) =>
         world.owners !== undefined && Object.hasOwn(world.owners, ns) ? world.owners[ns] : '',
+      madeHere: async (ns: string) => !(world.elsewhere ?? []).includes(ns),
       waitNamespaceGone: async (_ns: string, { context }: { context: string }) => {
         waited.push(context);
         return true;
@@ -306,6 +337,32 @@ describe('a whole prune', () => {
           run: async (argv: string[]): Promise<KubectlResult> => {
             if (argv.includes('delete') && argv.includes('namespace')) {
               deleted.push(argv[argv.indexOf('namespace') + 1] as string);
+            }
+            // The sweep deletes by UID, after one more read of what it judged.
+            if (argv.includes('delete') && argv.includes('--raw')) {
+              const raw = String(argv[argv.indexOf('--raw') + 1]);
+              deleted.push(decodeURIComponent(raw.split('/').pop() ?? ''));
+            }
+            if (argv.includes('get') && argv.includes('namespace')) {
+              const ns = String(argv[argv.indexOf('namespace') + 1]);
+              const owner = world.owners?.[ns] ?? '';
+              const home = (world.elsewhere ?? []).includes(ns)
+                ? '0123456789abcdef'
+                : (require('../../../src/lib/config') as typeof ConfigNS).homeId();
+              const doc = {
+                metadata: {
+                  name: ns,
+                  uid: `uid-${ns}`,
+                  resourceVersion: '1',
+                  labels: {
+                    'app.kubernetes.io/managed-by': 'houston',
+                    'houston.io/workspace': ns.replace(/^houston-/u, ''),
+                    ...(owner ? { 'houston.io/owner': owner } : {}),
+                    'houston.io/home': home,
+                  },
+                },
+              };
+              return { returncode: 0, stdout: JSON.stringify(doc), stderr: '' } as KubectlResult;
             }
             return { returncode: 0, stdout: '', stderr: '' } as KubectlResult;
           },
@@ -515,6 +572,76 @@ describe('a whole prune', () => {
     expect(world.deleted).toEqual(['houston-nobody']);
   });
 
+  it('leaves an orphan with your name on it alone when another houston home made it, unless forced', async () => {
+    // A laptop and the server share an account name, so `owner === me` swept the other
+    // home's LIVE workspace, PVC and all. Only this home's mark says the orphan is its own.
+    const world = load({
+      namespaces: ['houston-here', 'houston-there'],
+      context: 'c',
+      owners: { 'houston-here': 'me', 'houston-there': 'me' },
+      elsewhere: ['houston-there'],
+    });
+    const events: Event[] = [];
+    const out = await world.pruning.prune({
+      confirm: true,
+      orphans: true,
+      emit: (event) => events.push(event),
+    });
+    expect(out.orphans).toEqual(['houston-here']);
+    expect(world.deleted).toEqual(['houston-here']);
+    expect(
+      events.some((event) =>
+        event.message.includes(
+          'namespace houston-there is not marked as made by this houston home',
+        ),
+      ),
+    ).toBe(true);
+    world.deleted.length = 0;
+    await world.pruning.prune({ confirm: true, orphans: true, force: true });
+    expect([...world.deleted].sort()).toEqual(['houston-here', 'houston-there']);
+  });
+
+  it('never counts as an orphan the namespace of a workspace whose record will not read', async () => {
+    // `listMeta` skips a record it cannot parse, so a workspace whose repro.json was edited
+    // into broken JSON read as a stray -- this home's, its caller's -- and was swept, PVC and
+    // all, without --force.
+    const world = load({
+      namespaces: ['houston-broken', 'houston-lost'],
+      context: 'c',
+      owners: { 'houston-broken': 'me', 'houston-lost': 'me' },
+    });
+    const dir = path.join(home, 'repros', 'broken');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'repro.json'), '{ "name": "broken", ');
+    expect(await world.pruning.orphanNamespaces()).toEqual(['houston-lost']);
+    await world.pruning.prune({ confirm: true, orphans: true });
+    expect(world.deleted).toEqual(['houston-lost']);
+  });
+
+  it('sweeps only the orphans it showed, even with --force', async () => {
+    // The prompt listed some namespaces and the sweep read the cluster again: under --force,
+    // one that appeared after the prompt was swept without ever being on screen.
+    const world = load({
+      namespaces: ['houston-shown', 'houston-later'],
+      context: 'c',
+      owners: { 'houston-shown': 'me', 'houston-later': 'me' },
+    });
+    const events: Event[] = [];
+    await world.pruning.prune({
+      confirm: true,
+      orphans: true,
+      force: true,
+      onlyStray: ['houston-shown'],
+      emit: (event) => events.push(event),
+    });
+    expect(world.deleted).toEqual(['houston-shown']);
+    expect(
+      events.some((event) =>
+        event.message.includes('namespace houston-later turned up after the list was shown'),
+      ),
+    ).toBe(true);
+  });
+
   it('leaves an orphaned namespace somebody else owns alone, unless forced', async () => {
     // The sweep deleted a stray and its PVC without reading `houston.io/owner` --
     // and a stray is by definition what a colleague's workspace looks like from here.
@@ -553,6 +680,7 @@ describe('closing pooled edge connections while pruning Compose workspaces', () 
       '../../../src/core/topology',
       '../../../src/core/edge/networks',
       '../../../src/core/edge/routes',
+      ...DOWN_CHECKS,
     ]) {
       jest.dontMock(id);
     }
@@ -563,6 +691,7 @@ describe('closing pooled edge connections while pruning Compose workspaces', () 
 
   function load(failedName = '') {
     jest.resetModules();
+    everythingDown();
     const states = new Map<string, { attached: boolean; pooledSocketOpen: boolean }>();
     const stop = jest.fn(async (name: string) => {
       if (name === failedName) return 1;
@@ -743,5 +872,207 @@ describe('which workspaces prunable offers, against earlier releases', () => {
     expect([...recorded].sort()).toEqual(
       ['pindict', 'pinempty', 'pinfalse', 'pinlist', 'pinnegzero', 'pinnull', 'pinzf'].sort(),
     );
+  });
+});
+
+describe('pruning a Kubernetes record with Docker containers left under its name', () => {
+  afterEach(() => {
+    for (const id of [
+      '../../../src/core/runner/engine',
+      '../../../src/core/edge/networks',
+      '../../../src/core/kube/namespace',
+      '../../../src/core/kube/monitoring',
+      ...DOWN_CHECKS,
+    ]) {
+      jest.dontMock(id);
+    }
+    jest.resetModules();
+  });
+
+  it('is never offered, so its running Docker containers keep their data', async () => {
+    // 2.1.1 left this behind when a Kubernetes create took over a Docker workspace's name.
+    // "Down" was asked of the cluster alone: prune removed the compose file and orphaned the
+    // containers, and taking them down here would delete the data of ones still serving.
+    // `down --volumes` removes both sides.
+    jest.resetModules();
+    everythingDown();
+    const calls: string[] = [];
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      stop: async (name: string) => {
+        calls.push(`stop ${name}`);
+        return 0;
+      },
+      down: async (name: string) => {
+        calls.push(`down ${name}`);
+        return 0;
+      },
+    }));
+    jest.doMock('../../../src/core/edge/networks', () => ({
+      ...jest.requireActual('../../../src/core/edge/networks'),
+      detach: async () => undefined,
+    }));
+    jest.doMock('../../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../../src/core/kube/namespace'),
+      namespaceFor: async (name: string) => `houston-${name}`,
+      deleteNamespace: async () => {
+        calls.push('delete namespace');
+        return true;
+      },
+    }));
+    jest.doMock('../../../src/core/kube/monitoring', () => ({
+      ...jest.requireActual('../../../src/core/kube/monitoring'),
+      removeMonitoring: async () => false,
+    }));
+    const record = require('../../../src/core/runner/record') as typeof RecordNS;
+    const paths = require('../../../src/core/runner/paths') as typeof PathsNS;
+    await record.writeRecord(
+      'both',
+      record.metadata({
+        name: 'both',
+        project: 'houston-both',
+        extra: { runtime: 'kubernetes', context: 'kind-houston-local' },
+      }),
+    );
+    fs.writeFileSync(path.join(paths.workspace('both'), 'docker-compose.yml'), 'services: {}\n');
+    const pruning = require('../../../src/core/lifecycle/pruning') as typeof PruningNS;
+    expect(await pruning.prunable()).not.toContain('both');
+    const removed: string[] = [];
+    await pruning.removeOneWorkspace('both', () => undefined, removed);
+    expect(calls).toEqual([]);
+    expect(removed).toEqual([]);
+    expect(await paths.exists('both')).toBe(true);
+  });
+});
+
+describe('a workspace that changed after the prune list was made', () => {
+  afterEach(() => {
+    for (const id of [
+      '../../../src/core/runner/engine',
+      '../../../src/core/edge/networks',
+      '../../../src/core/edge/routes',
+      ...DOWN_CHECKS,
+    ]) {
+      jest.dontMock(id);
+    }
+    jest.resetModules();
+  });
+
+  it('is left alone when it was pinned or started meanwhile, and the rest still go', async () => {
+    // The list was made before any lock, and each Kubernetes deletion takes minutes: a
+    // workspace pinned or brought back up in that time was deleted with its data anyway.
+    jest.resetModules();
+    everythingDown();
+    const running = new Set<string>();
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual('../../../src/core/runner/queries'),
+      projectStates: async () =>
+        Object.fromEntries([...running].map((name) => [`houston-${name}`, 'running(2)'])),
+    }));
+    const downed: string[] = [];
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      stop: async () => 0,
+      down: async (name: string) => {
+        downed.push(name);
+        return 0;
+      },
+    }));
+    jest.doMock('../../../src/core/edge/networks', () => ({
+      ...jest.requireActual('../../../src/core/edge/networks'),
+      detach: async () => undefined,
+    }));
+    jest.doMock('../../../src/core/edge/routes', () => ({
+      ...jest.requireActual('../../../src/core/edge/routes'),
+      deregister: () => undefined,
+    }));
+    const record = require('../../../src/core/runner/record') as typeof RecordNS;
+    const mine = ['pinned-later', 'started-later', 'still-down'];
+    for (const name of mine) {
+      await record.writeRecord(name, record.metadata({ name, project: `houston-${name}` }));
+    }
+    const pruning = require('../../../src/core/lifecycle/pruning') as typeof PruningNS;
+    // This file's other cases leave workspaces in the same home.
+    const listed = (await pruning.prunable()).filter((name) => mine.includes(name));
+    expect(listed.sort()).toEqual(mine);
+    await record.updateMeta('pinned-later', (meta) => {
+      meta.pinned = true;
+    });
+    running.add('started-later');
+    const removed: string[] = [];
+    const said: string[] = [];
+    await pruning.removeEachWorkspace((event) => void said.push(event.message), removed, listed);
+    expect(removed).toEqual(['still-down']);
+    expect(downed).toEqual(['still-down']);
+    expect(said).toContain(
+      "'pinned-later' may no longer be pruned (pinned, started, handed over or gone since the list was made, or its cluster could not be asked) — left alone",
+    );
+  });
+});
+
+describe("prune's re-check under the lock", () => {
+  const MOCKED = [
+    '../../../src/seams/docker-cli',
+    '../../../src/core/lifecycle/preconditions',
+    '../../../src/core/runner/engine',
+    '../../../src/core/edge/networks',
+  ];
+  let home = '';
+  let previous: string | undefined;
+  beforeEach(() => {
+    // A home of its own: the records the cases above leave would be listed too.
+    previous = process.env.HOUSTON_HOME;
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'houston-prune-recheck-'));
+    process.env.HOUSTON_HOME = home;
+  });
+  afterEach(() => {
+    for (const id of MOCKED) jest.dontMock(id);
+    jest.resetModules();
+    process.env.HOUSTON_HOME = previous;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('asks Docker afresh, not the moment-old answer the list was made from', async () => {
+    // `compose ls` is cached for a moment, and the re-check read the same cached answer:
+    // a workspace another command started between the list and the lock still read as down,
+    // and `down -v` took its data.
+    jest.resetModules();
+    const state = { running: false };
+    const downed: string[] = [];
+    jest.doMock('../../../src/seams/docker-cli', () => ({
+      ...jest.requireActual('../../../src/seams/docker-cli'),
+      docker: async (args: string[]) => {
+        if (args[0] === 'compose' && args[1] === 'ls') {
+          const rows = state.running
+            ? [{ Name: 'houston-w', Status: 'running(2)', ConfigFiles: '/x/docker-compose.yml' }]
+            : [];
+          return { exitCode: 0, stdout: JSON.stringify(rows), stderr: '' };
+        }
+        return { exitCode: 1, stdout: '', stderr: 'unexpected' };
+      },
+    }));
+    jest.doMock('../../../src/core/lifecycle/preconditions', () => ({
+      ...jest.requireActual('../../../src/core/lifecycle/preconditions'),
+      requireDocker: async () => undefined,
+    }));
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      stop: async () => 0,
+      down: async (name: string) => {
+        downed.push(name);
+        return 0;
+      },
+    }));
+    jest.doMock('../../../src/core/edge/networks', () => ({
+      ...jest.requireActual('../../../src/core/edge/networks'),
+      detach: async () => undefined,
+    }));
+    const record = require('../../../src/core/runner/record') as typeof RecordNS;
+    await record.writeRecord('w', record.metadata({ name: 'w', project: 'houston-w' }));
+    const pruning = require('../../../src/core/lifecycle/pruning') as typeof PruningNS;
+    expect(await pruning.prunable()).toEqual(['w']);
+    state.running = true; // started by another command, a moment after the list
+    await pruning.removeOneWorkspace('w', () => undefined, []);
+    expect(downed).toEqual([]);
   });
 });

@@ -56,10 +56,10 @@ export const ROUTE_ROLES: ReadonlyMap<string, RouteRole> = new Map([
   ['POST /api/clusters/connect', ADMIN],
   ['GET /api/clusters/iam-policy', READ],
   ['POST /api/clusters/sweep', READ],
-  ['POST /api/clusters/prepare', WRITE],
+  ['POST /api/clusters/prepare', ADMIN],
   ['POST /api/clusters/create', ADMIN],
   ['POST /api/clusters/delete', ADMIN],
-  ['POST /api/clusters/forget', WRITE],
+  ['POST /api/clusters/forget', ADMIN],
   ['GET /api/clusters/overview', READ],
   ['GET /api/clusters/estimate', READ],
   ['GET /api/clusters/dns-check', READ],
@@ -81,7 +81,8 @@ export const ROUTE_ROLES: ReadonlyMap<string, RouteRole> = new Map([
   ['DELETE /api/repros/{name}/scale', WRITE],
   ['POST /api/repros/{name}/env', WRITE],
   ['POST /api/repros/{name}/monitor', WRITE],
-  ['POST /api/repros/{name}/default', WRITE],
+  // The CLI's default for everybody on the box, so not one member's to move.
+  ['POST /api/repros/{name}/default', ADMIN],
   ['POST /api/repros/{name}/owner', WRITE],
   ['POST /api/repros/{name}/config-import', WRITE],
   ['POST /api/repros/{name}/config-import/plan', WRITE],
@@ -137,6 +138,17 @@ export function toBraceRouteKey([method, template]: RouteKey): RouteKey {
 export function routeRequirement(method: string, fastifyTemplate: string): RouteRole | null {
   const [translatedMethod, template] = toBraceRouteKey([method, fastifyTemplate]);
   return ROUTE_ROLES.get(key(translatedMethod, template)) ?? null;
+}
+
+/**
+ * Whether the route also needs the caller to own the workspace it names: every member route
+ * with a `{name}`. A member sees every workspace and changes only their own; an admin, the
+ * owner, and anyone on a workspace with no owner pass (`ownership.mayChange`). Derived, not
+ * listed, so a member route added later is covered without anyone remembering to.
+ */
+export function ownerScoped(method: string, fastifyTemplate: string): boolean {
+  const [, template] = toBraceRouteKey([method, fastifyTemplate]);
+  return routeRequirement(method, fastifyTemplate) === WRITE && template.includes('{name}');
 }
 
 declare module 'fastify' {

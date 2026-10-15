@@ -12,7 +12,7 @@ import { ConflictError, ReproError, ValidationError } from '../../lib/errors';
 import { joinPath } from '../../lib/home';
 import { foldCase } from '../../lib/format';
 import { orderedDict } from '../../lib/json-text';
-import { compose as composeSeam } from '../../seams/docker-cli';
+import { compose as composeSeam, STALE_UNIT } from '../../seams/docker-cli';
 import { Interrupted } from '../../seams/exec';
 import { exists } from '../runner/paths';
 import { readCompose, readMeta, write as writeRecord } from '../runner/record';
@@ -146,6 +146,10 @@ export function systemdUnit(
     lines.join('') +
     `ExecStart=${execStart}\n` +
     'Restart=always\n' +
+    // Without a pause systemd restarts within 100ms, and five starts in ten seconds stop it
+    // for good ("Start request repeated too quickly"). `serve --domain` exits while the edge
+    // cannot start, so one broken edge left the production GUI down after the edge was fixed.
+    'RestartSec=10\n' +
     '\n' +
     '[Install]\n' +
     'WantedBy=multi-user.target\n'
@@ -234,7 +238,16 @@ async function upLocked({ pull = true }: { pull?: boolean } = {}): Promise<Docke
     );
   }
   if (pull) await composeRun(['pull']); // non-fatal, exactly as `runner.up` does it
-  const res = await composeRun(['up', '-d', '--remove-orphans']);
+  let res = await composeRun(['up', '-d', '--remove-orphans']);
+  // A stopped edge restarts as the same container, so on the same systemd unit, and a unit
+  // its last run left loaded fails every start (`STALE_UNIT`). Its certificates and routes
+  // are bind mounts, so a recreated edge loses nothing.
+  if (res.returncode !== 0) {
+    const state = await dockerRun(['inspect', paths.CONTAINER, '--format', '{{.State.Error}}']);
+    if (state.returncode === 0 && STALE_UNIT.test(state.stdout)) {
+      res = await composeRun(['up', '-d', '--remove-orphans', '--force-recreate']);
+    }
+  }
   if (res.returncode === 0) {
     // Every start, not just the first: a recreated container has none of its previous
     // attachments, and the route files that outlived it would then all answer 502.

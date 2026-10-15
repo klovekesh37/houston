@@ -6,6 +6,7 @@ import {
   releaseSystemNamespace,
   removeGrafanaIngress,
   removeMonitoring,
+  setMonitoringLabel,
 } from '../../../src/core/kube/monitoring';
 import { grafanaIngressName } from '../../../src/core/kube/grafana-ingress';
 
@@ -430,5 +431,24 @@ describe("a workspace's PodMonitor, once the stack brings its CRD", () => {
     });
     expect(upgrades(seen)).toEqual([]);
     expect(said.join(' ')).toContain('Prometheus cannot find Rocket.Chat');
+  });
+});
+
+describe("a workspace's mark on the shared stack", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('is raised when it does not land, because the mark is what keeps the stack', async () => {
+    // A refused label still recorded the workspace as monitored, and the next teardown of any
+    // other workspace counted nobody, uninstalled the stack and deleted its volumes.
+    const refuse = (argv: readonly string[]) =>
+      ({ argv, returncode: 1, stdout: '', stderr: 'Error from server (Forbidden)' }) as never;
+    jest.spyOn(kube, 'run').mockImplementation(async (argv) => refuse(argv));
+    await expect(setMonitoringLabel('houston-a', { context: 'c', wanted: true })).rejects.toThrow(
+      /could not mark namespace houston-a[\s\S]*Forbidden/u,
+    );
+    // An unmark that did not land only keeps the stack: let go.
+    await expect(
+      setMonitoringLabel('houston-a', { context: 'c', wanted: false }),
+    ).resolves.toBeUndefined();
   });
 });

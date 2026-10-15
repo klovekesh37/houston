@@ -32,11 +32,13 @@ import { updateConfig as updateLockedConfig } from '../../core/runner/locks';
 import { dockerStats } from '../../core/runner/queries';
 import { adminPass, readMeta } from '../../core/runner/record';
 import * as topology from '../../core/topology';
+import { roleOf } from '../../core/users';
 import * as config from '../../lib/config';
 import { ConflictError, NotReadyError, ValidationError, errorText } from '../../lib/errors';
 import { joinPath } from '../../lib/home';
 import { quotedText, toTextAny, stripText, isTruthy } from '../../lib/format';
 import { userPath } from '../../lib/presets';
+import { REDACTED } from '../../lib/redact';
 import { isBuildTag } from '../../lib/versions';
 import { compositeName, namesOf, qualifiedParams } from '../../lib/presets/composite';
 import {
@@ -213,20 +215,43 @@ function refuseWhileBusy(app: FastifyInstance, name: string): void {
   );
 }
 
+/**
+ * A workspace's payload for somebody who may look at it but not change it: no admin login,
+ * no env vars, and the admin password nowhere else either -- a workspace published beyond
+ * loopback says it in a note. The keys stay, so the panel's payload keeps its shape.
+ */
+function lookOnly(d: Record<string, unknown>): Record<string, unknown> {
+  const login = d.login as { password?: unknown } | null | undefined;
+  const secret = typeof login?.password === 'string' ? login.password : '';
+  const out: Record<string, unknown> = { ...d, login: null, ...('env' in d ? { env: [] } : {}) };
+  if (secret === '') return out;
+  // In the notes' text only, where it is spelled out: a password restored from a bundle can
+  // be any string, and replaced across the document a one-letter one rewrote keys and names.
+  const hidden = (value: unknown): unknown =>
+    JSON.parse(JSON.stringify(value), (_key, text: unknown) =>
+      typeof text === 'string' ? text.replaceAll(secret, REDACTED) : text,
+    ) as unknown;
+  for (const key of ['notes', 'note_groups'] as const) {
+    if (key in out) out[key] = hidden(out[key]);
+  }
+  return out;
+}
+
 export function register(app: FastifyInstance): void {
   app.get('/api/repros', async () => ({ repros: await listRepros() }));
-  app.get<{ Params: { name: string } }>(
-    '/api/repros/:name',
-    async (request) => await describe(request.params.name),
-  );
+  app.get<{ Params: { name: string } }>('/api/repros/:name', async (request) => {
+    const d = await describe(request.params.name);
+    const [mayChange] = await ownerGate(String(d.name), actor(request));
+    return mayChange ? d : lookOnly(d);
+  });
   app.get<{ Params: { name: string } }>('/api/repros/:name/detail', async (request) => {
     const d = await detail(request.params.name);
-    // THIS VIEWER's answer to the ownership gate that deleting a workspace's data, handing
-    // it over and rolling it back all pass, so the pane offers those only to someone the
-    // server will let. Added here, not in `detail()`: a web actor is an identity the server
-    // authenticated, and the CLI's is the caller's own assertion.
-    const [mayDestroy] = await ownerGate(String(d.name), actor(request));
-    return { ...d, may_destroy: mayDestroy };
+    // THIS VIEWER's answer to the ownership gate, which every change to a workspace passes
+    // (`ownerScoped` routes), so the pane offers changes only to someone the server will let.
+    // Added here, not in `detail()`: a web actor is an identity the server authenticated, and
+    // the CLI's is the caller's own assertion. Named for the first thing it gated.
+    const [mayChange] = await ownerGate(String(d.name), actor(request));
+    return { ...(mayChange ? d : lookOnly(d)), may_destroy: mayChange };
   });
   app.get<{ Params: { name: string } }>(
     '/api/repros/:name/stats',
@@ -256,6 +281,14 @@ export function register(app: FastifyInstance): void {
           'they decide what code runs and where it listens. An admin can widen it again with ' +
           '`houston config set gui.create_policy anyone`.' +
           extra,
+      );
+    }
+    // A pin also makes it the CLI's default for everybody on the box, which is an admin's.
+    const who = actor(request);
+    if (req.pin && who !== '' && roleOf(who) !== 'admin') {
+      throw new ValidationError(
+        'pin also makes it the default workspace for CLI commands on this box, which is ' +
+          "an admin's to set",
       );
     }
     if (isTruthy(req.context)) {
@@ -337,6 +370,7 @@ export function register(app: FastifyInstance): void {
       version: meta.rcVersion,
       name: target,
       exactName: true,
+      bringBack: true,
       actor: creator,
       wait: true,
       offline: true,
@@ -411,7 +445,8 @@ export function register(app: FastifyInstance): void {
   app.post<{ Params: { name: string } }>('/api/repros/:name/env', async (request) => {
     const envvars = envvarsModule();
     const body = requestBody(request.body, true);
-    const target = await resolveName(request.params.name);
+    // Refused HERE, as a 400, not as a job that fails after the GUI said it started.
+    const target = await envvars.envTarget(request.params.name);
     const rawSets = isTruthy(body.set) ? body.set : {};
     const rawSettings = isTruthy(body.setting) ? body.setting : {};
     if (typeof rawSets !== 'object' || Array.isArray(rawSets)) {
@@ -452,10 +487,7 @@ export function register(app: FastifyInstance): void {
     const rawPorts = Array.isArray(extra.tls_ports) ? extra.tls_ports : [443];
     const port = Number(rawPorts[0] ?? 443);
     const cafile = mode === tls.MODE_LOCAL ? joinPath(tls.caDir(), tls.CA_CRT) : '';
-    const report =
-      orText(extra.tls_terminates) === 'cluster'
-        ? await tls.verify(host, { port, cafile })
-        : await tls.verify('127.0.0.1', { port, cafile, sni: host });
+    const report = await tls.probeServed(host, port, extra, { cafile, ask: tls.verify });
     const out: Record<string, unknown> = {
       ...report,
       mode,

@@ -11,16 +11,18 @@ import {
   DockerError,
   MissingRecordError,
 } from '../../lib/errors';
+import { homeId } from '../../lib/config';
 import { info, nullEmit, warn, type Emit } from '../../lib/events';
 import { teamMode } from '../../lib/teammode';
 import { readMeta, recorded, type Metadata } from '../runner/record';
 
 import { absent, answerWhy, askObject, present, require_, why } from './ask';
 import { clusters } from './context';
-import { kube } from './exec';
+import { kube, type KubectlResult } from './exec';
 import {
   APPLY_TIMEOUT,
   CLUSTER_NAME,
+  HOME_LABEL,
   MONGO_SERVICE,
   NS_GONE_INTERVAL,
   NS_GONE_TRIES,
@@ -126,7 +128,7 @@ export function refuseForeignNamespace(
   if (theirs === '') {
     throw new ConflictError(
       `namespace ${ns} records no houston workspace, so its ownership cannot be proved. ` +
-        'It will not be adopted or deleted; inspect its labels and data yourself first',
+        'houston will not adopt, change or delete it; inspect its labels and data yourself first',
     );
   }
   if (theirs !== name) {
@@ -140,9 +142,46 @@ export function refuseForeignNamespace(
   if (heldBy === '' && owner !== '') {
     throw new ConflictError(
       `namespace ${ns} records no owner, but '${name}' belongs to '${owner}'. ` +
-        'Its ownership cannot be proved, so it will not be adopted or deleted',
+        'Its ownership cannot be proved, so houston will not adopt, change or delete it',
     );
   }
+}
+
+/**
+ * Raise unless this namespace is provably THIS home's.
+ *
+ * Everything `refuseForeignNamespace` reads is the same in two homes on one cluster: the
+ * workspace name derives from the version, and the owner label is an account name a laptop
+ * and the server share, or '' on both. So `up` in one home installed over the other's
+ * namespace, and either `down --volumes` deleted the other's data. The recorded UID proves
+ * identity on its own; without one, the home label has to be this home's, and a namespace
+ * made before the label existed is taken only by a home that already has its record.
+ */
+function refuseAnotherHome(
+  ns: string,
+  labels: Record<string, string>,
+  { recorded, uid }: { recorded: boolean; uid: string },
+): void {
+  if (uid !== '') return; // `requireSameNamespace` decides
+  const theirs = labels[HOME_LABEL] ?? '';
+  const mine = homeId();
+  if (theirs === mine) return;
+  const claim = `\`kubectl label namespace ${ns} ${HOME_LABEL}=${mine} --overwrite\``;
+  if (theirs !== '') {
+    throw new ConflictError(
+      `namespace ${ns} was made by another houston home on this cluster (${HOME_LABEL}=` +
+        `${theirs}; this one is ${mine}), so houston will not adopt, change or delete it: either home's ` +
+        "`down --volumes` would delete the other's data. Use a different --name; if that home " +
+        `is gone for good and the data is yours, claim it first with ${claim}`,
+    );
+  }
+  if (recorded) return;
+  throw new ConflictError(
+    `namespace ${ns} already exists and this houston has no record of it: another houston ` +
+      'home made it, or this one did before its record was lost. It will not be adopted, ' +
+      "because adopting another home's namespace lets either home delete the other's data. " +
+      `Use a different --name; if it is this home's, claim it first with ${claim}`,
+  );
 }
 
 function metadataOf(doc: Record<string, unknown> | null): Record<string, unknown> {
@@ -209,7 +248,7 @@ async function recordedNamespaceClaim(
   const extra: unknown = meta.extra;
   if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) {
     throw new ConflictError(
-      `'${name}' has no readable namespace ownership record — refusing to delete`,
+      `'${name}' has no readable namespace ownership record — refusing to act on its namespace`,
     );
   }
   const fields = extra as Record<string, unknown>;
@@ -222,7 +261,7 @@ async function recordedNamespaceClaim(
   const uid = Object.hasOwn(fields, 'namespace_uid') ? fields.namespace_uid : '';
   if (typeof owner !== 'string' || typeof uid !== 'string') {
     throw new ConflictError(
-      `'${name}' has an invalid namespace ownership record — refusing to delete`,
+      `'${name}' has an invalid namespace ownership record — refusing to act on its namespace`,
     );
   }
   return { owner, uid, recorded: true };
@@ -231,8 +270,8 @@ async function recordedNamespaceClaim(
 function requireSameNamespace(ns: string, identity: NamespaceIdentity, expectedUid: string): void {
   if (expectedUid !== '' && identity.uid !== expectedUid) {
     throw new ConflictError(
-      `namespace ${ns} has a different UID from this workspace's record, so it will not be ` +
-        'adopted or deleted. A replacement namespace is not the workspace that was recorded',
+      `namespace ${ns} has a different UID from this workspace's record, so houston will not ` +
+        'adopt, change or delete it. A replacement namespace is not the workspace that was recorded',
     );
   }
 }
@@ -298,6 +337,15 @@ export async function namespaceOwner(
   return labels[OWNER_OF_LABEL] ?? '';
 }
 
+/** Whether a namespace says THIS home made it; false when it says otherwise or cannot be read. */
+export async function madeHere(ns: string, { context }: { context: string }): Promise<boolean> {
+  try {
+    return (await namespaceLabels(ns, { context }))?.[HOME_LABEL] === homeId();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Refuse now if this workspace's namespace belongs to somebody else.
  *
@@ -338,6 +386,7 @@ export async function assertNamespaceAvailable(
   }
   const claim = await recordedNamespaceClaim(name);
   refuseForeignNamespace(ns, name, flat, claim.recorded ? claim.owner : owner);
+  refuseAnotherHome(ns, flat, claim);
   if (claim.uid !== '' && doc !== null) requireSameNamespace(ns, identityOf(ns, doc), claim.uid);
 }
 
@@ -369,7 +418,25 @@ export async function ensureNamespace(
     const claim = await recordedNamespaceClaim(name);
     const expectedOwner = claim.recorded ? claim.owner : owner;
     refuseForeignNamespace(ns, name, existing.labels, expectedOwner);
+    refuseAnotherHome(ns, existing.labels, claim);
     requireSameNamespace(ns, existing, claim.uid);
+    // MARKED NOW, one made before the mark existed: its labels alone are the same in every home
+    // that ever adopted it, so from here on another home is refused. Never `--overwrite`: a
+    // mark another home set in between stays theirs, and that home keeps the namespace.
+    if ((existing.labels[HOME_LABEL] ?? '') === '') {
+      const marked = await kube.run(
+        ['kubectl', '--context', context, 'label', 'namespace', ns, `${HOME_LABEL}=${homeId()}`],
+        { timeout: APPLY_TIMEOUT, own: isOurs(context) },
+      );
+      if (marked.returncode !== 0) {
+        warn(
+          emit,
+          `could not mark namespace ${ns} as this houston home's (${why(marked)}) — it works as ` +
+            'before, without the protection the mark gives',
+          { phase: 'provision' },
+        );
+      }
+    }
     if (receipt !== undefined) {
       Object.assign(receipt, { uid: existing.uid, owner: expectedOwner, createdUid: '' });
     }
@@ -383,7 +450,7 @@ export async function ensureNamespace(
     input: JSON.stringify({
       apiVersion: 'v1',
       kind: 'Namespace',
-      metadata: { name: ns, labels: labelsFor(name, owner) },
+      metadata: { name: ns, labels: { ...labelsFor(name, owner), [HOME_LABEL]: homeId() } },
     }),
   });
   if (res.returncode !== 0) {
@@ -464,21 +531,14 @@ async function clusterLossProvesNamespaceAbsent(
 }
 
 /** Delete a namespace and confirm that its pods and volumes are gone. */
-async function deleteNamespaceAndVolumes(
-  name: string,
+/** Delete `ns` only as `identity` read it: the API server refuses a replacement or a change. */
+async function deleteExactly(
   ns: string,
   context: string,
   own: boolean,
   identity: NamespaceIdentity,
-  emit: Emit,
-  sleep: Sleep,
-): Promise<boolean> {
-  const pvcs = await workspacePvcs(name, { context });
-  info(emit, `deleting namespace ${ns}: ${String(pvcs.length)} volume(s), pods and the release`, {
-    phase: 'teardown',
-    pct: 10,
-  });
-  const res = await kube.run(
+): Promise<KubectlResult> {
+  return await kube.run(
     [
       'kubectl',
       '--context',
@@ -501,6 +561,47 @@ async function deleteNamespaceAndVolumes(
       }),
     },
   );
+}
+
+/**
+ * Delete a namespace no record here explains, exactly as `stillStray` judges it NOW.
+ *
+ * `prune --orphans` read its labels, then deleted it by name: a namespace another home had
+ * made in its place between the two went instead. The labels are judged again on the one
+ * read the delete is then bound to, by UID and resourceVersion. A refused read raises; gone
+ * already is a removal, not a refusal.
+ */
+export async function deleteStray(
+  ns: string,
+  {
+    context,
+    stillStray,
+  }: { context: string; stillStray: (labels: Record<string, string>) => boolean },
+): Promise<{ deleted: boolean; why: string }> {
+  const identity = await namespaceIdentity(ns, context);
+  if (identity === null) return { deleted: true, why: '' };
+  if (!stillStray(identity.labels)) {
+    return { deleted: false, why: 'it changed after it was read, so it is left alone' };
+  }
+  const res = await deleteExactly(ns, context, isOurs(context), identity);
+  return res.returncode === 0 ? { deleted: true, why: '' } : { deleted: false, why: why(res) };
+}
+
+async function deleteNamespaceAndVolumes(
+  name: string,
+  ns: string,
+  context: string,
+  own: boolean,
+  identity: NamespaceIdentity,
+  emit: Emit,
+  sleep: Sleep,
+): Promise<boolean> {
+  const pvcs = await workspacePvcs(name, { context });
+  info(emit, `deleting namespace ${ns}: ${String(pvcs.length)} volume(s), pods and the release`, {
+    phase: 'teardown',
+    pct: 10,
+  });
+  const res = await deleteExactly(ns, context, own, identity);
   if (res.returncode !== 0) throw new DockerError(`could not delete namespace ${ns}: ${why(res)}`);
 
   let seen = null as Awaited<ReturnType<typeof askObject>> | null;
@@ -656,6 +757,9 @@ export async function deleteNamespace(
   }
   const claim = await recordedNamespaceClaim(name);
   refuseForeignNamespace(ns, name, identity.labels, owner ?? claim.owner);
+  // `recorded`, whatever the file says: every caller deletes a workspace this home holds a
+  // record of, or a namespace the failing create just made. Another home's mark still stops it.
+  refuseAnotherHome(ns, identity.labels, { recorded: true, uid: expectedUid ?? claim.uid });
   requireSameNamespace(ns, identity, expectedUid ?? claim.uid);
   if (volumes) {
     // Reported as it happens, and WAITED for. `--wait=false` returned instantly and `down`
@@ -667,6 +771,34 @@ export async function deleteNamespace(
   // reported success. "already uninstalled" is not a failure -- a repeated `down` is
   // normal -- so that one case is allowed through by name.
   return await uninstallWorkspaceWorkloads(ns, context, own, emit);
+}
+
+/**
+ * Raise unless the namespace this workspace's record names is still the one this home made.
+ *
+ * What `deleteNamespace` asks before deleting, asked by everything else that changes a
+ * Kubernetes workspace: start, stop, backup, restore, upgrade, ready. They acted on the
+ * namespace by its NAME, so once another home had removed this one's (`prune --orphans
+ * --force`) and made its own of that name, a restore here dropped that home's collections.
+ * A namespace that is not there is the caller's to report, in its own words.
+ */
+export async function requireOwnNamespace(
+  name: string,
+  { context }: { context: string },
+): Promise<void> {
+  const ns = await namespaceFor(name);
+  const identity = await namespaceIdentity(ns, context);
+  if (identity === null) return;
+  if (identity.labels[OWNER_LABEL_KEY] !== OWNER_LABEL_VALUE) {
+    throw new ConflictError(
+      `namespace ${ns} is not labelled as houston's, so '${name}' will not act on it. Check ` +
+        `you are on the right cluster ('${context}')`,
+    );
+  }
+  const claim = await recordedNamespaceClaim(name);
+  refuseForeignNamespace(ns, name, identity.labels, claim.owner);
+  refuseAnotherHome(ns, identity.labels, { recorded: true, uid: claim.uid });
+  requireSameNamespace(ns, identity, claim.uid);
 }
 
 /**

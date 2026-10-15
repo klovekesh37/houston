@@ -14,6 +14,7 @@ import {
   composeStream,
   composeToFile,
   docker,
+  STALE_UNIT,
 } from '../../seams/docker-cli';
 import { Interrupted, type ProcessResult } from '../../seams/exec';
 
@@ -100,7 +101,53 @@ export async function up(
   const args = ['up', '-d', '--remove-orphans'];
   // --no-deps so rebuilding Rocket.Chat does not take its database with it.
   if (forceRecreate) args.push('--force-recreate', '--no-deps', forceRecreate);
-  return await mutating(name, args);
+  // The same scope as the up: an `env` apply recreates Rocket.Chat alone, never Mongo.
+  const services = forceRecreate ? [forceRecreate] : [];
+  return await recreatedIfStale(name, await mutating(name, args), services);
+}
+
+/**
+ * `rc`, unless the start it reports failed on a systemd unit left by the containers' last
+ * run (`STALE_UNIT`): then they are recreated and the recreate's code is returned.
+ *
+ * Every start of an existing container hit it on that box, so Start, Restart, `up` over a
+ * stopped workspace and the backup's restart of Rocket.Chat all failed until somebody removed
+ * the containers by hand. `--force-recreate` gives new ids, so new unit names, and carries
+ * the named and the anonymous volumes over, which a remove-and-create does not.
+ */
+export async function recreatedIfStale(
+  name: string,
+  rc: number | null,
+  services: readonly string[] = [],
+): Promise<number | null> {
+  if (rc === 0 || !(await failedOnStaleUnit(name, services))) return rc;
+  const scope = services.length > 0 ? ['--no-deps', ...services] : ['--remove-orphans'];
+  return await mutating(name, ['up', '-d', '--force-recreate', ...scope]);
+}
+
+async function failedOnStaleUnit(name: string, services: readonly string[]): Promise<boolean> {
+  try {
+    const ids = await allContainerIds(name, services);
+    if (ids.length === 0) return false;
+    const errors = await docker(['inspect', '--format', '{{.State.Error}}', ...ids], {
+      capture: true,
+      timeoutMs: 15_000,
+    });
+    return errors.exitCode === 0 && STALE_UNIT.test(String(errors.stdout ?? ''));
+  } catch (error) {
+    if (error instanceof Interrupted) throw error;
+    return false;
+  }
+}
+
+/** The ids of `services`' containers (all of them for none), stopped ones included. */
+async function allContainerIds(name: string, services: readonly string[]): Promise<string[]> {
+  const listed = await compose(name, ['ps', '--all', '-q', ...services], { capture: true });
+  if (listed.exitCode !== 0) return [];
+  return String(listed.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
 }
 
 export async function down(name: string, { volumes = false } = {}): Promise<number | null> {
@@ -133,12 +180,8 @@ const ANONYMOUS_VOLUME = /^[0-9a-f]{64}$/u;
  */
 async function anonymousVolumes(name: string, services: readonly string[]): Promise<string[]> {
   try {
-    const listed = await compose(name, ['ps', '--all', '-q', ...services], { capture: true });
-    const ids = String(listed.stdout ?? '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '');
-    if (listed.exitCode !== 0 || ids.length === 0) return [];
+    const ids = await allContainerIds(name, services);
+    if (ids.length === 0) return [];
     const mounts = await docker(
       ['inspect', '--format', '{{range .Mounts}}{{.Name}} {{end}}', ...ids],
       { capture: true, timeoutMs: 15_000 },
@@ -168,7 +211,7 @@ async function removeAnonymous(volumes: readonly string[]): Promise<void> {
 }
 
 export async function start(name: string): Promise<number | null> {
-  return await mutating(name, ['start']);
+  return await recreatedIfStale(name, await mutating(name, ['start']));
 }
 
 export async function stop(name: string): Promise<number | null> {
@@ -176,7 +219,7 @@ export async function stop(name: string): Promise<number | null> {
 }
 
 export async function restart(name: string): Promise<number | null> {
-  return await mutating(name, ['restart']);
+  return await recreatedIfStale(name, await mutating(name, ['restart']));
 }
 
 export async function logs(
@@ -279,7 +322,8 @@ export async function startServices(
   name: string,
   services: readonly string[],
 ): Promise<number | null> {
-  return (await compose(name, ['start', ...services])).exitCode;
+  const rc = (await compose(name, ['start', ...services])).exitCode;
+  return await recreatedIfStale(name, rc, services);
 }
 
 /** Stop and remove specific services and their anonymous volumes (`rm -s -f -v <services>`). */

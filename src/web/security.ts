@@ -20,9 +20,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import * as auditService from '../core/audit';
 import * as sessions from '../core/sessions';
 import { runWithContext } from '../lib/context';
-import { errorText } from '../lib/errors';
+import { ConflictError, errorText } from '../lib/errors';
 import { urlQuote, quotedText, stripText, urlUnquote } from '../lib/format';
 import type * as UsersNS from '../core/users';
+import type * as NamingNS from '../core/lifecycle/naming';
+import type * as OwnershipNS from '../core/lifecycle/ownership';
 
 export const COOKIE_SECURE = '__Host-houston_session';
 export const COOKIE_PLAIN = 'houston_session';
@@ -51,6 +53,8 @@ export interface SecurityContext {
   readonly trustedProxies: readonly TrustedNetwork[];
   /** null means undeclared and therefore refused; the empty string means open. */
   readonly routeRequirement: (method: string, template: string) => string | null;
+  /** Whether the route also needs its `{name}` workspace to be the caller's (route-table). */
+  readonly ownerScoped?: (method: string, template: string) => boolean;
 }
 
 export interface SecurityDependencies {
@@ -58,6 +62,8 @@ export interface SecurityDependencies {
   readonly roleOf: typeof UsersNS.roleOf;
   readonly atLeast: typeof UsersNS.atLeast;
   readonly audit: typeof auditService.audit;
+  /** '' when `actor` may change the workspace the request names, else why not. */
+  readonly workspaceRefusal: (name: string, actor: string) => Promise<string>;
 }
 
 const DEFAULT_DEPENDENCIES: SecurityDependencies = {
@@ -65,7 +71,25 @@ const DEFAULT_DEPENDENCIES: SecurityDependencies = {
   roleOf: (name) => usersModule().roleOf(name),
   atLeast: (role, needed) => usersModule().atLeast(role, needed),
   audit: auditService.audit,
+  workspaceRefusal,
 };
+
+/**
+ * '' when `actor` may change the workspace `name` resolves to, else the refusal. A name that
+ * resolves to nothing is the route's to answer (404, or 400 for a bad one), not this gate's.
+ */
+export async function workspaceRefusal(name: string, actor: string): Promise<string> {
+  const naming = require('../core/lifecycle/naming') as typeof NamingNS;
+  const ownership = require('../core/lifecycle/ownership') as typeof OwnershipNS;
+  let target: string;
+  try {
+    target = await naming.resolveName(name);
+  } catch {
+    return '';
+  }
+  const [allowed, why] = await ownership.mayChange(target, actor);
+  return allowed ? '' : why;
+}
 
 function usersModule(): typeof UsersNS {
   // Resolved at call time, not at load, so that seam stays available.
@@ -426,7 +450,25 @@ function preHandlerHook(context: SecurityContext, dependencies: SecurityDependen
           return;
         }
         request.houstonActor = actor;
-        runWithContext({ actor, origin: actor ? 'session' : '' }, done);
+        if (!actor || context.ownerScoped?.(request.method, template) !== true) {
+          runWithContext({ actor, origin: actor ? 'session' : '' }, done);
+          return;
+        }
+        const name = String((request.params as { name?: unknown }).name ?? '');
+        void dependencies.workspaceRefusal(name, actor).then(
+          (why) => {
+            if (why === '') {
+              runWithContext({ actor, origin: 'session' }, done);
+              return;
+            }
+            dependencies.audit(actor, 'denied', `${request.method} ${template} not theirs`, {
+              origin: 'session',
+              outcome: 'denied',
+            });
+            done(new ConflictError(why));
+          },
+          (error: unknown) => done(error instanceof Error ? error : new Error(errorText(error))),
+        );
       },
       (error: unknown) => done(error instanceof Error ? error : new Error(errorText(error))),
     );

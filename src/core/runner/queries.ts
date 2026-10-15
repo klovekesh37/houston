@@ -272,6 +272,33 @@ export async function projectConfigFiles(): Promise<Record<string, string> | nul
 }
 
 /**
+ * The MongoDB volume a Compose project left behind, [] for none; null if docker could not
+ * be asked. A project `down`ed without `--volumes` is absent from `compose ls`, and this is
+ * all of it that is left.
+ */
+export async function projectDataVolumes(project: string): Promise<string[] | null> {
+  try {
+    const result = await docker(
+      [
+        'volume',
+        'ls',
+        '-q',
+        '--filter',
+        `label=com.docker.compose.project=${project}`,
+        '--filter',
+        'label=com.docker.compose.volume=mongodb_data',
+      ],
+      { capture: true, timeoutMs: 30_000 },
+    );
+    if (result.exitCode !== 0) return null;
+    return splitTextLines(String(result.stdout ?? '')).filter((line) => line.trim() !== '');
+  } catch (error) {
+    if (error instanceof Interrupted) throw error; // Ctrl-C or a stopped job: unwind
+    return null;
+  }
+}
+
+/**
  * `serviceContainerIds` of `rocketchat`, else of `rocketchat-1`: ONE `docker compose ps -q`
  * when the first answers. This asked the first twice -- once for the length, once for the
  * value -- so every "still booting" tick of a readiness wait ran an extra docker process,

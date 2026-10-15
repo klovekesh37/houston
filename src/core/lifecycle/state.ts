@@ -7,12 +7,15 @@
 import * as config from '../../lib/config';
 import { DockerError, ValidationError } from '../../lib/errors';
 import { type Emit, info, nullEmit, warn } from '../../lib/events';
-import { valueKind } from '../../lib/format';
-import { namespaceFor } from '../kube/namespace';
+import { pathExists, valueKind } from '../../lib/format';
+import { joinPath } from '../../lib/home';
+import { detach } from '../edge/networks';
+import { namespaceFor, requireOwnNamespace } from '../kube/namespace';
 import { CONTEXT as KUBE_CONTEXT } from '../kube/names';
 import { startWorkspace, stopWorkspace } from '../kube/scale';
 import * as engine from '../runner/engine';
 import { reproLock, updateConfig } from '../runner/locks';
+import * as paths from '../runner/paths';
 import { readMeta, updateMeta } from '../runner/record';
 import { containerDetails, networklessContainers, rcState, startErrors } from '../runner/queries';
 import * as topology from '../topology';
@@ -44,6 +47,44 @@ export async function clearDefaultIf(name: string): Promise<void> {
   });
 }
 
+/** Whether a Kubernetes record has a compose file beside it: see `downComposeLeftovers`. */
+export function hasComposeLeftovers(name: string): boolean {
+  return pathExists(joinPath(paths.workspace(name), 'docker-compose.yml'));
+}
+
+/**
+ * Docker containers left under a Kubernetes record, brought down before the record goes.
+ *
+ * 2.1.1's Kubernetes create took a Docker workspace of the same name for its own: it rewrote
+ * the record and left the compose file and the containers running. Tearing the Kubernetes side
+ * down then removed the compose file, the one thing naming that project, so nothing could find
+ * the containers or their data volume again -- and a later Docker `up` of the name started on
+ * that old data. A Kubernetes workspace writes no compose file, so one there is a leftover.
+ */
+export async function downComposeLeftovers(
+  name: string,
+  volumes: boolean,
+  emit: Emit,
+): Promise<void> {
+  if (!hasComposeLeftovers(name)) return;
+  info(
+    emit,
+    `'${name}' still has Docker containers from before it ran on Kubernetes — removing them first`,
+    {
+      phase: 'teardown',
+    },
+  );
+  const failed = new DockerError(
+    `could not remove the Docker containers left under '${name}', so nothing else was ` +
+      `removed — \`docker compose -p ${paths.mintProjectName(name)} down${volumes ? ' -v' : ''}\` ` +
+      'removes them',
+  );
+  // As a Compose teardown goes: stopped while the edge is attached, detached, then down.
+  if ((await engine.stop(name)) !== 0) throw failed;
+  await detach(name);
+  if ((await engine.down(name, { volumes })) !== 0) throw failed;
+}
+
 /**
  * stop/start/restart by scaling, which is the nearest true thing Kubernetes has.
  *
@@ -68,6 +109,7 @@ export async function setStateKubernetes(
   await reproLock(
     target,
     async () => {
+      await requireOwnNamespace(target, { context });
       if (action === 'stop' || action === 'restart') {
         await stopWorkspace(target, { context, emit });
         const pid = extra.port_forward_pid;
@@ -104,6 +146,29 @@ export async function setStateKubernetes(
     },
     { timeoutMs: INTERACTIVE_LOCK_WAIT * 1000 },
   );
+}
+
+/**
+ * A START THAT LEFT A CONTAINER WITH NO NETWORK is recreated. An earlier start that failed
+ * on a held port detaches it, and every later start "succeeds" over a Rocket.Chat that
+ * cannot reach MongoDB and publishes no port; `compose up -d` puts it back as specified.
+ */
+async function reattachTheNetworkless(target: string, action: string, emit: Emit): Promise<void> {
+  if (action !== 'start' && action !== 'restart') return;
+  const detached = await networklessContainers(target);
+  if (detached.length === 0) return;
+  info(
+    emit,
+    `${detached.join(', ')} came up with no network, left so by an earlier start that ` +
+      'failed — recreating it, data kept',
+    { phase: 'boot' },
+  );
+  if ((await engine.up(target, { pull: false })) !== 0) {
+    throw new DockerError(
+      `could not recreate ${detached.join(', ')} for '${target}', which ` +
+        'came up with no network',
+    );
+  }
 }
 
 /** What a `down`ed workspace is told when asked to start: it has nothing to start. */
@@ -163,10 +228,17 @@ export async function setState(
   const fn = action === 'start' ? engine.start : action === 'stop' ? engine.stop : engine.restart;
   // Locked like every other mutator. Stop/Restart are always-enabled GUI buttons, so they
   // were clickable straight through a create, backup or upgrade running on the same repro
-  // -- and the GUI's pending map only blocks within ONE tab.
-  const rc = await reproLock(target, async () => await fn(target), {
-    timeoutMs: INTERACTIVE_LOCK_WAIT * 1000,
-  });
+  // -- and the GUI's pending map only blocks within ONE tab. The network repair is held
+  // too: it recreates containers, and ran after the lock was let go.
+  const rc = await reproLock(
+    target,
+    async () => {
+      const code = await fn(target);
+      if (code === 0) await reattachTheNetworkless(target, action, emit);
+      return code;
+    },
+    { timeoutMs: INTERACTIVE_LOCK_WAIT * 1000 },
+  );
   if (rc !== 0) {
     // A `down`ed repro has no containers, so `compose start` can never revive it. Say
     // what actually works instead of the exit code. Asked with `ps --all`: `rcState` reads
@@ -184,26 +256,6 @@ export async function setState(
       if (why.length > 0) hint = ` — ${why.join('; ')}`;
     }
     throw new DockerError(`\`docker compose ${action}\` failed for '${target}'${hint}`);
-  }
-  // A START THAT LEFT A CONTAINER WITH NO NETWORK is recreated. An earlier start that failed
-  // on a held port detaches it, and every later start "succeeds" over a Rocket.Chat that
-  // cannot reach MongoDB and publishes no port; `compose up -d` puts it back as specified.
-  if (action === 'start' || action === 'restart') {
-    const detached = await networklessContainers(target);
-    if (detached.length > 0) {
-      info(
-        emit,
-        `${detached.join(', ')} came up with no network, left so by an earlier start that ` +
-          'failed — recreating it, data kept',
-        { phase: 'boot' },
-      );
-      if ((await engine.up(target, { pull: false })) !== 0) {
-        throw new DockerError(
-          `could not recreate ${detached.join(', ')} for '${target}', which ` +
-            'came up with no network',
-        );
-      }
-    }
   }
   // NOR IS A RESTART THAT LEFT ROCKET.CHAT STOPPED a restart. After a start that could not
   // bind its port, the containers sit created-not-running, `compose restart` answers 0 and

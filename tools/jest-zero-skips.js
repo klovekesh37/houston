@@ -88,7 +88,34 @@ const ROOT = path.resolve(__dirname, '..');
 // The final re-verification's fixes: up resolving a name the actor may act on, a rebuild's
 // monitoring, pin and port, the operator password off every argv, the operator's memory and
 // PodMonitor, serve's shutdown, and the usage and wording answers it found untrue.
-const FLOOR = 4500;
+// A start over a systemd unit the last run left loaded: start, restart, up, a backup's restart
+// of Rocket.Chat, an env apply's Rocket.Chat alone and the GUI's streamed up recreate, any other
+// failure does not, and the edge.
+// A member changes only their own workspaces: every member route naming one, the live logs,
+// a bundle's delete and restore, a create over a handed-over prefix, a create's pin and the CLI
+// default, and their login, env and password kept from others.
+// A create on a name the other runtime holds: Docker over Kubernetes and Kubernetes over Docker.
+// Acting on what a workspace is NOW: Docker leftovers under a Kubernetes record go first; down,
+// restore, rollback, hand-over and prune ask again under the lock; a create locks and asks about
+// the name multi-instance settles on; restore by a bundle's own name refuses a newer namesake;
+// a Kubernetes re-up keeps its version and MongoDB, even after a re-up that failed; a rebuild
+// that keeps the data keeps when the workspace was made; prune leaves a mixed record alone. A
+// Kubernetes upgrade keeps the forward its backup re-established; production's stale-unit text.
+// Two houston homes apart: the home's own id, its mark on a namespace (adopt, delete, prune), a
+// MongoDB another home left on Docker; a typed name that could be two workspaces, resolved and
+// created; cluster prepare and forget an admin's; Check TLS asking where tls-status asks; a
+// rebuild keeping its image; Bring it up after a Delete; the start repair under the lock; a
+// Kubernetes row's uptime; restore's engine from the bundle; scale and env refused up front;
+// the TLS probe keeping IPv4's placeholder when [::1] refuses. Start, stop, ready, backup, restore,
+// upgrade and rollback acting only on this home's own namespace; a damaged home id refused, not
+// replaced; a --domain another workspace here records refused though no route file holds it.
+// The data-deletion review: a rebuild keeping a one-preset workspace's data; restore, upgrade
+// and rollback refusing an ambiguous name; restore refusing an older namesake; prune asking
+// Docker afresh and never sweeping an unreadable record's namespace, only the orphans it
+// showed, by UID; a bundle gated on its own owner; a refused monitoring mark; a re-up under
+// the operator; a legacy namespace marked; backups re-checked under the lock; teardowns that
+// cannot finish saying so; restores audited.
+const FLOOR = 4578;
 
 /** Every authored construct that removes a test from a run or inverts what it asserts. */
 const SKIP_CONSTRUCTS = [

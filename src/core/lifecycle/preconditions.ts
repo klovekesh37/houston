@@ -16,7 +16,7 @@ import { which } from '../kube/tools';
 import { composeStandaloneVersion, composeVersion, dockerAvailable, engine } from '../runner/host';
 import * as paths from '../runner/paths';
 import { projectName } from '../runner/record';
-import { projectConfigFiles } from '../runner/queries';
+import { projectConfigFiles, projectDataVolumes } from '../runner/queries';
 import * as topology from '../topology';
 import { MODE_ACME } from '../tls';
 
@@ -175,13 +175,38 @@ export function reachableBeyondLoopback({
  *
  * The project name is `houston-<name>` regardless of HOUSTON_HOME, so a repro named after
  * an existing one in another home would make `docker compose up` reconcile (hijack) the
- * other workspace's containers/volume. Best-effort: if docker can't be queried, skip the
- * check rather than block.
+ * other workspace's containers/volume. The project check is best-effort (docker that cannot
+ * list projects cannot create one either); the volume check refuses an unanswered ask.
  */
 export async function guardProjectCollision(name: string): Promise<void> {
+  const proj = await projectName(name);
+  // A PROJECT `down`ED WITHOUT --volumes is in no `compose ls`, so the check below passed,
+  // and Compose quietly mounted the MongoDB it left: a second home on this machine -- `sudo
+  // houston` is root's -- served the first one's data, and its `down --volumes` deleted it.
+  // A name this home has no record of has no data of its own yet.
+  if (!(await paths.exists(name))) {
+    const left = await projectDataVolumes(proj);
+    // "Could not ask" is not "there is none": a timed-out ask let the create mount another
+    // home's MongoDB, and that home's data then went with this one's `down --volumes`.
+    if (left === null) {
+      throw new DockerError(
+        `could not ask Docker whether another houston home left a MongoDB for '${name}', so ` +
+          'nothing was created - check `docker volume ls` answers, then try again',
+      );
+    }
+    if (left.length > 0) {
+      throw new ConflictError(
+        `the Docker volume ${left.join(', ')} already holds a MongoDB for '${name}', and ` +
+          'this houston has no workspace of that name: another houston home on this machine ' +
+          "made it (`sudo houston` uses root's), or this one did before its record was lost. " +
+          `Creating '${name}' here would start on that data, and its \`down --volumes\` ` +
+          'would delete it - choose a different --name, or, if nobody needs that data, ' +
+          `\`docker volume rm ${left.join(' ')}\``,
+      );
+    }
+  }
   const existing = await projectConfigFiles();
   if (existing === null || Object.keys(existing).length === 0) return;
-  const proj = await projectName(name);
   if (!Object.hasOwn(existing, proj)) return;
   const ours = `${paths.workspace(name)}/docker-compose.yml`;
   const files = String(existing[proj] ?? '');

@@ -72,19 +72,29 @@ export function scaleOk(
   return res;
 }
 
-/** Bulk-insert users/messages per a `--scale` spec (users=N,messages=N@room). */
-export async function runScale(name: string, specStr: string, emit: Emit = nullEmit): Promise<Bag> {
+/**
+ * The workspace a `--scale` prefill or its clear acts on, refused where it cannot run.
+ *
+ * COMPOSE ONLY, said here rather than discovered two layers down. `scaleseed` bulk-inserts
+ * through `composeExecCapture`, so on a Kubernetes workspace this reached for a compose
+ * project that is not there and answered "no configuration file provided: not found" --
+ * docker's words for something the reader cannot act on. The REST seed above it is
+ * runtime-agnostic; only the bulk path is not. Exported so the GUI refuses before it
+ * queues a job, not inside one.
+ */
+export async function scaleTarget(name: string): Promise<string> {
   const target = await resolveName(name);
-  // COMPOSE ONLY, said here rather than discovered two layers down. `scaleseed`
-  // bulk-inserts through `composeExecCapture`, so on a Kubernetes workspace this
-  // reached for a compose project that is not there and answered "no configuration
-  // file provided: not found" -- docker's words for something the reader cannot act on.
-  // The REST seed above it is runtime-agnostic; only the bulk path is not.
   await topology.requireCompose(target, '--scale prefill', {
     instead:
       `Seed over REST instead (\`houston seed --name ${target}\`), which works on ` +
       'both runtimes.',
   });
+  return target;
+}
+
+/** Bulk-insert users/messages per a `--scale` spec (users=N,messages=N@room). */
+export async function runScale(name: string, specStr: string, emit: Emit = nullEmit): Promise<Bag> {
+  const target = await scaleTarget(name);
   // Bulk prefill writes straight into Mongo; running it while a backup is dumping would
   // put half of it in the archive.
   return await reproLock(target, async () => await runScaleLocked(target, specStr, emit));
@@ -142,13 +152,7 @@ export async function runScaleLocked(
 
 /** Remove everything a prior `--scale` added and restore affected rooms. */
 export async function clearScale(name: string, emit: Emit = nullEmit): Promise<Bag> {
-  const target = await resolveName(name);
-  // COMPOSE ONLY, said here rather than discovered two layers down -- see `runScale`.
-  await topology.requireCompose(target, '--scale prefill', {
-    instead:
-      `Seed over REST instead (\`houston seed --name ${target}\`), which works on ` +
-      'both runtimes.',
-  });
+  const target = await scaleTarget(name);
   // Locked like `runScale`, which it undoes. Without it the two could interleave on one
   // workspace -- a clear deleting the users a concurrent prefill is still inserting,
   // leaving a count that matches neither.

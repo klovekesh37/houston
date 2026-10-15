@@ -377,6 +377,23 @@ describe('the links a workspace publishes', () => {
       );
     },
   );
+  it('never lends a Kubernetes row the uptime of Docker containers left under its name', async () => {
+    // 2.1.1's takeover left a Docker workspace's containers running under the Kubernetes
+    // record that replaced it, and `list` showed their uptime and health as the namespace's.
+    const answers = {
+      default: '',
+      dockerUp: true,
+      states: { 'houston-w': 'running(2)' },
+      statusMap: { 'houston-w': 'Up 3 hours (healthy)' },
+      svcMap: {},
+    };
+    const kube = metadata({ name: 'w', project: 'houston-w', extra: { runtime: 'kubernetes' } });
+    const row = await rowFor(kube, answers);
+    expect(row.uptime).toBe('');
+    expect(row.health).not.toBe('healthy');
+    const docker = metadata({ name: 'w', project: 'houston-w', extra: { runtime: 'docker' } });
+    expect(await rowFor(docker, answers)).toMatchObject({ uptime: '3 hours', health: 'healthy' });
+  });
   it('keeps a Docker loopback workspace and a customer proxy on the original Grafana URL', async () => {
     for (const meta of [
       metadata({ extra: { monitoring: true } }),

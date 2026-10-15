@@ -45,6 +45,7 @@ describe('live re-verification GUI regressions', () => {
   let origin = '';
   let role = 'admin';
   let user = 'admin';
+  let accounts = true;
   let edgeInstalled = false;
   let workspace = { ...initialWorkspace };
   let listReads = 0;
@@ -63,6 +64,7 @@ describe('live re-verification GUI regressions', () => {
   beforeEach(async () => {
     role = 'admin';
     user = 'admin';
+    accounts = true;
     edgeInstalled = false;
     workspace = { ...initialWorkspace };
     listReads = 0;
@@ -107,11 +109,15 @@ describe('live re-verification GUI regressions', () => {
         return { repros: [workspace] };
       }
       if (pathname.endsWith('/detail'))
-        return { ...workspace, may_destroy: role === 'admin' || workspace.owner === user };
+        // As the server answers: with no accounts there is nobody to refuse.
+        return {
+          ...workspace,
+          may_destroy: !accounts || role === 'admin' || workspace.owner === user,
+        };
       if (pathname.endsWith('/stats')) return { cpu: 1, mem_mb: 100 };
       if (pathname.endsWith('/env')) return { env: [], settings: {}, source: 'fixture' };
       if (pathname === '/api/health') return { docker: true };
-      if (pathname === '/api/session') return { accounts: true, user, role };
+      if (pathname === '/api/session') return { accounts, user, role };
       if (pathname === '/api/kubernetes') return { usable: false, tools_ready: false };
       if (pathname === '/api/edge')
         return {
@@ -368,6 +374,51 @@ describe('live re-verification GUI regressions', () => {
     expect(await page.locator('#detail .d-head .name').textContent()).toBe(workspace.name);
     expect(workspace.state).toBe('running');
     expect(workspace.health).toBe('healthy');
+  });
+
+  test('a member sees a colleague’s workspace, but nothing that changes it, nor its logs, env or login', async () => {
+    // The owner's call after Okta: members see every workspace and change only their own.
+    // The server sends no login for it (`login: null`) and refuses every change with 409.
+    role = 'member';
+    user = 'bob';
+    workspace = { ...workspace, owner: 'carol', created_by: 'carol', login: null } as never;
+    await dashboard('bob');
+    await selectWorkspace();
+    const actions = page.locator('#detail .d-actions');
+    expect(await actions.locator('button', { hasText: /^(Stop|Restart|Start)$/u }).count()).toBe(0);
+    expect(await actions.locator('.inline-note').textContent()).toContain(
+      "carol's workspace — you can look; only carol or an admin can change it",
+    );
+    const tabs = await page.locator('#detail .tabs button').allTextContents();
+    expect(tabs).not.toContain('Logs');
+    expect(tabs).not.toContain('Env vars');
+    expect(await page.locator('#actpane button').count()).toBe(0);
+    expect(await page.locator('#actpane .apnote').textContent()).toContain(
+      "This is carol's workspace. You can look at it; only carol or an admin can change it",
+    );
+    expect(await page.locator('#detail').textContent()).toContain(
+      'Hidden. Only carol or an admin can see it.',
+    );
+    expect(mutations).toBe(0);
+    // Handed to bob, the same panel is his to use again.
+    workspace = { ...workspace, owner: 'bob', created_by: 'bob' };
+    await page.locator('#actpane button', { hasText: 'Hand over…' }).waitFor({ timeout: 6000 });
+    expect(await actions.locator('button', { hasText: 'Stop' }).count()).toBe(1);
+    expect(await page.locator('#detail .tabs button').allTextContents()).toContain('Logs');
+  });
+
+  test('a box without accounts offers every control, the CLI default included', async () => {
+    // No accounts means no roles: the session answers role ''. Gating "Use for CLI
+    // commands" on the admin role alone took it away from every single-user box.
+    accounts = false;
+    role = '';
+    user = '';
+    await page.goto('/');
+    await page.locator('.wrow').waitFor();
+    await selectWorkspace();
+    await page.locator('#actpane button', { hasText: 'Use for CLI commands' }).waitFor();
+    expect(await page.locator('#detail .d-actions button', { hasText: 'Stop' }).count()).toBe(1);
+    expect(await page.locator('#detail .tabs button').allTextContents()).toContain('Logs');
   });
 
   test('the tablet top bar keeps the account and navigation inside 768 pixels', async () => {

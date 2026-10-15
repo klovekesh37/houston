@@ -17,6 +17,13 @@ import type * as ExecNS from '../../../src/core/kube/exec';
 import type * as TlsPlanNS from '../../../src/core/lifecycle/tlsplan';
 import { createReq, kubeTls } from '../../../src/core/lifecycle/types';
 
+/** Whether a Kubernetes workspace's release is still there, as `workloadExists` answers. */
+let mockRunning = true;
+jest.mock('../../../src/core/kube/status', () => ({
+  ...jest.requireActual('../../../src/core/kube/status'),
+  workloadExists: () => Promise.resolve(mockRunning),
+}));
+
 describe('the HTTPS plan', () => {
   it('reads a workspace HTTPS name back out of its record as earlier releases do', async () => {
     // `down` than `up` is the documented way to bring a workspace back, and the record is
@@ -95,6 +102,48 @@ describe('the HTTPS plan', () => {
     const restored = await resolveTls(createReq({ version: '8.5.1' }), 'restore-me', '127.0.0.1');
     expect(restored?.mode).toBe(MODE_ACME);
     expect(restored?.host).toBe('rc.example.com');
+  });
+
+  it('refuses a name the cluster serves for another workspace here, and only while it runs', async () => {
+    // On a cluster that owns :443 itself -- EKS, with no edge here -- a Kubernetes workspace's
+    // name is never routed through this box, so the route check could not see it, and a
+    // second workspace given the same --domain went to the cluster's ingress beside the first.
+    config.updateConfig((cfg) => {
+      cfg.acme_email = 'ops@example.com';
+    });
+    const served = (name: string, extra: Record<string, unknown>) =>
+      writeRecord(name, metadata({ name, publicUrl: 'https://Shared.Example.com', extra }));
+    const ask = (name: string) =>
+      resolveTls(createReq({ version: '8.5.1', domain: 'shared.example.com' }), name, '127.0.0.1');
+    await served('first', {
+      runtime: 'kubernetes',
+      tls: 'acme',
+      tls_terminates: 'cluster',
+      edge: false,
+    });
+    mockRunning = true;
+    await expect(ask('second')).rejects.toThrow(
+      "shared.example.com is already served for workspace 'first' by its cluster's ingress",
+    );
+    // Its own name, brought back, is its own.
+    expect((await ask('first'))?.host).toBe('shared.example.com');
+    // `down` uninstalled its release, and the name with it.
+    mockRunning = false;
+    expect((await ask('second'))?.host).toBe('shared.example.com');
+    // A name a route file speaks for is the route check's; a Docker workspace's, down with
+    // its data kept, has no route and no claim.
+    mockRunning = true;
+    await served('first', {
+      runtime: 'kubernetes',
+      tls: 'acme',
+      tls_terminates: 'cluster',
+      edge: true,
+    });
+    await served('docker', { tls: 'acme' });
+    expect((await ask('second'))?.host).toBe('shared.example.com');
+    for (const name of ['first', 'docker']) {
+      fs.rmSync(path.join(config.reprosDir(), name), { recursive: true, force: true });
+    }
   });
 });
 

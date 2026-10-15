@@ -407,6 +407,13 @@ function renderActionPane(d, busyLabel) {
       + "Opening the workspace and reading this panel are."));
     return;
   }
+  if (!ctx.canChange(d)) {
+    const owner = ctx.ownerOf(d);
+    pane.append(ctx.el("p", { class: "apnote" },
+      `This is ${owner}'s workspace. You can look at it; only ${owner} or an admin can change it, `
+      + `or read its logs, env vars and login. Ask ${owner} to hand it over if you need it.`));
+    return;
+  }
   const running = d.state === "running";
   // `on: false` means "this runtime refuses it". The load test and the capacity search
   // are Compose-only and the server says so with a 400 -- rendering them on a
@@ -446,8 +453,9 @@ function renderActionPane(d, busyLabel) {
     // workspace a real certificate, and the TLS route answers for it.
     { id: "tls", label: "Check the certificate", fn: () => ctx.doTlsStatus(d.name),
       ok: running && !!d.public_url, on: !kube || !!d.public_url },
+    // The CLI's default for everybody on the box, so an admin's to set.
     { id: "default", label: "Use for CLI commands", fn: () => ctx.doDefault(d.name),
-      ok: !d.is_default },
+      ok: !d.is_default, on: !ctx.ACCOUNTS || ctx.canAdmin() },
     // Whoever the server's ownership gate lets: the owner, an admin, or anyone under
     // `gui.destroy_policy anyone` -- the panel's read carries this viewer's answer. On a
     // box without accounts there is nobody to hand it to.

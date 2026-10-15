@@ -7,16 +7,22 @@ import type { FastifyInstance } from 'fastify';
 import { resolveName } from '../../core/lifecycle/naming';
 import { sidecarHolder } from '../../core/lifecycle/ports';
 import { readMeta } from '../../core/runner/record';
-import { ValidationError } from '../../lib/errors';
+import { ConflictError, ValidationError } from '../../lib/errors';
 import { pathExpandUser, pathResolve, joinPath } from '../../lib/home';
 import { fileErrorText, quotedText } from '../../lib/format';
-import { bool, orText, queryBool, queryText, requestBody, submit } from '../route-deps';
+import { actor, bool, orText, queryBool, queryText, requestBody, submit } from '../route-deps';
+import { workspaceRefusal } from '../security';
 import type * as BackupNS from '../../core/backup';
 import type * as BackupCompatNS from '../../core/backup-compat';
+import type * as OwnershipNS from '../../core/lifecycle/ownership';
 import type * as UpgradeNS from '../../core/upgrade';
 
 function backupModule(): typeof BackupNS {
   return require('../../core/backup') as typeof BackupNS;
+}
+
+function ownershipModule(): typeof OwnershipNS {
+  return require('../../core/lifecycle/ownership') as typeof OwnershipNS;
 }
 
 function backupCompatModule(): typeof BackupCompatNS {
@@ -54,6 +60,31 @@ function confined(given: string, root: string): string {
 /** Whether `candidate` is neither `root` nor inside it, for two resolved paths. */
 function outside(candidate: string, root: string): boolean {
   return candidate !== root && !candidate.startsWith(root === '/' ? '/' : `${root}/`);
+}
+
+/**
+ * '' when `who` may use the bundle at `inside` (already confined): it is a workspace's data,
+ * so a member deletes or restores only their own workspaces' bundles. One that names no
+ * workspace, or one that is gone, has nobody left to ask.
+ */
+async function bundleRefusal(inside: string, who: string): Promise<string> {
+  // ITS OWN OWNER FIRST. A bundle outlives its workspace: once that was deleted, or a newer one
+  // took its name, the check below asked about nobody or about the wrong person, and a member
+  // could delete a colleague's only copy of their data.
+  const owner = await backupModule().bundleOwner(inside);
+  if (owner !== '') {
+    const [allowed, holder] = ownershipModule().ownedGate(owner, who);
+    return allowed
+      ? ''
+      : `this backup is ${holder}'s data — only ${holder} or an admin can use or delete it`;
+  }
+  let repro: string;
+  try {
+    repro = String((await backupModule().readManifest(inside)).repro ?? '');
+  } catch {
+    return '';
+  }
+  return repro === '' ? '' : await workspaceRefusal(repro, who);
 }
 
 function confinedInput(bundle: string): string {
@@ -115,11 +146,18 @@ export function register(app: FastifyInstance): void {
     backups: await backupModule().listBackups(queryText(request.query.name, '', 'name')),
   }));
 
-  app.delete<{ Querystring: { path?: unknown } }>(
-    '/api/backups',
-    async (request) =>
-      await backupModule().deleteBackup(queryText(request.query.path, '', 'path', true)),
-  );
+  app.delete<{ Querystring: { path?: unknown } }>('/api/backups', async (request) => {
+    const bundle = queryText(request.query.path, '', 'path', true);
+    let inside = '';
+    try {
+      inside = confinedInput(bundle);
+    } catch {
+      // outside the managed directory: `deleteBackup` refuses it, and nothing is read
+    }
+    const why = inside === '' ? '' : await bundleRefusal(inside, actor(request));
+    if (why !== '') throw new ConflictError(why);
+    return await backupModule().deleteBackup(bundle);
+  });
 
   app.post('/api/backups/compatibility', async (request) => {
     const backup = backupModule();
@@ -143,6 +181,9 @@ export function register(app: FastifyInstance): void {
     const body = requestBody(request.body, true);
     const bundle = confinedInput(orText(body.bundle));
     const name = orText(body.name);
+    // Restored as new, a colleague's bundle would hand over their data and admin login.
+    const why = await bundleRefusal(bundle, actor(request));
+    if (why !== '') throw new ConflictError(why);
     return submit(
       app,
       'restore',

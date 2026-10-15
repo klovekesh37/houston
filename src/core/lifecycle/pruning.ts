@@ -4,6 +4,8 @@
  * Tier 4. `prunable` decides and `prune` acts, kept apart so the GUI can show what WOULD go
  * before anything does.
  */
+import * as fs from 'node:fs';
+
 import * as config from '../../lib/config';
 import { ConflictError, DockerError, ReproError, ValidationError } from '../../lib/errors';
 import { type Emit, info, nullEmit, warn } from '../../lib/events';
@@ -14,28 +16,30 @@ import { clearWorkspace } from '../journal';
 import { workspaceNamespaces } from '../kube/capabilities';
 import { deleteCluster } from '../kube/cluster';
 import { planCluster } from '../kube/context';
-import { kube } from '../kube/exec';
-import { CONTEXT as KUBE_CONTEXT, APPLY_TIMEOUT, isOurs } from '../kube/names';
+import { CONTEXT as KUBE_CONTEXT, HOME_LABEL, OWNER_OF_LABEL, mintNamespace } from '../kube/names';
 import {
   deleteNamespace,
   namespaceFor,
+  deleteStray,
+  madeHere,
   namespaceOwner,
   waitNamespaceGone,
 } from '../kube/namespace';
 import { OPERATOR_NAMESPACE } from '../kube/operator';
 import { MONITORING_NAMESPACE, removeGrafanaIngress, removeMonitoring } from '../kube/monitoring';
 import { workloadExists } from '../kube/status';
+import { invalidateQueries } from '../../seams/docker-cli';
 import * as engine from '../runner/engine';
 import { reproLock } from '../runner/locks';
 import * as paths from '../runner/paths';
-import { listMeta, readMeta } from '../runner/record';
+import { type Metadata, listMeta, readMeta } from '../runner/record';
 import { projectStates } from '../runner/queries';
 import * as topology from '../topology';
 
 import * as ownership from './ownership';
 import * as preconditions from './preconditions';
 import { stopPortForward } from './ready';
-import { clearDefaultIf } from './state';
+import { clearDefaultIf, hasComposeLeftovers } from './state';
 
 function bag(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -67,50 +71,85 @@ export async function prunable(): Promise<string[]> {
   const me = auditActor();
   const candidates: Awaited<ReturnType<typeof listMeta>> = [];
   for (const meta of await listMeta()) {
-    // `pinned` by `isTruthy`: a hand-edited `"pinned": []` or `{}` is not a pin, and NaN is.
-    // JavaScript's truthiness kept the list and the mapping and pruned the NaN.
-    if (isTruthy(meta.pinned)) continue;
-    const [allowed] = await ownership.mayDestroy(meta.name, me);
-    if (!allowed) continue;
-    candidates.push(meta);
+    if (await mayPrune(meta, me)) candidates.push(meta);
   }
   let states: Record<string, string> | null = null;
   if (candidates.some((meta) => topology.ofMeta(meta) !== topology.KUBERNETES)) {
-    await preconditions.requireDocker();
-    states = await projectStates();
-    if (states === null) {
-      throw new DockerError(
-        "couldn't query docker compose projects - not pruning (is Docker healthy?)",
-      );
-    }
+    states = await composeStates();
   }
   const out: string[] = [];
   for (const meta of candidates) {
-    if (topology.ofMeta(meta) === topology.KUBERNETES) {
-      // ASK KUBERNETES, not Docker. "Is it down" was decided by whether a compose PROJECT
-      // was running, and a Kubernetes workspace never has one -- so every Kubernetes
-      // workspace looked down, including a healthy one serving traffic.
-      const context = isTruthy(bag(meta.extra)[config.EXTRA_CONTEXT])
-        ? String(bag(meta.extra)[config.EXTRA_CONTEXT])
-        : KUBE_CONTEXT;
-      let running: boolean;
-      try {
-        running = await workloadExists(meta.name, { context });
-      } catch (error) {
-        if (!(error instanceof DockerError)) throw error;
-        // NOT PRUNABLE, rather than "down". `workloadExists` refuses to guess when the
-        // cluster cannot be asked, and the safe reading of "I could not tell" is to leave
-        // the workspace alone -- this list is a delete list. Skipped rather than raised so
-        // one unreadable workspace does not stop the others being pruned.
-        continue;
-      }
-      if (running) continue;
-      out.push(meta.name);
-      continue;
-    }
-    if (states !== null && !Object.hasOwn(states, meta.project)) out.push(meta.name);
+    if (await isDown(meta, states)) out.push(meta.name);
   }
   return out;
+}
+
+/** Not pinned, and `me` may destroy it. */
+async function mayPrune(meta: Metadata, me: string): Promise<boolean> {
+  // `pinned` by `isTruthy`: a hand-edited `"pinned": []` or `{}` is not a pin, and NaN is.
+  // JavaScript's truthiness kept the list and the mapping and pruned the NaN.
+  if (isTruthy(meta.pinned)) return false;
+  const [allowed] = await ownership.mayDestroy(meta.name, me);
+  return allowed;
+}
+
+/** Every compose project's state, or a refusal: prune deletes nothing on a guess. */
+async function composeStates(): Promise<Record<string, string>> {
+  await preconditions.requireDocker();
+  const states = await projectStates();
+  if (states === null) {
+    throw new DockerError(
+      "couldn't query docker compose projects - not pruning (is Docker healthy?)",
+    );
+  }
+  return states;
+}
+
+/** Whether the workspace is down; `states` is every compose project's, for a Compose one. */
+async function isDown(meta: Metadata, states: Record<string, string> | null): Promise<boolean> {
+  if (topology.ofMeta(meta) === topology.KUBERNETES) {
+    // NEVER, with Docker containers left under the record by 2.1.1: "down" was asked of the
+    // cluster alone, so their running containers lost their data. `down --volumes` takes both.
+    if (hasComposeLeftovers(meta.name)) return false;
+    // ASK KUBERNETES, not Docker. "Is it down" was decided by whether a compose PROJECT
+    // was running, and a Kubernetes workspace never has one -- so every Kubernetes
+    // workspace looked down, including a healthy one serving traffic.
+    const context = isTruthy(bag(meta.extra)[config.EXTRA_CONTEXT])
+      ? String(bag(meta.extra)[config.EXTRA_CONTEXT])
+      : KUBE_CONTEXT;
+    try {
+      return !(await workloadExists(meta.name, { context }));
+    } catch (error) {
+      if (!(error instanceof DockerError)) throw error;
+      // NOT PRUNABLE, rather than "down". `workloadExists` refuses to guess when the
+      // cluster cannot be asked, and the safe reading of "I could not tell" is to leave
+      // the workspace alone -- this list is a delete list. Skipped rather than raised so
+      // one unreadable workspace does not stop the others being pruned.
+      return false;
+    }
+  }
+  return states !== null && !Object.hasOwn(states, meta.project);
+}
+
+/**
+ * Whether `name` may still be pruned, asked again under its lock. The list was made before
+ * any lock was taken, and Kubernetes deletions take minutes each: a workspace pinned, started
+ * or handed over meanwhile was deleted with its data all the same.
+ */
+async function stillPrunable(name: string): Promise<boolean> {
+  let meta: Metadata;
+  try {
+    meta = await readMeta(name);
+  } catch {
+    return false; // gone already
+  }
+  if (!(await mayPrune(meta, auditActor()))) return false;
+  // ASKED AFRESH: `compose ls` is cached for a moment, and the cached answer was the one the
+  // list was made from -- so a workspace another command had started meanwhile still read
+  // as down here, and lost its data to the `down -v` below.
+  invalidateQueries();
+  const states = topology.ofMeta(meta) === topology.KUBERNETES ? null : await composeStates();
+  return await isDown(meta, states);
 }
 
 /**
@@ -162,6 +201,19 @@ export async function reclaimCluster(emit: Emit = nullEmit): Promise<boolean> {
  * Reported, never swept automatically. On a shared cluster an unrecorded namespace may be
  * a COLLEAGUE's workspace created from their own home.
  */
+/** The directory names under the repros directory: every workspace, whether or not it reads. */
+function workspaceDirectories(): string[] {
+  try {
+    return fs
+      .readdirSync(config.reprosDir(), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error; // could not list them: sweeping nothing beats sweeping on a guess
+  }
+}
+
 export async function orphanNamespaces(context = ''): Promise<string[]> {
   const ctx = context || (await orphanContext());
   let found: string[] | null;
@@ -177,6 +229,11 @@ export async function orphanNamespaces(context = ''): Promise<string[]> {
   }
   const known = new Set<string>();
   for (const meta of await listMeta()) known.add(await namespaceFor(meta.name));
+  // AND EVERY WORKSPACE DIRECTORY, its record readable or not. `listMeta` skips a record it
+  // cannot read, so a workspace whose repro.json was hand-edited into broken JSON read as a
+  // stray here -- marked as this home's and owned by its caller -- and `prune --orphans`
+  // deleted its namespace and PersistentVolumeClaim without --force.
+  for (const dir of workspaceDirectories()) known.add(mintNamespace(dir));
   return found.filter((ns) => !known.has(ns) && ns !== OPERATOR_NAMESPACE).sort();
 }
 
@@ -233,20 +290,37 @@ export async function sweepOrphanNamespaces(
         );
         continue;
       }
-      const res = await kube.run(
-        ['kubectl', '--context', ctx, 'delete', 'namespace', ns, '--wait=false'],
-        { timeout: APPLY_TIMEOUT, own: isOurs(ctx) },
-      );
-      if (res.returncode === 0) {
+      // NOR IS YOUR NAME ON IT PROOF THAT THIS HOME MADE IT: a laptop and the server share
+      // an account name, and this swept the other home's live workspace, PVC and all.
+      if (!force && !(await madeHere(ns, { context: ctx }))) {
+        warn(
+          emit,
+          `namespace ${ns} is not marked as made by this houston home (or its mark could not ` +
+            "be read), so it may be another home's workspace — left alone. `--force` sweeps it",
+          { phase: 'done' },
+        );
+        continue;
+      }
+      // BOUND TO WHAT WAS JUDGED: the same owner and this home's mark, on the one read the
+      // delete then names by UID, so a namespace made in its place since is not the one that goes.
+      let res: { deleted: boolean; why: string };
+      try {
+        res = await deleteStray(ns, {
+          context: ctx,
+          stillStray: (labels) =>
+            force ||
+            ((labels[OWNER_OF_LABEL] ?? '') === owner && labels[HOME_LABEL] === config.homeId()),
+        });
+      } catch (error) {
+        res = { deleted: false, why: error instanceof Error ? error.message : String(error) };
+      }
+      if (res.deleted) {
         swept.push(ns);
         info(emit, `removed orphaned namespace ${ns}`, { phase: 'done' });
       } else {
-        warn(
-          emit,
-          `could not remove orphaned namespace ${ns}: ` +
-            `${(res.stderr || '').trim().slice(0, 120)}`,
-          { phase: 'done' },
-        );
+        warn(emit, `could not remove orphaned namespace ${ns}: ${res.why.slice(0, 160)}`, {
+          phase: 'done',
+        });
       }
     }
   }
@@ -350,6 +424,16 @@ export async function removeOneWorkspace(
     finished = await reproLock(
       name,
       async () => {
+        if (!(await stillPrunable(name))) {
+          warn(
+            emit,
+            `'${name}' may no longer be pruned (pinned, started, handed over or gone since the list was made, or its cluster could not be asked) — left alone`,
+            {
+              phase: 'done',
+            },
+          );
+          return false;
+        }
         if ((await topology.ofRepro(name)) === topology.KUBERNETES) {
           // `pruneKubernetes` does its own reporting: it knows whether the namespace is
           // confirmed gone and says so on the path that keeps the record.
@@ -373,6 +457,14 @@ export async function removeOneWorkspace(
         // pointing at nothing.
         deregisterRoute(name);
         await paths.remove(name);
+        if (await paths.exists(name)) {
+          warn(
+            emit,
+            `'${name}''s containers and data volume are gone but its record could not be ` +
+              `removed: remove ${paths.workspace(name)} by hand`,
+            { phase: 'done' },
+          );
+        }
         // Under the lock, like the removal: see `journal.clearWorkspace`.
         clearWorkspace(name);
         return true;
@@ -424,12 +516,15 @@ export async function prune({
   orphans = false,
   force = false,
   only = null,
+  onlyStray = null,
   emit = nullEmit,
 }: {
   confirm?: boolean;
   orphans?: boolean;
   force?: boolean;
   only?: readonly string[] | null;
+  /** The orphaned namespaces the caller showed and had confirmed: the sweep goes no wider. */
+  onlyStray?: readonly string[] | null;
   emit?: Emit;
 } = {}): Promise<Record<string, unknown>> {
   let targets = await prunable();
@@ -446,7 +541,18 @@ export async function prune({
       );
     }
   }
-  const stray = orphans ? await orphanNamespaces() : [];
+  let stray = orphans ? await orphanNamespaces() : [];
+  // As the workspaces are: what was shown and confirmed, and no namespace that turned up
+  // after the prompt -- under --force that one was swept without ever being on screen.
+  if (onlyStray !== null) {
+    const shown = new Set(onlyStray);
+    for (const ns of stray.filter((candidate) => !shown.has(candidate))) {
+      warn(emit, `namespace ${ns} turned up after the list was shown and is left alone`, {
+        phase: 'done',
+      });
+    }
+    stray = stray.filter((candidate) => shown.has(candidate));
+  }
   if (targets.length === 0 && stray.length === 0) {
     // Still worth asking about the CLUSTER. With every workspace gone, houston's own kind
     // cluster is a 514 MiB control plane holding nothing -- and both the README and the

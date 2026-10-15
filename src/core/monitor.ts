@@ -17,6 +17,7 @@ import { type Emit, info, nullEmit, warn } from '../lib/events';
 import { toInt, quotedText, toText, isTruthy, valueKind, expectedText } from '../lib/format';
 import * as monitoring from '../lib/monitoring';
 import { publicPathsOf } from '../lib/presets/public';
+import { record as auditRecord } from './audit';
 import { register as registerRoute } from './edge/routes';
 
 import { login } from './lifecycle/admin';
@@ -254,6 +255,7 @@ export async function attachKubernetes(target: string, emit: Emit = nullEmit): P
   const { forwardReachable, grafanaForward } = await import('./kube/forward');
   const m = await readMeta(target);
   const [namespace, context] = await kubeTarget(m);
+  await (await import('./kube/namespace')).requireOwnNamespace(m.name, { context });
   const extra = bagOf(m.extra);
   const publicUrl = isTruthy(extra.tls) ? m.publicUrl : '';
   if (!publicUrl) await checkMonitorPorts(m.name);
@@ -351,6 +353,9 @@ export async function detachKubernetes(target: string, emit: Emit = nullEmit): P
   const k8s = await import('./kube/monitoring');
   const m = await readMeta(target);
   const [namespace, context] = await kubeTarget(m);
+  // Its own namespace still: by name, `--off` stripped the label of a namespace another home
+  // had made in this one's place, and could uninstall the stack that home was using.
+  await (await import('./kube/namespace')).requireOwnNamespace(m.name, { context });
   if (isTruthy(bagOf(m.extra).tls)) await k8s.removeGrafanaIngress(m.name, { context, emit });
   let rcOk = false;
   // EMITTED, not silent. Removing the shared stack can take minutes — it deletes operator
@@ -437,6 +442,8 @@ export async function detachLocked(target: string, emit: Emit = nullEmit): Promi
   });
   await rmServices(m.name, [...monitoring.SERVICES]);
   info(emit, 'removing the monitoring volumes', { phase: 'monitor' });
+  // Recorded, as every removal of data is: Prometheus, Grafana and Loki's history.
+  auditRecord('monitor-off', m.name);
   // Remove the volumes while they are still DECLARED. `docker compose down -v` only
   // removes declared volumes, so dropping them from the doc below without deleting them
   // first orphans prometheus_tsdb/grafana_data/loki_data forever.

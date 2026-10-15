@@ -14,7 +14,13 @@ import type * as VersionsNS from '../../../src/lib/versions';
 import type * as PolicyNS from '../../testsetup-policy';
 import type * as ContextNS from '../../../src/lib/context';
 import { openEntries } from '../../../src/core/journal';
-import { type Metadata, adminPass, metadata, writeRecord } from '../../../src/core/runner/record';
+import {
+  type Metadata,
+  adminPass,
+  metadata,
+  readMeta,
+  writeRecord,
+} from '../../../src/core/runner/record';
 
 import { createPlan } from '../../../src/core/lifecycle/create-docker';
 
@@ -23,6 +29,32 @@ import type * as CreateK8sNS from '../../../src/core/lifecycle/create-k8s';
 import { MODE_ACME, tlsSpec } from '../../../src/core/tls';
 import { createReq } from '../../../src/core/lifecycle/types';
 import * as users from '../../../src/core/users';
+
+describe('the image a rebuild runs', () => {
+  it('is the one the workspace was built from, on the release it runs', async () => {
+    // `up --force` without `--rc-image` rebuilt a patched image's workspace from the default
+    // repository; a Kubernetes re-up already kept it. Another release is another image.
+    const patched = 'registry.example.com/rc:8.5.1-patched';
+    await writeRecord(
+      'rc8-5-1',
+      metadata({ name: 'rc8-5-1', rcVersion: '8.5.1', rcImage: patched }),
+    );
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    const pairing = async (values: Partial<ReturnType<typeof createReq>>): Promise<string> => {
+      const plan = createPlan({
+        req: createReq({ version: '8.5.1', offline: true, force: true, ...values }),
+        emit: nullEmit,
+      });
+      await createDocker.resolvePairing(plan);
+      return String(plan.resolved?.rcImage);
+    };
+    expect(await pairing({})).toBe(patched);
+    expect(await pairing({ rcImage: 'mine/rc:1' })).toBe('mine/rc:1');
+    expect(await pairing({ version: '8.6.1', name: 'rc8-5-1' })).not.toBe(patched);
+    fs.rmSync(path.join(config.home(), 'repros', 'rc8-5-1'), { recursive: true, force: true });
+  });
+});
 
 describe('claiming the Compose ports', () => {
   afterEach(() => {
@@ -293,6 +325,24 @@ describe('the create path end to end, stopped at the write seam', () => {
     expect(openEntries()).toHaveLength(before);
   });
 
+  it('brings back only a workspace that is still there when its turn comes', async () => {
+    // The GUI's Bring it up, queued behind a Delete, found the name free once the Delete
+    // let go of it and made a new, EMPTY workspace in its place.
+    const { seen, createDocker } = capture();
+    const back = createReq({
+      version: '8.5.1',
+      name: 'gone',
+      exactName: true,
+      bringBack: true,
+      offline: true,
+    });
+    await expect(createDocker.createRepro(back)).rejects.toThrow(
+      "'gone' was deleted while this waited its turn",
+    );
+    await expect(createDocker.createRepro(back)).rejects.toHaveProperty('exitCode', 4); // not_found
+    expect(seen.meta).toBeUndefined();
+  });
+
   it('keeps the shared password for a workspace nothing off this box can reach', async () => {
     // Loopback is the entire reason `admin123` is acceptable; rotating it here would cost
     // every runbook and buy nothing.
@@ -558,6 +608,95 @@ describe('the create path end to end, stopped at the write seam', () => {
     ).rejects.toThrow('g3 belongs to alice');
     expect(seen.meta).toBeUndefined();
   });
+
+  it('refuses a member whose own prefix now names a workspace handed to someone else', async () => {
+    // Not an exact name: `x` derives `bob-x`, which bob made and handed to alice. Only an
+    // exact name was asked again, so bob's create started, pinned or rebuilt alice's.
+    await writeRecord(
+      'bob-x',
+      metadata({
+        name: 'bob-x',
+        project: 'houston-bob-x',
+        extra: { created_by: 'bob', owner: 'alice' },
+      }),
+    );
+    const { seen, createDocker } = capture();
+    const context = require('../../../src/lib/context') as typeof ContextNS;
+    const req = createReq({
+      version: '8.5.1',
+      name: 'x',
+      actor: 'bob',
+      wait: false,
+      offline: true,
+    });
+    await expect(
+      context.runWithContext({ actor: 'bob' }, () => createDocker.createReproLocked(req)),
+    ).rejects.toThrow('bob-x belongs to alice');
+    expect(seen.meta).toBeUndefined();
+  });
+
+  it('asks about the name multi-instance settles on, not the one before it', async () => {
+    // The owner was asked about `bob-rc8-5-1`, then `--deployment multi-instance` renamed it
+    // `bob-rc8-5-1-multi-instance`, which had been handed to alice -- and bob's --force
+    // rebuilt it.
+    await writeRecord(
+      'bob-rc8-5-1-multi-instance',
+      metadata({
+        name: 'bob-rc8-5-1-multi-instance',
+        project: 'houston-bob-rc8-5-1-multi-instance',
+        extra: { created_by: 'bob', owner: 'alice' },
+      }),
+    );
+    const { seen, createDocker } = capture();
+    const context = require('../../../src/lib/context') as typeof ContextNS;
+    const req = createReq({
+      version: '8.5.1',
+      deployment: 'multi-instance',
+      actor: 'bob',
+      force: true,
+      wait: false,
+      offline: true,
+    });
+    await expect(
+      context.runWithContext({ actor: 'bob' }, () => createDocker.createRepro(req)),
+    ).rejects.toThrow('bob-rc8-5-1-multi-instance belongs to alice');
+    expect(seen.meta).toBeUndefined();
+  });
+
+  it('holds the name multi-instance settles on while it builds it', async () => {
+    // Only the name before the rename was locked, so a `down` or a second create of
+    // `rc8-5-1-multi-instance` ran straight through this one.
+    const { seen, createDocker } = capture();
+    const { reproLock } = require('../../../src/core/runner/locks') as {
+      reproLock: <T>(name: string, body: () => Promise<T>) => Promise<T>;
+    };
+    const gate = { release: (): void => undefined, taken: false };
+    const held = reproLock(
+      'rc8-5-1-multi-instance',
+      () =>
+        new Promise<void>((done) => {
+          gate.release = done;
+          gate.taken = true;
+        }),
+    );
+    for (let wait = 0; wait < 200 && !gate.taken; wait += 1) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    const creating = createDocker
+      .createRepro(
+        createReq({ version: '8.5.1', deployment: 'multi-instance', wait: false, offline: true }),
+      )
+      .then(
+        () => '',
+        (error: Error) => error.message,
+      );
+    await new Promise((done) => setTimeout(done, 500));
+    expect(seen.meta).toBeUndefined();
+    gate.release();
+    await held;
+    expect(await creating).toBe('stopped at the write seam');
+    expect(seen.meta?.name).toBe('rc8-5-1-multi-instance');
+  });
 });
 
 describe('rebuilding an existing workspace', () => {
@@ -589,6 +728,36 @@ describe('rebuilding an existing workspace', () => {
     await createDocker.buildDocument(plan);
     createDocker.buildRecord(plan);
     expect(plan.meta?.extra).toMatchObject({ owner: 'mem', owner_history: history });
+  });
+
+  it('keeps when it was made through a --force rebuild, and not through --fresh', async () => {
+    // A rebuild that keeps the data was stamped as a new workspace, so a backup taken before
+    // it read as one from an earlier workspace and `restore` by its own name was refused.
+    const versions = require('../../../src/lib/versions') as typeof VersionsNS;
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    const born = '2026-10-01T09:00:00+00:00';
+    const rebuilt = async (fresh: boolean): Promise<string> => {
+      await writeRecord(
+        'born',
+        metadata({ name: 'born', project: 'houston-born', createdAt: born }),
+      );
+      const plan = createDocker.createPlan({
+        req: createReq({ version: '8.5.1', name: 'born', force: true, fresh }),
+        emit: nullEmit,
+        reproName: 'born',
+        resolved: versions.resolve('8.5.1', { offline: true }),
+        pre: presets.load('default', {}),
+        root: 'http://localhost:3331',
+        hostPort: 3331,
+        bindHost: '127.0.0.1',
+      });
+      await createDocker.buildDocument(plan);
+      createDocker.buildRecord(plan);
+      return String(plan.meta?.createdAt);
+    };
+    expect(await rebuilt(false)).toBe(born);
+    expect(await rebuilt(true)).not.toBe(born);
   });
 
   it('keeps it pinned when the record is rebuilt', async () => {
@@ -975,9 +1144,15 @@ describe('a rebuild that names no preset', () => {
     expect(said).toContain("'keep-combo' is a email+ldap workspace — keeping those presets");
   });
 
-  it('rebuilds a one-preset workspace vanilla, as it always has', async () => {
-    const { req } = await axesFor('keep-one', { preset: 'ldap', extra: { runtime: 'docker' } });
-    expect(req.preset).toBe('default');
+  it("keeps a one-preset workspace's preset and params, rather than dropping its data", async () => {
+    // Rebuilt vanilla, an s3_minio workspace's MinIO volume -- every upload -- was then removed
+    // as left over by the previous preset: `up --force` with no --preset deleted the uploads.
+    const { req, said } = await axesFor('keep-one', {
+      preset: 's3_minio',
+      extra: { runtime: 'docker', params: { bucket: 'kept' } },
+    });
+    expect([req.preset, req.params]).toEqual(['s3_minio', { bucket: 'kept' }]);
+    expect(said).toContain("'keep-one' is a s3_minio workspace — keeping those presets");
   });
 
   it('brings a Kubernetes monolith back as a monolith, on its own cluster', async () => {
@@ -1058,6 +1233,45 @@ describe('a rebuild that names no preset', () => {
         delete cfg[config.KUBE_CONTEXT_KEY];
       });
     }
+  });
+});
+
+describe('a create whose name a workspace on the other runtime holds', () => {
+  it('refuses a Kubernetes create over a Docker workspace, and leaves its record alone', async () => {
+    // Seen in production: 8.5.1 on Docker, then 8.5.1 on Kubernetes from the GUI, derived
+    // the same name, took it for "bring it back up" and rewrote the Docker workspace's
+    // record as a Kubernetes one -- its containers still running and nothing pointing at them.
+    const name = 'lovekesh-rc8-5-1';
+    await writeRecord(
+      name,
+      metadata({ name, project: `houston-${name}`, extra: { runtime: 'docker' } }),
+    );
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    await expect(
+      createDocker.createRepro(
+        createReq({ version: '8.5.1', actor: 'lovekesh', runtime: 'kubernetes', offline: true }),
+      ),
+    ).rejects.toThrow(`'${name}' is already a Docker Compose workspace`);
+    expect((await readMeta(name)).extra.runtime).toBe('docker');
+  });
+
+  it('refuses a Docker create over a Kubernetes workspace', async () => {
+    await writeRecord(
+      'kube-held',
+      metadata({
+        name: 'kube-held',
+        project: 'houston-kube-held',
+        extra: { runtime: 'kubernetes' },
+      }),
+    );
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    await expect(
+      createDocker.createRepro(
+        createReq({ version: '8.5.1', name: 'kube-held', runtime: 'docker', offline: true }),
+      ),
+    ).rejects.toThrow("'kube-held' is already a Kubernetes workspace");
   });
 });
 

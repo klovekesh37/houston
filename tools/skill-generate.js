@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * `node tools/skill-generate.js [--check]` -- write data/skill/SKILL.md (and the two project
- * copies) from tools/skill/SKILL.template.md and the build's own `capabilities`.
+ * `node tools/skill-generate.js [--check]` -- write data/skill/SKILL.md (and the checkout's
+ * two ignored local copies) from tools/skill/SKILL.template.md and the build's own
+ * `capabilities`.
  *
  * WHY. The skill file is prose an agent reads before driving this tool, and prose goes
  * stale: it once said exit code 6 was reserved "which nothing in this build raises" while
@@ -26,7 +27,11 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const TEMPLATE = path.join(ROOT, 'tools', 'skill', 'SKILL.template.md');
 const TARGET = path.join(ROOT, 'data', 'skill', 'SKILL.md');
-/** The project copies a checkout carries so an agent working in it reads the same file. */
+/**
+ * The copies a checkout keeps for its own agent, which reads the project's `.claude/skills/`
+ * first. Ignored, never committed: written here so they never go stale, and checked only
+ * where they exist, because a fresh clone has none.
+ */
 const PROJECT_COPIES = [
   path.join(ROOT, '.claude', 'skills', 'houston', 'SKILL.md'),
   path.join(ROOT, '.agents', 'skills', 'houston', 'SKILL.md'),
@@ -134,7 +139,8 @@ if (require.main === module) {
   const check = process.argv.includes('--check');
   const targets = [TARGET, ...PROJECT_COPIES];
   if (check) {
-    const stale = targets.filter(
+    const present = [TARGET, ...PROJECT_COPIES.filter((file) => fs.existsSync(file))];
+    const stale = present.filter(
       (file) => !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== fresh,
     );
     if (stale.length > 0) {
@@ -143,7 +149,7 @@ if (require.main === module) {
       );
       process.exitCode = 1;
     } else {
-      process.stdout.write(`skill-generate: ${String(targets.length)} copies match the build\n`);
+      process.stdout.write(`skill-generate: ${String(present.length)} copies match the build\n`);
     }
   } else {
     for (const file of targets) {
@@ -156,4 +162,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { EXIT_PROSE, PROJECT_COPIES, TARGET, TEMPLATE, generate, render };
+module.exports = { EXIT_PROSE, TARGET, TEMPLATE, generate, render };

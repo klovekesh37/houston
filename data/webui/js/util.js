@@ -65,6 +65,10 @@ let SSO_USER = "";
 // Token mode has no roles, so everything is allowed there exactly as before.
 const canWrite = () => MY_ROLE !== "readonly";
 const canAdmin = () => MY_ROLE === "admin";
+// A member sees every workspace and changes only their own: the server refuses the rest
+// with 409. The detail's `may_destroy` is the server's answer for this viewer.
+const canChange = (d) => canWrite() && !(d && d.may_destroy === false);
+const ownerOf = (d) => (d && (d.owner || d.created_by)) || "its owner";
 const READONLY_WHY = "Your role is readonly. Workspace logs carry LDAP bind "
   + "passwords and OAuth secrets, so readonly cannot read them either.";
 let SIGNING_OUT = false;
@@ -523,6 +527,8 @@ Object.defineProperties(ctx, {
   "MY_ROLE": { enumerable: true, get: () => MY_ROLE, set: value => { MY_ROLE = value; } },
   "canWrite": { enumerable: true, get: () => canWrite },
   "canAdmin": { enumerable: true, get: () => canAdmin },
+  "canChange": { enumerable: true, get: () => canChange },
+  "ownerOf": { enumerable: true, get: () => ownerOf },
   "READONLY_WHY": { enumerable: true, get: () => READONLY_WHY },
   "SIGNING_OUT": { enumerable: true, get: () => SIGNING_OUT, set: value => { SIGNING_OUT = value; } },
   "toSignIn": { enumerable: true, get: () => toSignIn },
@@ -552,4 +558,4 @@ Object.defineProperties(ctx, {
   "refreshKube": { enumerable: true, get: () => refreshKube },
   "paintEngines": { enumerable: true, get: () => paintEngines },
 });
-export { $, el, toast, ACCOUNTS, MY_ROLE, canWrite, canAdmin, READONLY_WHY, SIGNING_OUT, toSignIn, api, apiForm, LOOPBACK_HOSTS, isLoopbackHost, remoteHost, WIDE_BINDS, ALL_REPROS, SELECTED, VIEW, setView, goHome, view, stateClass, HEALTH_TONE, healthClass, ME, jobActive, dstate, RESTARTS_SEEN, restartsClimbing, loadRepros, KUBE, refreshKube, paintEngines };
+export { $, el, toast, ACCOUNTS, MY_ROLE, canWrite, canAdmin, canChange, ownerOf, READONLY_WHY, SIGNING_OUT, toSignIn, api, apiForm, LOOPBACK_HOSTS, isLoopbackHost, remoteHost, WIDE_BINDS, ALL_REPROS, SELECTED, VIEW, setView, goHome, view, stateClass, HEALTH_TONE, healthClass, ME, jobActive, dstate, RESTARTS_SEEN, restartsClimbing, loadRepros, KUBE, refreshKube, paintEngines };

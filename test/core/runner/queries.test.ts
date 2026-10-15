@@ -215,6 +215,24 @@ describe('compose ls, in both of the shapes compose emits', () => {
     });
   });
 
+  it("asks for one project's MongoDB volume, and keeps a failed ask apart from none", async () => {
+    dockerMock.mockResolvedValue(answer({ stdout: 'houston-a_mongodb_data\n' }));
+    expect(await queries.projectDataVolumes('houston-a')).toEqual(['houston-a_mongodb_data']);
+    expect(dockerMock.mock.calls.at(-1)?.[0]).toEqual([
+      'volume',
+      'ls',
+      '-q',
+      '--filter',
+      'label=com.docker.compose.project=houston-a',
+      '--filter',
+      'label=com.docker.compose.volume=mongodb_data',
+    ]);
+    dockerMock.mockResolvedValue(answer({ stdout: '' }));
+    expect(await queries.projectDataVolumes('houston-a')).toEqual([]);
+    dockerMock.mockResolvedValue(answer({ exitCode: 1, stderr: 'Cannot connect' }));
+    expect(await queries.projectDataVolumes('houston-a')).toBeNull();
+  });
+
   it('reads an answer of `null` as a query that failed, as earlier releases do', async () => {
     // Earlier releases parse `null` as no value, hand it back as-is and read it as "could
     // not ask" in the project states. Wrapped as `[null]` it reached `item.Name`

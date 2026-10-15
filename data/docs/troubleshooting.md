@@ -29,7 +29,15 @@ for what Kubernetes refuses, see [the Kubernetes guide](kubernetes.md#what-kuber
 | a **port** is in use | Pass `--port`, or leave it out and houston picks a free one. |
 | the **Docker daemon** is not running | Start Docker Desktop, or `sudo systemctl start docker`. |
 | "already exists and is reused as-is" | `up` brings back the existing workspace. `--force` rebuilds it, `--fresh` also wipes its data; `houston upgrade` changes the version. |
+| "is already a Docker Compose workspace" (or "a Kubernetes workspace") | The name, typed or derived from the version, belongs to a workspace on the other runtime, and one name is one workspace. Give the new one its own name, or delete the old one first with `houston down --name <name> --volumes`. |
+| "was made after this backup" | `restore <bundle>` without `--name` goes back to the workspace the bundle came from, and the one holding that name now is newer. `--new` brings the backup back as its own workspace; `--name <name>` replaces that newer workspace's data anyway. |
+| "runs Rocket.Chat X, and this asks for Y" (Kubernetes) | `up` brings a Kubernetes workspace back at its own version. Use `--version X`, or `houston upgrade --name <name> --to Y` to move it. |
+| "already holds a MongoDB for '<name>'" | Another houston on this machine left that workspace's data (`sudo houston` uses root's settings, not yours), or this one lost its record of it. Give the new one its own `--name`. Remove the volume the message names only if nobody needs that data. |
+| "is not the workspace this backup was taken from" | The workspace with the bundle's name now is a different one: it was made at another time. `restore <bundle> --new` brings the backup back as its own workspace; `--name <name>` replaces that workspace's data anyway. |
+| "could not ask Docker whether another houston home left a MongoDB" | Docker did not answer in time, and houston will not guess about someone else's data. Check `docker volume ls` answers, then run `up` again. |
+| "could mean '<name>' … or your own '<you>-<name>'" | Two workspaces answer to what you typed. Type the full name for yours; the other one is reached from the GUI, or from a command run without `HOUSTON_USER`. |
 | a Docker Hub pull limit | Run `docker login`. |
+| "Unit docker-….scope was already loaded or has a fragment file" | systemd still holds the unit of the containers' last run. houston recreates them when it sees this, data kept; if it still shows, `houston down --name <name>` keeps the data, then bring the workspace up again. Out-of-memory kills leave such units behind: `journalctl -k \| grep -i oom`. |
 
 It starts but Rocket.Chat never answers:
 
@@ -67,6 +75,14 @@ Seen on Rocket.Chat 8.5.1, and the same with or without houston's edge in front:
 | "no matching manifest for linux/arm64" | Rocket.Chat below 8.0.0 is amd64 only: use an amd64 node, 8.0.0 or newer, or Docker. |
 | "no chart deploys it" or "predates every values key houston sets" | Rocket.Chat below 3.7.2: use Docker. |
 | `env --set`, `seed --scale`, `loadtest` or `capacity` refuses | Docker only. The refusal names what to use instead. |
+| "was made by another houston home on this cluster", or "this houston has no record of it" | Each houston marks the namespaces it makes, and one of the same name from another machine or another user is not yours to take over or delete. Use another `--name`. If it really is this one's (made before 2.1.2, its record lost), run the `kubectl label namespace …` the message gives, then `up` again. |
+| "keeps its data in a MongoDB houston runs itself, and this would bring it back under the MongoDB operator" | Bring it back as it was: without `--mongo-operator`, and with `HOUSTON_MONGO_OPERATOR` unset. To move it to the operator, back it up, `down --volumes`, then `restore --new` with the operator. |
+| "could not mark namespace … as using the shared monitoring stack" | Monitoring was not attached: without that mark another workspace's teardown could remove the stack. Fix the account's right to label namespaces, then `houston monitor --name <name>` again. |
+| `prune --orphans` leaves a namespace "not marked as made by this houston home" | It may be another houston's workspace. `--force` removes it anyway. |
+| "has a different UID from this workspace's record" on `start`, `backup`, `restore` or `upgrade` | The namespace was deleted and made again since this workspace was created, perhaps by another houston, so this workspace's own is gone and houston will not act on the new one, `down` included. Once you have checked whose it is, remove the stale record by hand: `rm -r ~/.houston/repros/<name>` (or under your `HOUSTON_HOME`). |
+| "home-id does not hold this home's id" | The file that tells this houston from others on a cluster is damaged. Put the id back (`kubectl get namespaces -L houston.io/home` shows the ids in use), or delete the file to start a new one and label this home's namespaces with it, as the message shows. |
+| "could not read … home-id" | Not damage: usually a `sudo houston` left it owned by root. Fix its owner or permissions; do not delete it, or this home's namespaces read as another home's. |
+| "is already served for workspace '<other>' by its cluster's ingress" | On a cluster that serves HTTPS itself (EKS with no edge here), two workspaces cannot share a `--domain`. Give this one another name, or `houston down --name <other>` first. |
 
 Names are lowercase: `TICKET-1234` lives in namespace `houston-ticket-1234`.
 
@@ -102,6 +118,7 @@ houston cluster list       # EKS clusters in every enabled AWS region
 
 | You see | Do this |
 |---|---|
+| "this backup is <name>'s data" | A backup belongs to whoever owned the workspace it was taken from, even after that workspace is gone or its name is reused. Only they or an admin can restore or delete it. |
 | A cluster card says **Reading…** | It is being read. **Not read** or `?` means it could not be read, never zero. |
 | The job log is quiet for a while | Long steps say "still installing (1m30s)". Over a couple of minutes, check **Activity** and `houston logs --name <name>`. |
 | A control is missing | Options a runtime or cluster cannot honour are removed. Offline and "Don't pull images" are command-line only (`--offline`, `--no-pull`). |

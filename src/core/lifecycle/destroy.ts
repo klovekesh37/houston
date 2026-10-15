@@ -34,7 +34,7 @@ import * as naming from './naming';
 import * as ownership from './ownership';
 import * as preconditions from './preconditions';
 import { stopPortForward } from './ready';
-import { clearDefaultIf } from './state';
+import { clearDefaultIf, downComposeLeftovers } from './state';
 import { INTERACTIVE_LOCK_WAIT } from './types';
 
 function bag(value: unknown): Record<string, unknown> {
@@ -64,7 +64,23 @@ export async function removeTheClusterSide(
   volumes: boolean,
 ): Promise<void> {
   if (!volumes) return;
-  if (isTruthy(bag(meta.extra).tls)) await removeGrafanaIngress(target, { context, emit });
+  // Its namespace is gone by now, so a Grafana route that cannot be removed -- its cluster
+  // deleted outside houston -- is said, and does not keep a record whose data is gone from
+  // ever being removed.
+  if (isTruthy(bag(meta.extra).tls)) {
+    try {
+      await removeGrafanaIngress(target, { context, emit });
+    } catch (error) {
+      warn(
+        emit,
+        `could not remove '${target}''s Grafana route from cluster '${context}' ` +
+          `(${error instanceof Error ? error.message : String(error)}) — if the cluster is still ` +
+          'there, remove it with `kubectl -n houston-system delete ingress -l ' +
+          `houston.io/workspace=${target}\``,
+        { phase: 'teardown' },
+      );
+    }
+  }
   // AFTER the namespace, never before: deleting it took this workspace's
   // MongoDBCommunity with it while the operator was still there to clear the finalizer.
   const ns = await namespaceFor(target);
@@ -214,7 +230,11 @@ export async function teardownKubernetes(
 }
 
 /** Stop the project, detach from the edge, bring it down, and forget the name. */
-export async function teardownCompose(target: string, volumes: boolean): Promise<void> {
+export async function teardownCompose(
+  target: string,
+  volumes: boolean,
+  emit: Emit = nullEmit,
+): Promise<void> {
   // Stop while the edge is still attached, so its pooled upstream connections receive
   // the backend's close. Disconnecting first strands those sockets on Podman; when a
   // kept workspace gets a new network/IP, the first HTTPS request can reuse one and hang.
@@ -232,6 +252,16 @@ export async function teardownCompose(target: string, volumes: boolean): Promise
   deregisterRoute(target);
   if (volumes) {
     await paths.remove(target);
+    // SAID, as the Kubernetes path says it: the containers and volume are gone, and a record
+    // that could not be removed would otherwise go on being listed with nothing behind it.
+    if (await paths.exists(target)) {
+      warn(
+        emit,
+        `the containers and data volume are gone but ${paths.workspace(target)} could not be ` +
+          `removed, so \`list\` will still show '${target}'. Remove that directory by hand.`,
+        { phase: 'teardown' },
+      );
+    }
     // A note about a workspace that is gone advises work nobody can do: `doctor` kept
     // telling people to `houston ready` a workspace this had just deleted.
     clearWorkspace(target);
@@ -250,25 +280,31 @@ export async function teardown(
       `deleting ${quotedText(target)}'s data volume and record is irreversible - pass confirm=true`,
     );
   }
-  if (volumes) {
+  const refuseUnlessAllowed = async (): Promise<void> => {
+    if (!volumes) return;
     const [allowed, why] = await ownership.mayDestroy(target, auditActor());
     if (!allowed) {
       auditRecord('down-volumes', target, { outcome: 'denied' });
       throw new ConflictError(why);
     }
-  }
-  // Recorded BEFORE the work, not after: a teardown that dies half way through has still
-  // destroyed containers, and that is exactly the event someone will come looking for.
-  auditRecord(volumes ? 'down-volumes' : 'down', target);
+  };
+  await refuseUnlessAllowed();
   // Locked: `down` during a create races `docker compose up` and leaves orphaned
   // containers behind.
   const body = async (): Promise<Record<string, unknown> | null> => {
+    // AGAIN UNDER THE LOCK: handed over while this waited, it is somebody else's data now.
+    await refuseUnlessAllowed();
+    // Recorded BEFORE the work, not after: a teardown that dies half way through has still
+    // destroyed containers, and that is exactly the event someone will come looking for.
+    // After the check, so a refusal is not also written down as done.
+    auditRecord(volumes ? 'down-volumes' : 'down', target);
     // The two runtimes answer DIFFERENTLY, and always did: the Kubernetes path reports
     // `found` and its own `runtime`, and says its own "done" line.
     if ((await topology.ofRepro(target)) === topology.KUBERNETES) {
+      await downComposeLeftovers(target, volumes, emit);
       return await teardownKubernetes(target, volumes, emit);
     }
-    await teardownCompose(target, volumes);
+    await teardownCompose(target, volumes, emit);
     return null;
   };
   // ASKED FIRST WITHOUT WAITING, so a wait is SAID: `down --volumes` behind a running

@@ -8,6 +8,13 @@ import type * as StateNS from '../../../src/core/lifecycle/state';
 import type * as RecordNS from '../../../src/core/runner/record';
 import type * as TopologyNS from '../../../src/core/topology';
 
+// The namespace identity check asks the cluster, and this suite has none: it is tested on its
+// own in test/core/kube/tier3.test.ts.
+jest.mock('../../../src/core/kube/namespace', () => ({
+  ...jest.requireActual('../../../src/core/kube/namespace'),
+  requireOwnNamespace: async () => undefined,
+}));
+
 describe('starting, stopping and restarting', () => {
   it('refuses an action that is not a state transition, before dispatching', async () => {
     await writeRecord('w', metadata({ name: 'w', project: 'houston-w' }));
@@ -147,11 +154,25 @@ describe('restarting a workspace that is not there to restart', () => {
     // `mongodb`, and `ready` then blamed the replica set.
     await writeRecord('n', metadata({ name: 'n', project: 'houston-n' }));
     const upped: string[] = [];
+    // And recreated while the workspace is still held: it ran after the lock was let go, so
+    // a create, backup or Delete could take the workspace between the start and the repair.
+    let held = false;
+    jest.doMock('../../../src/core/runner/locks', () => ({
+      ...jest.requireActual('../../../src/core/runner/locks'),
+      reproLock: async (_name: string, body: () => Promise<unknown>) => {
+        held = true;
+        try {
+          return await body();
+        } finally {
+          held = false;
+        }
+      },
+    }));
     jest.doMock('../../../src/core/runner/engine', () => ({
       ...jest.requireActual('../../../src/core/runner/engine'),
       start: async () => 0,
       up: async (name: string) => {
-        upped.push(name);
+        upped.push(`${name}, ${held ? 'held' : 'let go'}`);
         return 0;
       },
     }));
@@ -160,8 +181,12 @@ describe('restarting a workspace that is not there to restart', () => {
       networklessContainers: async () => ['houston-n-rocketchat-1'],
     }));
     const fresh = require('../../../src/core/lifecycle/state') as typeof StateNS;
-    await fresh.setState('n', 'start');
-    expect(upped).toEqual(['n']);
+    try {
+      await fresh.setState('n', 'start');
+    } finally {
+      jest.dontMock('../../../src/core/runner/locks');
+    }
+    expect(upped).toEqual(['n, held']);
   });
 
   it('fails a restart that left Rocket.Chat stopped', async () => {
@@ -252,6 +277,40 @@ describe('stopping and starting a Kubernetes workspace', () => {
     await fresh.setState('k', 'stop');
     expect(events).toEqual(['stopped 5151']);
     expect((await record.readMeta('k')).extra.scenario_forwards).toEqual({ '8081': 5151 });
+  });
+
+  it("scales only a namespace that is still this workspace's own", async () => {
+    // By name, start and stop scaled a namespace another home had made in this one's place.
+    jest.resetModules();
+    const calls: string[] = [];
+    const stub = (refuse: boolean) =>
+      jest.doMock('../../../src/core/kube/namespace', () => ({
+        ...jest.requireActual('../../../src/core/kube/namespace'),
+        requireOwnNamespace: async (name: string) => {
+          calls.push(`asked ${name}`);
+          if (refuse) throw new Error('namespace houston-k was made by another houston home');
+        },
+      }));
+    stub(true);
+    jest.doMock('../../../src/core/kube/scale', () => ({
+      ...jest.requireActual('../../../src/core/kube/scale'),
+      stopWorkspace: async () => calls.push('scaled down'),
+      startWorkspace: async () => calls.push('scaled up'),
+    }));
+    try {
+      const record = require('../../../src/core/runner/record') as typeof RecordNS;
+      const topology = require('../../../src/core/topology') as typeof TopologyNS;
+      const meta = record.metadata({ name: 'k', project: 'houston-k', hostPort: 3010 });
+      topology.stamp(meta.extra, topology.KUBERNETES);
+      await record.writeRecord('k', meta);
+      const fresh = require('../../../src/core/lifecycle/state') as typeof StateNS;
+      for (const action of ['stop', 'start', 'restart']) {
+        await expect(fresh.setState('k', action)).rejects.toThrow(/another houston home/u);
+      }
+      expect(calls).toEqual(['asked k', 'asked k', 'asked k']);
+    } finally {
+      stub(false);
+    }
   });
 
   it('scales it rather than calling compose, and restart is stop then start', async () => {

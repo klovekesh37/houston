@@ -70,6 +70,29 @@ describe('announcing readiness', () => {
   });
 });
 
+describe('starting the stack for the GUI, over a stale systemd unit', () => {
+  it('hands the streamed up to the recreate, which is what makes it start', async () => {
+    // The GUI's Bring it up streams `compose up`; that path bypassed `engine.up`, so its
+    // recovery from a unit the last run left loaded never ran there.
+    jest.resetModules();
+    const recreatedIfStale = jest.fn(async () => 0);
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual<object>('../../../src/core/runner/engine'),
+      stream: async () => 1,
+      recreatedIfStale,
+    }));
+    try {
+      const ready = require('../../../src/core/lifecycle/ready') as typeof ReadyNS;
+      const rc = await ready.upCompose('w', { pull: false, emit: () => {}, streamOutput: true });
+      expect(recreatedIfStale).toHaveBeenCalledWith('w', 1);
+      expect(rc).toBe(0);
+    } finally {
+      jest.dontMock('../../../src/core/runner/engine');
+      jest.resetModules();
+    }
+  });
+});
+
 describe('bringing a route back', () => {
   it('Grafana public URL regression: restores the monitored router after start or reuse', async () => {
     jest.resetModules();

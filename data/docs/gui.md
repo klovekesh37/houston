@@ -46,11 +46,14 @@ houston users remove alice
 
 | Role | May |
 |---|---|
-| `admin` | everything, including accounts and building or deleting clusters |
-| `member` | everyday work: create, seed, load-test, tear down |
+| `admin` | everything, including accounts and building, preparing, forgetting or deleting clusters |
+| `member` | everyday work on their own workspaces: create, start and stop, seed, load-test, tear down. Sees everyone's workspaces, but not their logs, env vars or admin login |
 | `readonly` | look only. Cannot read logs or environment variables, which can hold secrets |
 
-The first account is an admin; later ones are members. Admins can also manage accounts
+A member changes only the workspaces they own, and those nobody owns (made before
+accounts existed); anything else answers 409 and names the owner, who can hand it over.
+Setting the workspace CLI commands use by default is an admin's. The first account is an
+admin; later ones are members. Admins can also manage accounts
 in the GUI: your name, top right → **People & roles**. Roles apply to the GUI only:
 anyone with a shell can run houston directly.
 
@@ -147,8 +150,9 @@ houston does not sign you out of Okta. Run one `serve` per houston home, and bac
   **Send an API call**, **PAT and Token**, **Back up now**, **Upgrade version**,
   **Roll back to** the earlier version (after an upgrade that kept its backup),
   **Attach monitoring**, **Run a load test**, **Find capacity**, **Hand over…**, and
-  **Take this workspace down**. Hand over, roll back and deleting the data are offered to
-  the workspace's owner and admins, or to anyone under `gui.destroy_policy anyone`.
+  **Take this workspace down**. All of it, and Stop, Restart, Logs and Env vars, is offered
+  to the workspace's owner and admins, or to anyone under `gui.destroy_policy anyone`; a
+  member opening someone else's workspace sees its details and who to ask.
 
 ## Create a workspace
 
@@ -212,7 +216,7 @@ from the CLI with `--context`; the GUI does not list them.
 
 ```bash
 houston config set gui.create_policy admin      # only admins may set an image, a registration token, a bind address or a cluster
-houston config set gui.destroy_policy anyone    # members may delete anyone's workspace
+houston config set gui.destroy_policy anyone    # members may change and delete anyone's workspace
 houston config set bind_host 0.0.0.0            # one decision for every new workspace
 houston audit                                   # who did what
 houston chown --name <workspace> --to bob       # hand a workspace to someone else
@@ -252,3 +256,7 @@ It prints a systemd unit, how to install it, and a `nohup` alternative, and chan
 nothing. The unit carries the `PATH` of the shell you print it from, and `AWS_PROFILE`
 and `AWS_REGION` when they are set, because systemd starts a service with none of them:
 print it where `node`, `docker` and `aws` already work (under nvm, after `nvm use`).
+It restarts the GUI 10 seconds after it stops (`RestartSec=10`), so a GUI that cannot start
+yet, such as while its HTTPS edge cannot, keeps being retried instead of being given up after
+five quick failures. A unit printed by an earlier release has no `RestartSec`; add it with
+`sudo systemctl edit houston`.

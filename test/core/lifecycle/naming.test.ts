@@ -1,5 +1,6 @@
 import { ValidationError } from '../../../src/lib/errors';
 import type { Event } from '../../../src/lib/events';
+import { remove } from '../../../src/core/runner/paths';
 import { metadata, writeRecord } from '../../../src/core/runner/record';
 
 import {
@@ -158,6 +159,35 @@ describe('workspace naming', () => {
     expect(await resolveName('TICKET-1234', 'alice')).toBe('alice-ticket-1234');
     expect(await resolveName('alice-ticket-1234')).toBe('alice-ticket-1234');
     await expect(resolveName('ticket-1234')).rejects.toThrow(/no repro named/);
+  });
+
+  it("refuses a typed name that could be somebody else's workspace or the caller's own", async () => {
+    // alice's `--name test` made alice-test. A `test` that is not hers appeared later, and
+    // exact-first resolution sent her `down --name test --volumes` to it, not to hers.
+    await writeRecord(
+      'alice-test',
+      metadata({ name: 'alice-test', extra: { created_by: 'alice' } }),
+    );
+    await writeRecord('test', metadata({ name: 'test' }));
+    await expect(resolveName('test', 'alice')).rejects.toThrow(
+      "'test' could mean 'test' (nobody's) or your own 'alice-test' - type 'alice-test' for yours",
+    );
+    await expect(resolveName('test', 'alice')).rejects.toBeInstanceOf(ValidationError);
+    // The full name is never ambiguous; nor is the bare one to anyone without one of their own.
+    expect(await resolveName('alice-test', 'alice')).toBe('alice-test');
+    expect(await resolveName('test', 'bob')).toBe('test');
+    expect(await resolveName('test')).toBe('test');
+    // Somebody's named owner is said; and when the bare one is hers too, it is hers as typed.
+    await writeRecord(
+      'test',
+      metadata({ name: 'test', extra: { created_by: 'bob', owner: 'carol' } }),
+    );
+    await expect(resolveName('test', 'alice')).rejects.toThrow("'test' (carol's)");
+    await writeRecord('test', metadata({ name: 'test', extra: { created_by: 'alice' } }));
+    expect(await resolveName('test', 'alice')).toBe('test');
+    // Gone again: the home is the file's, and a later round trip resolves `test` afresh.
+    await remove('test');
+    await remove('alice-test');
   });
 });
 

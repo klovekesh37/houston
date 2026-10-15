@@ -145,6 +145,7 @@ describe('the compose project collision guard', () => {
       jest.doMock('../../../src/core/runner/queries', () => ({
         ...jest.requireActual('../../../src/core/runner/queries'),
         projectConfigFiles: async () => answer,
+        projectDataVolumes: async () => [],
       }));
       const fresh = require('../../../src/core/lifecycle/preconditions') as typeof PreconditionsNS;
       seen.push(
@@ -155,6 +156,42 @@ describe('the compose project collision guard', () => {
       );
     }
     expect(seen).toEqual(['ConflictError', null, null, null]);
+  });
+
+  it('refuses a MongoDB another home left behind, which `compose ls` cannot see', async () => {
+    // A project `down`ed without --volumes is absent from `compose ls`, so a second home on
+    // the machine (`sudo houston` is root's) passed the guard, Compose mounted the volume the
+    // first one left, and the second home served -- and then deleted -- the first one's data.
+    const asked: string[] = [];
+    const run = async (answer: string[] | null): Promise<string> => {
+      jest.resetModules();
+      jest.doMock('../../../src/core/runner/queries', () => ({
+        ...jest.requireActual('../../../src/core/runner/queries'),
+        projectConfigFiles: async () => ({}),
+        projectDataVolumes: async (project: string) => {
+          asked.push(project);
+          return answer;
+        },
+      }));
+      const fresh = require('../../../src/core/lifecycle/preconditions') as typeof PreconditionsNS;
+      return await fresh.guardProjectCollision('rc8-5-1').then(
+        () => 'allowed',
+        (error: Error) => `${error.constructor.name}: ${error.message}`,
+      );
+    };
+    const refused = await run(['houston-rc8-5-1_mongodb_data']);
+    expect(refused).toMatch(/^ConflictError: the Docker volume houston-rc8-5-1_mongodb_data/u);
+    expect(refused).toContain('docker volume rm houston-rc8-5-1_mongodb_data');
+    expect(asked).toEqual(['houston-rc8-5-1']);
+    expect(await run([])).toBe('allowed');
+    // Could not ask is not "none": a create that mounts another home's data is the harm.
+    expect(await run(null)).toMatch(
+      /^DockerError: could not ask Docker whether another houston home/u,
+    );
+    // This home's own workspace keeps its own data across a --force or --fresh rebuild.
+    await writeRecord('rc8-5-1', metadata({ name: 'rc8-5-1' }));
+    expect(await run(['houston-rc8-5-1_mongodb_data'])).toBe('allowed');
+    fs.rmSync(workspace('rc8-5-1'), { recursive: true, force: true });
   });
 });
 

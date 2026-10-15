@@ -100,6 +100,11 @@ export interface CreateReq {
   exactName: boolean;
   /** Set by `resolveTls`: an ACME challenge has to publish on a public interface. */
   bindPublic: boolean;
+  /**
+   * Bring back the workspace `name` IS, never make one: the GUI's Bring it up. Queued behind
+   * a Delete, it otherwise found the name free and made a new, empty workspace.
+   */
+  bringBack: boolean;
 }
 
 /** A request with the established defaults filled in. */
@@ -144,6 +149,7 @@ export function createReq(values: Partial<CreateReq> & Pick<CreateReq, 'version'
     actor: '',
     exactName: false,
     bindPublic: false,
+    bringBack: false,
     ...values,
   };
 }
@@ -217,9 +223,9 @@ export const ESSENTIAL_SERVICES: readonly string[] = Object.freeze(['mongodb']);
 export const STATE_ACTIONS: readonly string[] = Object.freeze(['start', 'stop', 'restart']);
 
 /**
- * Who may DESTROY a workspace somebody else owns. `owner` is the default: the guardrail
- * was "confirms first, naming the owner". `anyone` restores the previous behaviour
- * exactly, for a team that would rather have the confirm.
+ * Who may destroy -- and, in the GUI, change at all -- a workspace somebody else owns.
+ * `owner` is the default: the guardrail was "confirms first, naming the owner". `anyone`
+ * restores the earlier behaviour, for a team that would rather share every workspace.
  */
 export const DESTROY_POLICY_KEY = 'gui.destroy_policy';
 

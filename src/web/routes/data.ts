@@ -118,14 +118,15 @@ export function register(app: FastifyInstance): void {
   app.post<{ Params: { name: string } }>('/api/repros/:name/scale', async (request) => {
     const body = requestBody(request.body, true);
     const scale = Object.hasOwn(body, 'scale') ? body.scale : '';
-    const target = await resolveName(request.params.name);
+    // Refused HERE, as a 400, not as a job that fails after the GUI said it started.
+    const target = await data.scaleTarget(request.params.name);
     return submit(app, 'scale', (emit) => data.runScale(target, scale as string, emit), {
       label: target,
     });
   });
 
   app.delete<{ Params: { name: string } }>('/api/repros/:name/scale', async (request) => {
-    const target = await resolveName(request.params.name);
+    const target = await data.scaleTarget(request.params.name);
     return submit(app, 'clear-scale', (emit) => data.clearScale(target, emit), { label: target });
   });
 

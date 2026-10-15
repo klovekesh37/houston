@@ -86,7 +86,17 @@ describe('a prune', () => {
         kube: {
           run: async (argv: readonly string[]) => {
             if (argv.includes('delete')) order.push('delete namespace');
-            return { argv, returncode: 0, stdout: '', stderr: '' };
+            // The sweep reads the namespace once more, and deletes it by that read's UID.
+            const doc = {
+              metadata: {
+                name: 'houston-gone',
+                uid: 'uid-gone',
+                resourceVersion: '1',
+                labels: { 'app.kubernetes.io/managed-by': 'houston' },
+              },
+            };
+            const stdout = argv.includes('get') ? JSON.stringify(doc) : '';
+            return { argv, returncode: 0, stdout, stderr: '' };
           },
         },
       };

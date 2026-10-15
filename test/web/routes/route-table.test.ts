@@ -3,6 +3,8 @@ import Fastify from 'fastify';
 import { createApp } from '../../../src/web/app';
 import {
   installRouteCompleteness,
+  ownerScoped,
+  ROUTE_ROLES,
   toBraceRouteKey,
   toBraceTemplate,
   toFastifyRouteKey,
@@ -18,6 +20,40 @@ describe('the default-deny route table', () => {
     expect(toBraceRouteKey(['GET', '/api/:one/:two'])).toEqual(['GET', '/api/{one}/{two}']);
     expect(toFastifyRouteKey(['WS', ''])).toEqual(['WS', '']);
     expect(toBraceRouteKey(['WS', ''])).toEqual(['WS', '']);
+  });
+
+  it('scopes every member route that names a workspace to its owner, and nothing else', () => {
+    // A member sees every workspace and changes only their own. Derived from the table, so a
+    // member route added later is scoped without anyone remembering to.
+    const scoped = [...ROUTE_ROLES.keys()].filter((key) => {
+      const [method = '', template = ''] = key.split(' ');
+      return ownerScoped(method, toFastifyTemplate(template));
+    });
+    for (const key of scoped) {
+      expect([key, ROUTE_ROLES.get(key)]).toEqual([key, 'member']);
+      expect(key).toContain('{name}');
+    }
+    expect(scoped).toEqual(
+      expect.arrayContaining([
+        'POST /api/repros/{name}/state',
+        'DELETE /api/repros/{name}',
+        'GET /api/repros/{name}/env',
+        'POST /api/repros/{name}/env',
+        'GET /api/repros/{name}/logs',
+        'WS /api/repros/{name}/logs/stream',
+        'POST /api/repros/{name}/pat',
+        'POST /api/repros/{name}/call',
+      ]),
+    );
+    // Looking stays open; the CLI default is an admin's; creating names no workspace yet.
+    for (const key of [
+      'GET /api/repros/{name}/detail',
+      'POST /api/repros/{name}/default',
+      'POST /api/repros',
+    ]) {
+      expect([key, scoped.includes(key)]).toEqual([key, false]);
+    }
+    expect(scoped).toHaveLength(22);
   });
 
   it('finds an omitted route and does not broadly forgive HEAD', () => {

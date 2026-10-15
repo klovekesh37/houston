@@ -101,8 +101,9 @@ Go through this list for every change:
    `data/docs/ARCHITECTURE.md` (`test/lib/invariants/architecture-map.test.ts` fails
    otherwise).
 2. **A changed command, flag, preset or exit code** means running `yarn skill:generate`,
-   which rewrites `data/skill/SKILL.md` and the two project copies from
-   `tools/skill/SKILL.template.md`. Edit the template, never the generated files.
+   which rewrites `data/skill/SKILL.md` from `tools/skill/SKILL.template.md` (and
+   refreshes the two ignored copies your checkout keeps under `.claude/skills/` and
+   `.agents/skills/`). Edit the template, never the generated files.
 3. **Help text and usage errors are pinned** under `test/fixtures/cli/`. Move a pin only
    on purpose, in the commit that changes the behaviour.
 4. **Documents name only real commands and flags.**

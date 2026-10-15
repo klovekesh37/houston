@@ -27,7 +27,7 @@ import {
   scenarioUiForwards,
   stopForward,
 } from '../kube/forward';
-import { namespaceFor } from '../kube/namespace';
+import { namespaceFor, requireOwnNamespace } from '../kube/namespace';
 import { workspaceReady, terminalPodFailure, servicesWithoutEndpoints } from '../kube/status';
 import { CONTEXT as KUBE_CONTEXT } from '../kube/names';
 import { completeSetupWizard, NotReady, apiInfo, waitReady } from '../rcapi';
@@ -137,7 +137,8 @@ async function composeUp(
     // non-fatal, like runner.up
     await engine.stream(name, ['pull'], onLine);
   }
-  return (await engine.stream(name, ['up', '-d', '--remove-orphans'], onLine)) ?? 1;
+  const rc = await engine.stream(name, ['up', '-d', '--remove-orphans'], onLine);
+  return (await engine.recreatedIfStale(name, rc)) ?? 1;
 }
 
 /**
@@ -596,6 +597,8 @@ export async function waitServingKubernetes(
   const namespace = isTruthy(extra.namespace)
     ? String(extra.namespace)
     : await namespaceFor(meta.name);
+  // Forwarded to, and set up over REST, only while it is still this workspace's own.
+  await requireOwnNamespace(meta.name, { context });
   const deadline = Date.now() + timeout * 1000;
   let last = 0;
   // Consecutive rounds where the workspace is ready and the port answers with something

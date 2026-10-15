@@ -15,6 +15,7 @@ jest.mock('../../../src/core/data', () => {
     ),
     runScale: jest.fn(),
     clearScale: jest.fn(),
+    scaleTarget: jest.fn(async (name: string) => name),
   };
 });
 jest.mock('../../../src/core/lifecycle/naming', () => {
@@ -223,6 +224,36 @@ describe('settings upload pinning', () => {
       expect(dataService.runScale).toHaveBeenCalledWith('scaled', 'users=5', expect.any(Function));
       expect(dataService.clearScale).toHaveBeenCalledWith('scaled', expect.any(Function));
     } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses a scale the workspace cannot take before a job exists', async () => {
+    // A Kubernetes workspace has no compose project to bulk-insert through. The refusal ran
+    // inside the job, so the GUI said "started" and then failed; now it is the answer.
+    const { ValidationError } = require('../../../src/lib/errors') as typeof ErrorsNS;
+    jest
+      .mocked(dataService.scaleTarget)
+      .mockRejectedValue(
+        new ValidationError(
+          "--scale prefill reads the Docker Compose project, and 'k' runs on Kubernetes.",
+        ),
+      );
+    const app = await createApp({ accounts: false });
+    try {
+      for (const method of ['POST', 'DELETE'] as const) {
+        const refused = await app.inject({
+          method,
+          url: '/api/repros/k/scale',
+          ...(method === 'POST' ? { payload: { scale: 'users=5' } } : {}),
+        });
+        expect({ method, status: refused.statusCode }).toEqual({ method, status: 400 });
+        expect(refused.json().job_id).toBeUndefined();
+      }
+      expect(dataService.runScale).not.toHaveBeenCalled();
+      expect(dataService.clearScale).not.toHaveBeenCalled();
+    } finally {
+      jest.mocked(dataService.scaleTarget).mockImplementation(async (name: string) => name);
       await app.close();
     }
   });

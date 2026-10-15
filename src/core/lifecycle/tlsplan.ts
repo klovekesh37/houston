@@ -50,7 +50,9 @@ import { type IssuerSpec, ensureCertManager } from '../kube/certmanager';
 import { ensureIngress } from '../kube/ingress';
 import { ensureKubeconfig } from '../kube/cluster';
 import { type ClusterPlan, isLocalCluster } from '../kube/context';
+import { CONTEXT as KUBE_CONTEXT } from '../kube/names';
 import { preflight } from '../kube/probe';
+import { workloadExists } from '../kube/status';
 import { type Preflight } from '../kube/tools';
 import {
   type IngressEndpoint,
@@ -61,7 +63,7 @@ import {
 } from '../kube/endpoints';
 import { updateConfig } from '../runner/locks';
 import * as paths from '../runner/paths';
-import { readMeta, recorded } from '../runner/record';
+import { listMeta, readMeta, recorded } from '../runner/record';
 import { ensureCa, issueLeaf } from '../tls-local';
 import * as fs from 'node:fs';
 
@@ -256,6 +258,35 @@ export function challengeMode(domain: string, emit: Emit, req: CreateReq): strin
  * produces a repro that comes up and serves nothing, with the reason only in `docker
  * compose logs traefik`.
  */
+/**
+ * The other workspace here that the CLUSTER serves `host` for, '' for none.
+ *
+ * A route file speaks for every name the edge serves, so `hostOwner` sees those, and `down`
+ * frees one by removing its file. A Kubernetes workspace on a cluster that owns :443 -- EKS,
+ * with no edge on this box -- has no route file: its name is served by the cluster's ingress
+ * for as long as the release is there, and `down` uninstalls it. So: a name recorded that way,
+ * by a workspace still running there. Asked of its cluster, and an unanswered ask is raised.
+ */
+async function clusterHostOwner(host: string, excluding: readonly string[]): Promise<string> {
+  for (const meta of await listMeta()) {
+    const extra = meta.extra;
+    if (excluding.includes(meta.name) || extra.tls_terminates !== 'cluster') continue;
+    if (isTruthy(extra.edge)) continue;
+    let theirs: string;
+    try {
+      theirs = new URL(meta.publicUrl).hostname;
+    } catch {
+      continue; // an unreadable URL names no host
+    }
+    if (theirs.toLowerCase() !== host.toLowerCase()) continue;
+    const context = isTruthy(extra[config.EXTRA_CONTEXT])
+      ? String(extra[config.EXTRA_CONTEXT])
+      : KUBE_CONTEXT;
+    if (await workloadExists(meta.name, { context })) return meta.name;
+  }
+  return '';
+}
+
 export async function resolveTls(
   req: CreateReq,
   reproName: string,
@@ -321,6 +352,18 @@ export async function resolveTls(
       phase: 'tls',
     });
     taken = hostOwner(host, { excluding: exclude || reproName });
+  }
+  // AND A NAME NO ROUTE FILE HOLDS. On a cluster that owns :443 itself -- EKS, with no edge
+  // on this box -- a Kubernetes workspace's name is never routed here, so the check above
+  // could not see it, and a second workspace given the same --domain was handed to the
+  // cluster's ingress beside the first.
+  const servedByCluster = taken ? '' : await clusterHostOwner(host, [reproName, exclude]);
+  if (servedByCluster) {
+    throw new ConflictError(
+      `${host} is already served for workspace '${servedByCluster}' by its cluster's ingress, ` +
+        'and two ingresses on one name means the controller picks one and the other never ' +
+        `answers. Use a different name, or \`houston down --name ${servedByCluster}\` first.`,
+    );
   }
   if (taken) {
     throw new ConflictError(

@@ -18,6 +18,8 @@ import {
   env,
   generateAdminPassword,
   home,
+  HOME_ID_FILE,
+  homeId,
   isYamlDate,
   legacyEnvUsed,
   loadConfig,
@@ -1280,5 +1282,41 @@ describe("a rewrite of a hand-edited config.yaml, against earlier releases'", ()
     expect(fs.readFileSync(configFile(), 'utf8')).toBe(
       "1: a\n'10': b\nnested:\n  k:\n  - 1\n  - 2\n",
     );
+  });
+});
+
+describe("the home's own id", () => {
+  it('is made once, kept, private, and never silently replaced', () => {
+    // What tells two homes apart on one cluster: it must not change between commands, or a
+    // home would stop recognising the namespaces it made.
+    const file = path.join(home(), HOME_ID_FILE);
+    fs.rmSync(file, { force: true });
+    const first = homeId();
+    expect(first).toMatch(/^[0-9a-f]{16}$/u);
+    expect(homeId()).toBe(first);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(home()).filter((entry) => entry.includes('.tmp'))).toEqual([]);
+    // Damaged, it is refused rather than silently replaced: a new id would make every
+    // namespace this home marked read as another home's.
+    fs.writeFileSync(file, 'not an id\n');
+    expect(() => homeId()).toThrow(/does not hold this home's id[\s\S]*kubectl get namespaces/u);
+    expect(fs.readFileSync(file, 'utf8')).toBe('not an id\n');
+    // Deleted on purpose, a new one is made.
+    fs.rmSync(file);
+    const second = homeId();
+    expect(second).toMatch(/^[0-9a-f]{16}$/u);
+    expect(second).not.toBe(first);
+    // One that cannot be READ is not damaged, and deleting it is not the remedy: the usual
+    // cause is a `sudo houston` that left it root's. A directory in its place cannot be read
+    // by anyone, root included.
+    fs.renameSync(file, `${file}.kept`);
+    fs.mkdirSync(file);
+    try {
+      expect(() => homeId()).toThrow(/could not read [\s\S]*fix its permissions/u);
+    } finally {
+      fs.rmdirSync(file);
+      fs.renameSync(`${file}.kept`, file);
+    }
+    expect(homeId()).toBe(second);
   });
 });

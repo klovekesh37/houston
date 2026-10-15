@@ -636,6 +636,8 @@ describe('acting on a workspace', () => {
       name: 'x',
       wait: true,
       offline: true,
+      // Only ever the workspace it is: queued behind a Delete, it made an empty new one.
+      bringBack: true,
     });
   });
 
@@ -685,11 +687,12 @@ describe('acting on a workspace', () => {
       .mock.calls.map(([, , options]) => typeof options?.monitorAttach);
     expect(hooks).toEqual(['function', 'function']);
     await as('mem2', 'member');
+    // Refused by the gate every member route that names a workspace passes, before the
+    // route's own check, which stays behind it.
     const refused = await post('/api/repros/k1/up');
-    expect([refused.statusCode, String(refused.json().error)]).toEqual([
-      409,
-      'k1 belongs to kmem — only kmem or an admin can bring it back up.',
-    ]);
+    expect(refused.statusCode).toBe(409);
+    expect(String(refused.json().error)).toMatch(/^k1 belongs to kmem — /u);
+    expect(jest.mocked(createDocker.createRepro)).toHaveBeenCalledTimes(2);
   });
 
   it('sets the default workspace', async () => {
@@ -909,6 +912,76 @@ describe('the TLS probe', () => {
     expect(asked).toContainEqual(['rc1.example.com', 443, undefined]);
   });
 
+  it("asks where `tls-status` asks: [::1] past a cluster's placeholder, and a cluster's origin", async () => {
+    // Check TLS asked on its own and missed both of the CLI's fixes: on a box running k3s,
+    // IPv4 :443 answers with the cluster's placeholder, so a good Docker certificate read as
+    // broken; and behind a CDN a Kubernetes workspace was given the CDN's certificate.
+    const report = (issuer: string, fallback: boolean) =>
+      ({
+        serving: true,
+        issuer,
+        subject: '',
+        dates: '',
+        fallback,
+        trusted: !fallback,
+        error: '',
+      }) as never;
+    jest
+      .mocked(tls.verify)
+      .mockImplementation((async (target: string) =>
+        target === '127.0.0.1'
+          ? report('CN = TRAEFIK DEFAULT CERT', true)
+          : target === '::1'
+            ? report('CN = YR2', false)
+            : target === '10.0.0.5'
+              ? report('CN = R11', false)
+              : report('CN = Cloudflare Inc ECC CA-3', false)) as never);
+    const workspace = (extra: Record<string, unknown>) =>
+      jest.mocked(record.readMeta).mockResolvedValue(
+        realRecord.metadata({
+          name: 't',
+          rootUrl: 'http://localhost:3000',
+          publicUrl: 'https://rc1.example.com',
+          extra: { tls: 'acme', ...extra },
+        }) as never,
+      );
+
+    workspace({ tls_ports: [443] });
+    expect((await get('/api/repros/t/tls')).json()).toMatchObject({ issuer: 'CN = YR2' });
+
+    jest.mocked(tls.verify).mockClear();
+    workspace({ tls_terminates: 'cluster', edge: true, ingress_endpoint: '10.0.0.5:443' });
+    expect((await get('/api/repros/t/tls')).json()).toMatchObject({ issuer: 'CN = R11' });
+    expect(jest.mocked(tls.verify).mock.calls[0]).toEqual([
+      '10.0.0.5',
+      { port: 443, sni: 'rc1.example.com' },
+    ]);
+  });
+
+  it('keeps the placeholder IPv4 found when [::1] refuses, rather than calling it nothing', async () => {
+    // With IPv6 off, [::1] refuses -- and the last answer won, so a box serving the cluster's
+    // placeholder on IPv4 was reported as serving nothing at all.
+    jest
+      .mocked(tls.verify)
+      .mockImplementation((async (target: string) =>
+        target === '127.0.0.1'
+          ? { serving: true, issuer: 'CN = TRAEFIK DEFAULT CERT', fallback: true, error: '' }
+          : { serving: false, issuer: '', fallback: false, error: 'connection refused' }) as never);
+    jest.mocked(record.readMeta).mockResolvedValue(
+      realRecord.metadata({
+        name: 't',
+        rootUrl: 'http://localhost:3000',
+        publicUrl: 'https://rc1.example.com',
+        extra: { tls: 'acme', tls_ports: [443] },
+      }) as never,
+    );
+    expect((await get('/api/repros/t/tls')).json()).toMatchObject({
+      serving: true,
+      fallback: true,
+      issuer: 'CN = TRAEFIK DEFAULT CERT',
+    });
+  });
+
   it('refuses a workspace created without --https', async () => {
     jest
       .mocked(record.readMeta)
@@ -989,6 +1062,19 @@ describe('env', () => {
     expect(calls[0]?.[2]).toEqual(['OLD']);
     // An already-prefixed setting id is not double-prefixed.
     expect(calls[1]?.[1]).toEqual({ OVERWRITE_SETTING_Foo_Bar: '1' });
+  });
+
+  it('refuses an env change on a Kubernetes workspace up front, not in a job that fails', async () => {
+    // The GUI said "started", then the job failed: `setEnv` refused Kubernetes only once it
+    // ran. A refusal that is known before anything starts is a 400, and there is no job.
+    const meta = realRecord.metadata({ name: 'ke', rcVersion: '8.6.1', extra: {} });
+    topology.stamp(meta.extra, topology.KUBERNETES);
+    await realRecord.writeRecord('ke', meta);
+    const response = await post('/api/repros/ke/env', { set: { A: '1' } });
+    expect(response.statusCode).toBe(400);
+    expect(String(response.json().error)).toContain("'ke' runs on Kubernetes");
+    expect(response.json().job_id).toBeUndefined();
+    expect(envvars.setEnv).not.toHaveBeenCalled();
   });
 
   it('refuses a setting that is not an object', async () => {
@@ -1252,11 +1338,117 @@ describe('roles and ownership', () => {
     expect(String(response.json().error)).toContain('belongs to alice');
   });
 
-  it('keeps helping on a colleague’s workspace open: only destruction is gated', async () => {
+  it('lets a member change only their own workspaces, as the owner decided after Okta', async () => {
+    // Before, only destruction was gated, so a member could stop a colleague's workspace,
+    // take it down, rewrite its env and read its logs and admin login.
     await workspace('alices-box', 'alice');
     await as('bob');
-    expect((await post('/api/repros/alices-box/state', { action: 'restart' })).statusCode).toBe(
-      200,
+    jest.mocked(state.setState).mockResolvedValue({} as never);
+    const refusals: [string, number][] = [];
+    for (const [method, url, body] of [
+      ['POST', '/api/repros/alices-box/state', { action: 'stop' }],
+      ['POST', '/api/repros/alices-box/state', { action: 'restart' }],
+      ['DELETE', '/api/repros/alices-box', undefined],
+      ['GET', '/api/repros/alices-box/env', undefined],
+      ['POST', '/api/repros/alices-box/env', { set: { A: 'b' } }],
+      ['GET', '/api/repros/alices-box/logs', undefined],
+      ['POST', '/api/repros/alices-box/seed', {}],
+      ['POST', '/api/repros/alices-box/pat', {}],
+      ['POST', '/api/repros/alices-box/call', { method: 'GET', path: '/api/v1/me' }],
+      ['POST', '/api/repros/alices-box/backup', {}],
+      ['POST', '/api/repros/alices-box/upgrade', { version: '8.6.0' }],
+      ['POST', '/api/repros/alices-box/monitor', { on: true }],
+      ['POST', '/api/repros/alices-box/ready', {}],
+    ] as const) {
+      const response = await app.inject({
+        method,
+        url,
+        ...(body === undefined ? {} : { payload: body as object }),
+        headers: headers(),
+      });
+      refusals.push([`${method} ${url}`, response.statusCode]);
+      if (response.statusCode === 409) {
+        expect(String(response.json().error)).toContain('belongs to alice — you can look at it');
+      }
+    }
+    expect(refusals.filter(([, status]) => status !== 409)).toEqual([]);
+    expect(jest.mocked(state.setState)).not.toHaveBeenCalled();
+    // Their own, they change as before; a workspace nobody owns is anyone's.
+    await workspace('bobs-box', 'bob');
+    await workspace('old-box', '');
+    for (const name of ['bobs-box', 'old-box']) {
+      expect((await post(`/api/repros/${name}/state`, { action: 'restart' })).statusCode).toBe(200);
+    }
+    // An admin changes anyone's; so does a member on a box set to let anyone.
+    cookie = await signIn('alice');
+    await workspace('carols-box', 'carol');
+    expect((await post('/api/repros/carols-box/state', { action: 'stop' })).statusCode).toBe(200);
+    await as('bob');
+    config.updateConfig((cfg) => {
+      cfg[DESTROY_POLICY_KEY] = 'anyone';
+    });
+    expect((await post('/api/repros/alices-box/state', { action: 'stop' })).statusCode).toBe(200);
+  });
+
+  it('shows a member someone else’s workspace without its login, env vars or password', async () => {
+    const secret = 'g3nerated-Pa55';
+    jest.mocked(payload.detail).mockImplementation(
+      async (name) =>
+        ({
+          name,
+          login: { user: 'admin', password: secret },
+          env: [{ key: 'ROOT_URL', value: 'http://x' }],
+          notes: [`it runs admin/${secret}. Keep it off untrusted networks.`],
+          note_groups: [{ title: 'Reachable', body: [`runs admin/${secret}`] }],
+        }) as never,
     );
+    jest
+      .mocked(inspect.describe)
+      .mockImplementation(
+        async (name) => ({ name, login: { user: 'admin', password: secret } }) as never,
+      );
+    await workspace('alices-box', 'alice');
+    await workspace('bobs-box', 'bob');
+    await as('bob');
+    const theirs = await get('/api/repros/alices-box/detail');
+    expect(theirs.statusCode).toBe(200);
+    expect(theirs.body).not.toContain(secret);
+    expect(theirs.json()).toMatchObject({ login: null, env: [], may_destroy: false });
+    expect(theirs.json().notes).toEqual([
+      'it runs admin/********. Keep it off untrusted networks.',
+    ]);
+    const described = await get('/api/repros/alices-box');
+    expect([described.statusCode, described.json().login]).toEqual([200, null]);
+    // Their own, in full.
+    const own = await get('/api/repros/bobs-box/detail');
+    expect(own.json()).toMatchObject({ login: { password: secret }, may_destroy: true });
+  });
+
+  it('leaves the CLI default to an admin, it being everybody’s', async () => {
+    await workspace('bobs-box', 'bob');
+    await as('bob');
+    expect((await post('/api/repros/bobs-box/default')).statusCode).toBe(403);
+    // A create's pin sets it too.
+    const pinned = await post('/api/repros', { version: '8.5.1', name: 'p1', pin: true });
+    expect(pinned.statusCode).toBe(400);
+    expect(String(pinned.json().error)).toContain('default workspace for CLI commands');
+    expect(jest.mocked(createDocker.createRepro)).not.toHaveBeenCalled();
+  });
+
+  it('hides even a one-letter password without touching a key of the payload', async () => {
+    // A password restored from a bundle can be any string; replaced in the serialised JSON,
+    // an `e` rewrote keys and the panel could not read its own payload.
+    jest
+      .mocked(payload.detail)
+      .mockImplementation(
+        async (name) =>
+          ({ name, login: { user: 'admin', password: 'e' }, notes: ['see admin/e'] }) as never,
+      );
+    await workspace('alices-box', 'alice');
+    await as('bob');
+    const d = (await get('/api/repros/alices-box/detail')).json();
+    expect(Object.keys(d).sort()).toEqual(['login', 'may_destroy', 'name', 'notes']);
+    expect([d.name, d.login]).toEqual(['alices-box', null]);
+    expect(d.notes[0]).not.toContain('admin/e');
   });
 });

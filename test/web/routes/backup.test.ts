@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 
 import * as backup from '../../../src/core/backup';
+import * as record from '../../../src/core/runner/record';
 import type * as RecordNS from '../../../src/core/runner/record';
 import type * as BackupNS from '../../../src/core/backup';
 import * as compat from '../../../src/core/backup-compat';
@@ -53,6 +54,7 @@ jest.mock('../../../src/core/backup', () => ({
   deleteBackup: jest.fn(async (bundle: string) => ({ deleted: bundle })),
   readManifest: jest.fn(async () => ({ rc_version: '8.5.1' })),
   restore: jest.fn(async () => ({})),
+  bundleOwner: jest.fn(async () => ''),
 }));
 jest.mock('../../../src/core/backup-compat', () => ({
   ...jest.requireActual('../../../src/core/backup-compat'),
@@ -129,6 +131,97 @@ describe('backups', () => {
     });
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json().deleted).toBe('/a.rcbak');
+  });
+
+  it('are deleted or restored by a member only when the workspace they came from is theirs', async () => {
+    // A bundle is that workspace's data: deleting one was open to every member, and restoring
+    // a colleague's as new handed over their data and admin login.
+    await users.add('bob', PASSWORD, 'member');
+    const signin = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      payload: { user: 'bob', password: PASSWORD },
+      headers: { host: 'localhost' },
+    });
+    const bob = String(signin.headers['set-cookie'] ?? '').split(';')[0] ?? '';
+    fs.mkdirSync(backup.backupsDir(), { recursive: true });
+    fs.writeFileSync(inside('carol.rcbak'), 'bundle');
+    const asBob = (method: 'DELETE' | 'POST') =>
+      method === 'DELETE'
+        ? app.inject({
+            method,
+            url: `/api/backups?path=${encodeURIComponent(inside('carol.rcbak'))}`,
+            headers: { host: 'localhost', cookie: bob },
+          })
+        : app.inject({
+            method,
+            url: '/api/restore',
+            payload: { bundle: inside('carol.rcbak'), name: 'mine', new: true },
+            headers: { host: 'localhost', cookie: bob },
+          });
+    jest.mocked(backup.readManifest).mockResolvedValue({ repro: 'carols-box' });
+    jest.mocked(record.readMeta).mockResolvedValue({ extra: { owner: 'carol' } } as never);
+    for (const method of ['DELETE', 'POST'] as const) {
+      const refused = await asBob(method);
+      expect([method, refused.statusCode]).toEqual([method, 409]);
+      expect(String(refused.json().error)).toContain('carols-box belongs to carol');
+    }
+    expect(jest.mocked(backup.deleteBackup)).not.toHaveBeenCalled();
+    expect(jest.mocked(backup.restore)).not.toHaveBeenCalled();
+    jest.mocked(record.readMeta).mockResolvedValue({ extra: { owner: 'bob' } } as never);
+    expect((await asBob('DELETE')).statusCode).toBe(200);
+    expect((await asBob('POST')).statusCode).toBe(200);
+    jest.mocked(record.readMeta).mockImplementation(async () => ({}) as never);
+    jest.mocked(backup.readManifest).mockImplementation(async () => ({ rc_version: '8.5.1' }));
+  });
+
+  it("are a colleague's by the owner they record, once their workspace is gone or renamed", async () => {
+    // Gated on the workspace the name resolves to NOW: once carol's was deleted, or a newer
+    // workspace of bob's took its name, bob could delete her only copy of that data.
+    await users.add('bob2', PASSWORD, 'member');
+    const signin = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      payload: { user: 'bob2', password: PASSWORD },
+      headers: { host: 'localhost' },
+    });
+    const bob = String(signin.headers['set-cookie'] ?? '').split(';')[0] ?? '';
+    fs.mkdirSync(backup.backupsDir(), { recursive: true });
+    fs.writeFileSync(inside('carols-old.rcbak'), 'bundle');
+    jest.mocked(backup.bundleOwner).mockResolvedValue('carol');
+    // The name now resolves to bob2's own workspace, or to nothing: either way, carol's data.
+    jest.mocked(backup.readManifest).mockResolvedValue({ repro: 'shared-name' });
+    jest.mocked(record.readMeta).mockResolvedValue({ extra: { owner: 'bob2' } } as never);
+    const refused = await app.inject({
+      method: 'DELETE',
+      url: `/api/backups?path=${encodeURIComponent(inside('carols-old.rcbak'))}`,
+      headers: { host: 'localhost', cookie: bob },
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(String(refused.json().error)).toContain("this backup is carol's data");
+    expect(jest.mocked(backup.deleteBackup)).not.toHaveBeenCalled();
+    // An admin still may.
+    const asAdmin = await app.inject({
+      method: 'DELETE',
+      url: `/api/backups?path=${encodeURIComponent(inside('carols-old.rcbak'))}`,
+      headers: { host: 'localhost', cookie: admin },
+    });
+    expect(asAdmin.statusCode).toBe(200);
+    jest.mocked(backup.bundleOwner).mockResolvedValue('');
+    jest.mocked(record.readMeta).mockImplementation(async () => ({}) as never);
+    jest.mocked(backup.readManifest).mockImplementation(async () => ({ rc_version: '8.5.1' }));
+  });
+
+  it('never reads a file outside the managed directory to decide a delete', async () => {
+    // The owner check read the manifest of whatever path it was given, before the delete's
+    // own refusal: a member could make the server open and gunzip any file it can read.
+    jest.mocked(backup.readManifest).mockClear();
+    await app.inject({
+      method: 'DELETE',
+      url: '/api/backups?path=/etc/hostname',
+      headers: { host: 'localhost', cookie: admin },
+    });
+    expect(jest.mocked(backup.readManifest)).not.toHaveBeenCalled();
   });
 
   it('refuse to be written anywhere outside the managed directory', async () => {

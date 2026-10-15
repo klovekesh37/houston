@@ -571,11 +571,11 @@ function clPlacePane(p) {
     const gone = !!(st && st.gone);
     if (p.ico === "aws") {
       if (st && st.reachable) box.append(link("Public names (DNS)…", () => clOpenDns(row)));
-      if (ctx.canWrite() && !gone) box.append(link("Prepare again", () => clPrepare(row.context)));
+      if (ctx.canAdmin() && !gone) box.append(link("Prepare again", () => clPrepare(row.context)));
       box.append(link("Copy kubeconfig command", () => clCopy(clKubeconfigCommand(row), "the kubeconfig command")));
     }
     box.append(link("Copy context name", () => clCopy(row.context, "the context name")));
-    if (ctx.canWrite() && (gone || (st && !st.reachable))) box.append(link("Forget this cluster", () => clForget(row)));
+    if (ctx.canAdmin() && (gone || (st && !st.reachable))) box.append(link("Forget this cluster", () => clForget(row)));
     if (p.ico === "aws") {
       box.append(ctx.el("hr"));
       if (ctx.canAdmin() && row.billable && !gone && !(st && st.made_by_houston === false)) {
@@ -1074,7 +1074,7 @@ function setupStepThree(step, foot) {
     list.append(ctx.el("li", {}, ready ? sq("y", "✓") : sq("n", "!"),
       ctx.el("span", {}, ready ? "Storage, ingress and certificates are ready"
         : "Not prepared yet: Prepare installs the ingress and certificates workspaces need",
-        !ready && ctx.canWrite() ? ctx.el("span", {}, " ", fbtn("Prepare it", () => clPrepare(c.context), "btn sm")) : "")));
+        !ready && ctx.canAdmin() ? ctx.el("span", {}, " ", fbtn("Prepare it", () => clPrepare(c.context), "btn sm")) : "")));
   }
   step.append(list);
   const target = st && st.ready && st.ready.cname_target;

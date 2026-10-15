@@ -441,9 +441,22 @@ describe('detaching monitoring on Kubernetes', () => {
       ...jest.requireActual('../../src/core/rcapi'),
       setSetting: async () => false,
     }));
+    // Its own namespace only: by name, `--off` stripped the label of a namespace another home
+    // had made in this one's place, and could uninstall the stack that home was using.
+    let foreign = true;
+    jest.doMock('../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../src/core/kube/namespace'),
+      requireOwnNamespace: async () => {
+        if (foreign) throw new Error('namespace houston-w was made by another houston home');
+      },
+    }));
     const monitor = require('../../src/core/monitor') as typeof MonitorNS;
+    await expect(monitor.detach('w')).rejects.toThrow(/another houston home/u);
+    expect([labels, removed]).toEqual([[], []]);
+    foreign = false;
     const events: Seen[] = [];
     const result = await monitor.detach('w', ((event: Seen) => events.push(strip(event))) as never);
+    jest.dontMock('../../src/core/kube/namespace');
 
     expect(result).toEqual({
       name: 'w',
@@ -556,8 +569,13 @@ describe('attaching monitoring on Kubernetes', () => {
       },
     }));
     jest.doMock('../../src/core/kube/names', () => ({ CONTEXT: 'kind-houston-local' }));
+    const asked: string[] = [];
     jest.doMock('../../src/core/kube/namespace', () => ({
       namespaceFor: async (n: string) => `houston-${n}`,
+      // Its own namespace, asked before anything is wired into it.
+      requireOwnNamespace: async (n: string) => {
+        asked.push(n);
+      },
     }));
     jest.doMock('../../src/core/rcapi', () => ({
       ...jest.requireActual('../../src/core/rcapi'),
@@ -566,6 +584,7 @@ describe('attaching monitoring on Kubernetes', () => {
     const monitor = require('../../src/core/monitor') as typeof MonitorNS;
     const events: Seen[] = [];
     const result = await monitor.attach('w', ((event: Seen) => events.push(strip(event))) as never);
+    expect(asked).toEqual(['w']);
 
     expect(calls['ensure']).toEqual(['kind-houston-local']);
     expect(calls['labels']).toEqual([['houston-w', true]]);

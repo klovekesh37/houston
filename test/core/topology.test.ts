@@ -953,6 +953,12 @@ describe('each command asks the runtime the workspace is on', () => {
       extra: { context: 'kind-houston-local', namespace: 'houston-k', port_forward_pid: 999999999 },
     });
     const established: unknown[] = [];
+    // The namespace identity check asks a cluster this suite does not have; it is tested on
+    // its own in test/core/kube/tier3.test.ts.
+    jest.doMock('../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../src/core/kube/namespace'),
+      requireOwnNamespace: async () => undefined,
+    }));
     jest.doMock('../../src/core/runner/queries', () => ({
       ...jest.requireActual('../../src/core/runner/queries'),
       rcState: async () => {

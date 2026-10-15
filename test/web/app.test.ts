@@ -370,7 +370,7 @@ type Same<X, Y> =
   (<U>() => U extends X ? 1 : 2) extends <U>() => U extends Y ? 1 : 2 ? true : false;
 
 describe('the application context', () => {
-  it('holds exactly the nine declared fields', async () => {
+  it('holds exactly the ten declared fields', async () => {
     // The route modules are written against this shape, and a field added, renamed or
     // dropped silently is a route module reading `undefined`. Earlier releases' nine carry the job
     // registry where these carry the role resolver: here the registry is the application's
@@ -383,6 +383,7 @@ describe('the application context', () => {
       'cookiePlain',
       'cookieSecure',
       'csp',
+      'ownerScoped',
       'publicHttps',
       'routeRequirement',
       'trustedProxies',

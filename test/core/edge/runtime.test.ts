@@ -87,6 +87,48 @@ describe('the lazy start', () => {
   });
 });
 
+describe('an edge whose last run left its systemd unit loaded', () => {
+  // `State.Error` of the edge container on a production box after a Docker restart.
+  const STALE =
+    'failed to create task for container: failed to create shim task: OCI runtime create ' +
+    'failed: unable to start unit "docker-5db7.scope": Unit docker-5db7.scope was already ' +
+    'loaded or has a fragment file.';
+
+  function failing(stateError: string): void {
+    mocked(composeSeam).mockImplementation((args: string[]) =>
+      args.includes('up') && !args.includes('--force-recreate')
+        ? Promise.resolve({ argv: args, exitCode: 1, signal: null, stdout: '', stderr: 'Error' })
+        : answerEmpty(args),
+    );
+    mocked(dockerSeam).mockImplementation((args: string[]) =>
+      args[0] === 'inspect' && args[1] === paths.CONTAINER
+        ? Promise.resolve({
+            argv: args,
+            exitCode: 0,
+            signal: null,
+            stdout: `${stateError}\n`,
+            stderr: '',
+          })
+        : answerEmpty(args),
+    );
+  }
+
+  it('is recreated, which its bind-mounted certificates and routes survive, and starts', async () => {
+    failing(STALE);
+    expect((await up({ pull: false })).returncode).toBe(0);
+    expect(composeVerbs()).toEqual([
+      'up -d --remove-orphans',
+      'up -d --remove-orphans --force-recreate',
+    ]);
+  });
+
+  it('any other failure comes back as it is, recreating nothing', async () => {
+    failing('Bind for 0.0.0.0:443 failed: port is already allocated');
+    expect((await up({ pull: false })).returncode).toBe(1);
+    expect(composeVerbs()).toEqual(['up -d --remove-orphans']);
+  });
+});
+
 /** Read the generation compose actually sees, rather than an expected argument list. */
 function persistedCommand(): string[] {
   const doc = YAML.parse(fs.readFileSync(paths.composePath(), 'utf8')) as {

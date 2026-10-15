@@ -17,6 +17,7 @@ import {
   DockerError,
   NotFoundError,
 } from '../../../src/lib/errors';
+import { homeId } from '../../../src/lib/config';
 import type { Event } from '../../../src/lib/events';
 import { installTeamModeProbe } from '../../../src/lib/teammode';
 import type { KubectlResult } from '../../../src/seams/kubectl';
@@ -38,6 +39,7 @@ import { metadata, writeRecord } from '../../../src/core/runner/record';
 import {
   CLUSTER_NAME,
   CONTEXT,
+  HOME_LABEL,
   OWNER_LABEL_KEY,
   OWNER_OF_LABEL,
   OWNER_SELECTOR,
@@ -46,7 +48,10 @@ import {
 import {
   assertNamespaceAvailable,
   deleteNamespace,
+  deleteStray,
   ensureNamespace,
+  madeHere,
+  requireOwnNamespace,
   labelsFor,
   namespaceLabels,
   namespaceOwner,
@@ -234,7 +239,11 @@ describe('the namespace', () => {
       '-o',
       'json',
     ]);
-    expect(JSON.parse(inputs.at(-1) ?? '{}').metadata.labels).toEqual(labelsFor('x'));
+    // Marked as THIS home's, so another home on the cluster can tell it is not theirs.
+    expect(JSON.parse(inputs.at(-1) ?? '{}').metadata.labels).toEqual({
+      ...labelsFor('x'),
+      [HOME_LABEL]: homeId(),
+    });
     expect(seen.some((argv) => argv.includes('label'))).toBe(false);
   });
 
@@ -323,11 +332,148 @@ describe('the namespace', () => {
     labelsAre({ ...labelled, [OWNER_OF_LABEL]: 'bob' });
     await expect(ensureNamespace('mine', { context: 'c', owner: 'alice' })).rejects.toThrow(/bob/u);
 
-    // Ours, this workspace: reused, and never re-created.
-    labelsAre(labelled);
+    // Ours, this workspace, made by this home: reused, and never re-created.
+    labelsAre({ ...labelled, [HOME_LABEL]: homeId() });
     expect(await ensureNamespace('mine', { context: 'c' })).toBe('houston-mine');
     expect(seen.some((argv) => argv.includes('create'))).toBe(false);
     expect(seen.some((argv) => argv.includes('label'))).toBe(false);
+  });
+
+  it('marks a namespace made before the mark existed when this home brings it back', async () => {
+    // Its labels alone are the same in every home that ever adopted it, so two homes that both
+    // took it under 2.1.0 could each still delete it. Marked by the first to bring it back --
+    // never with --overwrite, so a mark another home set in between stays theirs.
+    await writeRecord('x', metadata({ name: 'x', extra: { created_by: 'alice' } }));
+    script([[has('get', 'namespace'), json(namespaceDoc('x', labelsFor('x', 'alice')))]]);
+    expect(await ensureNamespace('x', { context: 'c', owner: 'alice' })).toBe('houston-x');
+    const labelled = seen.filter((argv) => argv.includes('label'));
+    expect(labelled).toEqual([
+      ['kubectl', '--context', 'c', 'label', 'namespace', 'houston-x', `${HOME_LABEL}=${homeId()}`],
+    ]);
+    // Already this home's: nothing to mark.
+    script([
+      [
+        has('get', 'namespace'),
+        json(namespaceDoc('x', { ...labelsFor('x', 'alice'), [HOME_LABEL]: homeId() })),
+      ],
+    ]);
+    await ensureNamespace('x', { context: 'c', owner: 'alice' });
+    expect(seen.some((argv) => argv.includes('label'))).toBe(false);
+    fs.rmSync(path.join(String(process.env.HOUSTON_HOME), 'repros', 'x'), { recursive: true });
+  });
+
+  it('deletes a stray only as it was judged, bound to the UID it was read with', async () => {
+    // `prune --orphans` judged a namespace's labels, then deleted it by NAME: one another
+    // home had made in its place in between went instead.
+    const judged = { ...labelsFor('x', 'me'), [HOME_LABEL]: homeId() };
+    script([[has('get', 'namespace'), json(namespaceDoc('x', judged, 'uid-1', '7'))]]);
+    const ours = (labels: Record<string, string>) => labels[HOME_LABEL] === homeId();
+    expect(await deleteStray('houston-x', { context: 'c', stillStray: ours })).toEqual({
+      deleted: true,
+      why: '',
+    });
+    const raw = seen.find((argv) => argv.includes('--raw'));
+    expect(raw).toContain('/api/v1/namespaces/houston-x');
+    expect(JSON.parse(inputs.at(-1) ?? '{}').preconditions).toEqual({
+      uid: 'uid-1',
+      resourceVersion: '7',
+    });
+    // Made again by another home since: judged again, and left alone.
+    script([
+      [
+        has('get', 'namespace'),
+        json(namespaceDoc('x', { ...judged, [HOME_LABEL]: '0123456789abcdef' }, 'uid-2')),
+      ],
+    ]);
+    expect((await deleteStray('houston-x', { context: 'c', stillStray: ours })).deleted).toBe(
+      false,
+    );
+    expect(seen.some((argv) => argv.includes('--raw'))).toBe(false);
+    // Could not ask: raised, never read as gone.
+    script([], REFUSED);
+    await expect(deleteStray('houston-x', { context: 'c', stillStray: ours })).rejects.toThrow(
+      /could not ask/u,
+    );
+  });
+
+  it('lets start, backup, restore and upgrade act only on the namespace this home made', async () => {
+    // They acted on the namespace by NAME: once another home had removed this one's and made
+    // its own of that name, a restore here dropped that home's collections.
+    const doc = (labels: Record<string, string>, uid: string) =>
+      script([[has('get', 'namespace'), json(namespaceDoc('x', labels, uid))]]);
+    const ours = labelsFor('x', 'alice');
+    const record = (extra: Record<string, unknown>) =>
+      writeRecord('x', metadata({ name: 'x', extra: { created_by: 'alice', ...extra } }));
+
+    // Replaced since: the recorded UID is not the one there now.
+    await record({ namespace_uid: 'uid-made-here' });
+    doc({ ...ours, [HOME_LABEL]: homeId() }, 'uid-made-elsewhere');
+    await expect(requireOwnNamespace('x', { context: 'c' })).rejects.toThrow(/different UID/u);
+    doc({ ...ours, [HOME_LABEL]: homeId() }, 'uid-made-here');
+    await expect(requireOwnNamespace('x', { context: 'c' })).resolves.toBeUndefined();
+
+    // A record from before UIDs were kept: another home's mark stops it, none lets it through.
+    await record({});
+    doc({ ...ours, [HOME_LABEL]: '0123456789abcdef' }, 'any');
+    await expect(requireOwnNamespace('x', { context: 'c' })).rejects.toThrow(
+      /made by another houston home/u,
+    );
+    doc(ours, 'any');
+    await expect(requireOwnNamespace('x', { context: 'c' })).resolves.toBeUndefined();
+    doc({}, 'any');
+    await expect(requireOwnNamespace('x', { context: 'c' })).rejects.toThrow(
+      /not labelled as houston's/u,
+    );
+    // Not there is the caller's to say, and could-not-ask is never read as either.
+    script([], { stdout: '' });
+    await expect(requireOwnNamespace('x', { context: 'c' })).resolves.toBeUndefined();
+    script([], REFUSED);
+    await expect(requireOwnNamespace('x', { context: 'c' })).rejects.toThrow(/could not ask/u);
+    fs.rmSync(path.join(String(process.env.HOUSTON_HOME), 'repros', 'x'), { recursive: true });
+  });
+
+  it('neither adopts nor deletes a namespace another houston home made, though every other label matches', async () => {
+    // Two homes on one cluster -- a laptop and the server -- derive the same name, and share
+    // the account name or have none, so every label `refuseForeignNamespace` reads matched:
+    // `up` installed over the other home's namespace, and either `down --volumes` deleted it.
+    const theirs = { ...labelsFor('x', 'alice'), [HOME_LABEL]: '0123456789abcdef' };
+    const labelsAre = (labels: Record<string, string>) =>
+      script([[has('get', 'namespace'), json(namespaceDoc('x', labels))]]);
+
+    labelsAre(theirs);
+    await expect(assertNamespaceAvailable('x', { context: 'c', owner: 'alice' })).rejects.toThrow(
+      /made by another houston home/u,
+    );
+    await expect(ensureNamespace('x', { context: 'c', owner: 'alice' })).rejects.toThrow(
+      /made by another houston home/u,
+    );
+    // Even with a record of that name here, when the record cannot prove the namespace by UID.
+    await writeRecord('x', metadata({ name: 'x', extra: { created_by: 'alice' } }));
+    await expect(deleteNamespace('x', { context: 'c', volumes: true, sleep })).rejects.toThrow(
+      /made by another houston home/u,
+    );
+    expect(seen.some((argv) => argv.includes('delete'))).toBe(false);
+    fs.rmSync(path.join(String(process.env.HOUSTON_HOME), 'repros', 'x'), { recursive: true });
+
+    // Made before the mark existed, and no record of it here: whose it is cannot be told.
+    labelsAre(labelsFor('x', 'alice'));
+    await expect(assertNamespaceAvailable('x', { context: 'c', owner: 'alice' })).rejects.toThrow(
+      /no record of it[\s\S]*kubectl label namespace houston-x houston\.io\/home=/u,
+    );
+    // This home's own mark is adopted, as before.
+    labelsAre({ ...labelsFor('x', 'alice'), [HOME_LABEL]: homeId() });
+    await expect(
+      assertNamespaceAvailable('x', { context: 'c', owner: 'alice' }),
+    ).resolves.toBeUndefined();
+
+    // And it is the one thing `prune --orphans` takes as proof: nothing else is.
+    expect(await madeHere('houston-x', { context: 'c' })).toBe(true);
+    labelsAre(theirs);
+    expect(await madeHere('houston-x', { context: 'c' })).toBe(false);
+    labelsAre(labelsFor('x', 'alice'));
+    expect(await madeHere('houston-x', { context: 'c' })).toBe(false);
+    script([], REFUSED);
+    expect(await madeHere('houston-x', { context: 'c' })).toBe(false);
   });
 
   it('refuses to guess about a namespace it could not ask for, and deletes nothing on that answer', async () => {
@@ -422,6 +568,7 @@ describe('the namespace', () => {
       [OWNER_LABEL_KEY]: 'houston',
       [WORKSPACE_LABEL]: 'w',
       [OWNER_OF_LABEL]: 'bob',
+      [HOME_LABEL]: homeId(),
     };
     const nsDoc = (phase: string) =>
       json({ metadata: { name: 'houston-w', labels }, status: { phase } });

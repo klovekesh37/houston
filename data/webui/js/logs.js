@@ -277,7 +277,7 @@ function renderLogs(body, d) {
   const reconnect = ({ serverRecovered = false } = {}) => {
     const row = (ctx.ALL_REPROS || []).find((r) => r.name === d.name);
     if (policyClosed || !stat.isConnected || ctx.SELECTED !== d.name || ctx.VIEW !== "workspace"
-        || ctx.dstate.tab !== "logs" || !ctx.canWrite() || !ctx.SERVER_ONLINE || ctx.dstate.logsWS
+        || ctx.dstate.tab !== "logs" || !ctx.canChange(d) || !ctx.SERVER_ONLINE || ctx.dstate.logsWS
         || !row || !["running", "starting"].includes(row.state)) return;
     // Ordinary successful polls do not reset the five-attempt budget. A real
     // unavailable -> available transition is a new chance to connect, including

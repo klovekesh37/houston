@@ -15,6 +15,7 @@ const ISOLATED = [
   '../../../src/core/runner/ports',
   '../../../src/core/runner/paths',
   '../../../src/core/runner/record',
+  '../../../src/core/runner/queries',
   '../../../src/core/lifecycle/ports',
   '../../../src/core/lifecycle/sizing',
   '../../../src/core/lifecycle/ready',
@@ -119,6 +120,11 @@ describe('the recorded root_url', () => {
     jest.doMock('../../../src/core/lifecycle/sizing', () => ({
       ...jest.requireActual<object>('../../../src/core/lifecycle/sizing'),
       checkCapacity: async () => undefined,
+    }));
+    // No MongoDB left by another home; there is no Docker here to answer that ask.
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual<object>('../../../src/core/runner/queries'),
+      projectDataVolumes: async () => [],
     }));
     jest.doMock('../../../src/core/lifecycle/ports', () => ({
       ...jest.requireActual<object>('../../../src/core/lifecycle/ports'),

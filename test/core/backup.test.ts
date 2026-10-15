@@ -1451,6 +1451,51 @@ describe('backing up and restoring a workspace', () => {
       expect(payload.toString()).toBe('BSON-ARCHIVE-BYTES');
     });
 
+    it('refuses, by the bundle’s own name, a newer workspace that took that name', async () => {
+      // Derived names come back: `rc8-5-1` made again after the backup is another
+      // workspace, and restoring into it "in place" replaced its data without a word.
+      const { backup, bundle } = await restorable();
+      await writeRepro('rc8-5-1', undefined, { createdAt: '2999-01-01T00:00:00+00:00' });
+      await expect(backup.restore(bundle)).rejects.toThrow("'rc8-5-1' was made after this backup");
+      expect(world.restored).toEqual([]);
+      // Named, it is what the caller asked for.
+      await backup.restore(bundle, { name: 'rc8-5-1' });
+      expect(world.restored).toHaveLength(1);
+    });
+
+    it('asks again under the lock, so a workspace handed over while the restore waited is left alone', async () => {
+      const { backup, bundle } = await restorable();
+      await writeRepro('rc8-5-1', undefined, { extra: { created_by: 'bob' } });
+      const { reproLock } = require('../../src/core/runner/locks') as {
+        reproLock: <T>(name: string, body: () => Promise<T>) => Promise<T>;
+      };
+      const context = require('../../src/lib/context') as typeof ContextNS;
+      const gate = { release: (): void => undefined, taken: false };
+      const held = reproLock(
+        'rc8-5-1',
+        () =>
+          new Promise<void>((done) => {
+            gate.release = done;
+            gate.taken = true;
+          }),
+      );
+      for (let wait = 0; wait < 200 && !gate.taken; wait += 1) {
+        await new Promise((done) => setTimeout(done, 10));
+      }
+      const restoring = context
+        .runWithContext({ actor: 'bob' }, () => backup.restore(bundle, { name: 'rc8-5-1' }))
+        .then(
+          () => '',
+          (error: Error) => error.message,
+        );
+      await new Promise((done) => setTimeout(done, 200));
+      await writeRepro('rc8-5-1', undefined, { extra: { created_by: 'bob', owner: 'alice' } });
+      gate.release();
+      await held;
+      expect(await restoring).toContain('rc8-5-1 belongs to alice');
+      expect(world.restored).toEqual([]);
+    });
+
     it('says an integral restore time as earlier releases do, 0.0s and not 0s', async () => {
       // Earlier releases round the elapsed time to one decimal and keep the point, so they
       // say `restored in 0.0s` -- and 3.0s, 12.0s: about one real restore in ten. `String`
@@ -1809,6 +1854,9 @@ describe('backing up and restoring a workspace', () => {
           throw new Error('it demanded Docker for a k8s workspace');
         },
       }));
+      // `load()` already required `backup` with its own stand-in; without a fresh registry
+      // this one never reached it, and the test passed whatever restore asked for.
+      jest.resetModules();
       const backup = require('../../src/core/backup') as typeof BackupNS;
       const record = require('../../src/core/runner/record') as typeof RecordNS;
       await record.writeRecord(
@@ -1824,6 +1872,168 @@ describe('backing up and restoring a workspace', () => {
       const refusal = backup.restore(path.join(home, 'nope.rcbak'), { name: 'k' });
       await expect(refusal).rejects.toThrow(/no backup bundle at/u);
       await expect(refusal).rejects.not.toThrow(/Docker/u);
+    });
+
+    it("refuses, by the bundle's own name, an older workspace that only shares it", async () => {
+      // A bundle made today from a colleague's `rc8-5-1` is newer than your own `rc8-5-1` of
+      // last week, so the newer-namesake check let it drop your data. Its record says which
+      // workspace it came from, and a workspace keeps its birth across a rebuild.
+      const backup = load();
+      await writeRepro('rc8-5-1', COMPOSE_ONE, { createdAt: '2026-01-01T00:00:00+00:00' });
+      const bundleFrom = async (born: string): Promise<string> => {
+        const staging = fs.mkdtempSync(path.join(home, 'staging-'));
+        const archive = Buffer.alloc(16);
+        const sha = require('node:crypto').createHash('sha256').update(archive).digest('hex');
+        fs.writeFileSync(
+          path.join(staging, 'manifest.json'),
+          serialiseManifest({
+            ...MANIFEST,
+            repro: 'rc8-5-1',
+            created_at: '2026-02-01T00:00:00+00:00',
+            archive_bytes: archive.length,
+            archive_sha256: sha,
+          }),
+          'utf8',
+        );
+        fs.writeFileSync(path.join(staging, 'mongo.archive.gz'), archive);
+        fs.writeFileSync(
+          path.join(staging, 'repro.json'),
+          JSON.stringify({ name: 'rc8-5-1', created_at: born }),
+        );
+        const bundle = path.join(home, `from-${born.slice(0, 10)}.rcbak`);
+        await writeTarGzFromDir(staging, bundle);
+        return bundle;
+      };
+      const said = await backup.restore(await bundleFrom('2026-01-20T00:00:00+00:00')).then(
+        () => 'restored',
+        (error: Error) => error.message,
+      );
+      expect(said).toContain("'rc8-5-1' is not the workspace this backup was taken from");
+      expect(world.restored).toEqual([]);
+      // Its own bundle, the same birth, still goes back by name.
+      const own = await backup.restore(await bundleFrom('2026-01-01T00:00:00+00:00')).then(
+        () => 'restored',
+        (error: Error) => error.message,
+      );
+      expect(own).not.toContain('is not the workspace');
+    });
+
+    it('records a restore in place before it drops the current collections', async () => {
+      // Only a refused restore was audited: a workspace's data replaced by a bundle left no
+      // trace of who replaced it.
+      const { backup, bundle } = await restorable();
+      const log = path.join(home, 'audit.log');
+      fs.rmSync(log, { force: true });
+      await backup.restore(bundle);
+      const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+      expect(lines.some((line) => line.split('\t').includes('restore'))).toBe(true);
+      expect(lines.some((line) => line.split('\t').includes('rc8-5-1'))).toBe(true);
+    });
+
+    it('reads whose a bundle is from the record it carries, not from its name', async () => {
+      const backup = load();
+      const withRecord = async (file: string, record: unknown): Promise<string> => {
+        const staging = fs.mkdtempSync(path.join(home, 'owner-'));
+        fs.writeFileSync(path.join(staging, 'manifest.json'), serialiseManifest(MANIFEST), 'utf8');
+        if (record !== undefined) {
+          fs.writeFileSync(path.join(staging, 'repro.json'), JSON.stringify(record));
+        }
+        const bundle = path.join(home, file);
+        await writeTarGzFromDir(staging, bundle);
+        return bundle;
+      };
+      expect(
+        await backup.bundleOwner(await withRecord('a.rcbak', { extra: { created_by: 'alice' } })),
+      ).toBe('alice');
+      // Handed over: the owner, not the creator.
+      expect(
+        await backup.bundleOwner(
+          await withRecord('b.rcbak', { extra: { created_by: 'alice', owner: 'carol' } }),
+        ),
+      ).toBe('carol');
+      expect(await backup.bundleOwner(await withRecord('c.rcbak', { extra: {} }))).toBe('');
+      expect(await backup.bundleOwner(await withRecord('d.rcbak', undefined))).toBe('');
+    });
+
+    it("refuses a --name that could be somebody else's workspace or the caller's own", async () => {
+      // `down` refused it, and `restore --name test` did not: with nobody's `test` and alice's
+      // own `alice-test` both there, alice's restore dropped `test`'s collections.
+      const backup = load();
+      await writeRepro('test');
+      await writeRepro('alice-test', COMPOSE_ONE, { extra: { created_by: 'alice' } });
+      const { runWithContext } = require('../../src/lib/context') as typeof ContextNS;
+      const said = await runWithContext({ actor: 'alice' }, () =>
+        backup.restore(path.join(home, 'nope.rcbak'), { name: 'test' }).then(
+          () => 'restored',
+          (error: Error) => error.message,
+        ),
+      );
+      expect(said).toContain("'test' could mean 'test' (nobody's) or your own 'alice-test'");
+      expect(world.restored).toEqual([]);
+    });
+
+    it("asks for the engine the bundle's own target runs on, when no --name names it", async () => {
+      // Docker was demanded before the bundle was read, so a restore by the bundle's own
+      // name into a Kubernetes workspace, or as new from a Kubernetes bundle, refused on a
+      // box without Docker; only `--name` got past.
+      load();
+      jest.doMock('../../src/core/lifecycle/preconditions', () => ({
+        ...jest.requireActual('../../src/core/lifecycle/preconditions'),
+        requireDocker: async () => {
+          throw new Error('it demanded Docker');
+        },
+      }));
+      jest.resetModules(); // see above: or `load()`'s stand-in answers instead
+      const backup = require('../../src/core/backup') as typeof BackupNS;
+      const record = require('../../src/core/runner/record') as typeof RecordNS;
+      const bundleFor = async (repro: string, runtime: string): Promise<string> => {
+        const staging = fs.mkdtempSync(path.join(home, 'staging-'));
+        // A sound bundle, so what answers is the engine check and not the checksum.
+        const archive = Buffer.alloc(16);
+        const sha = require('node:crypto').createHash('sha256').update(archive).digest('hex');
+        fs.writeFileSync(
+          path.join(staging, 'manifest.json'),
+          serialiseManifest({
+            ...MANIFEST,
+            repro,
+            runtime,
+            archive_bytes: archive.length,
+            archive_sha256: sha,
+          }),
+          'utf8',
+        );
+        fs.writeFileSync(path.join(staging, 'mongo.archive.gz'), archive);
+        const bundle = path.join(home, `${repro}.rcbak`);
+        await writeTarGzFromDir(staging, bundle);
+        return bundle;
+      };
+      const answer = async (run: Promise<unknown>): Promise<string> =>
+        await run.then(
+          () => 'restored',
+          (error: Error) => error.message,
+        );
+      // Made after the bundle, so the in-place restore stops at the newer-namesake refusal:
+      // the first thing past the engine check, and before anything asks the cluster.
+      await record.writeRecord(
+        'k',
+        record.metadata({
+          name: 'k',
+          project: 'houston-k',
+          rcVersion: '8.5.1',
+          createdAt: '2027-01-01T00:00:00+00:00',
+          extra: { runtime: 'kubernetes', context: 'kind-houston-local' },
+        }),
+      );
+      const kubeBundle = await bundleFor('k', 'kubernetes');
+      expect(await answer(backup.restore(kubeBundle))).toContain("'k' was made after this backup");
+      const asNew = await answer(backup.restore(kubeBundle, { new: true }));
+      expect(asNew).not.toContain('demanded Docker');
+      expect(asNew).not.toContain('corrupt'); // it reached the engine check, and passed it
+      // A Compose target still needs Docker, by its own name as by --name.
+      await writeRepro('d');
+      expect(await answer(backup.restore(await bundleFor('d', 'docker')))).toBe(
+        'it demanded Docker',
+      );
     });
   });
 
@@ -1872,6 +2082,70 @@ describe('backing up and restoring a workspace', () => {
       expect(await backup.warnLowFdLimit('c')).toBe(64000);
       expect(world.captures).toEqual([['sh', '-c', 'ulimit -n']]);
       expect(kubeAsked).toHaveLength(1);
+    });
+
+    it('asks again under the lock before it quiesces and dumps a namespace', async () => {
+      // Asked only before the wait: a namespace made in this one's place while a backup waited
+      // for the lock was quiesced and dumped.
+      let asked = 0;
+      jest.doMock('../../src/core/kube/namespace', () => ({
+        ...jest.requireActual('../../src/core/kube/namespace'),
+        requireOwnNamespace: async () => {
+          asked += 1;
+          if (asked > 1) throw new Error('namespace houston-k was made by another houston home');
+        },
+      }));
+      try {
+        const backup = load();
+        await kubeRecord('k');
+        await expect(backup.create('k')).rejects.toThrow(/another houston home/u);
+        expect(asked).toBe(2);
+      } finally {
+        jest.dontMock('../../src/core/kube/namespace');
+      }
+    });
+
+    it("dumps and restores only a namespace that is still this workspace's own", async () => {
+      // By name, a restore dropped the collections of a namespace another home had made in
+      // this one's place, and a backup quiesced and dumped it.
+      const asked: string[] = [];
+      jest.doMock('../../src/core/kube/namespace', () => ({
+        ...jest.requireActual('../../src/core/kube/namespace'),
+        requireOwnNamespace: async (name: string) => {
+          asked.push(name);
+          throw new Error('namespace houston-k was made by another houston home');
+        },
+      }));
+      const kubeAsked: string[][] = [];
+      jest.doMock('../../src/core/kube/transfer', () => ({
+        ...jest.requireActual('../../src/core/kube/transfer'),
+        execCapture: async (_name: string, argv: readonly string[]) => {
+          kubeAsked.push([...argv]);
+          return [0, ''];
+        },
+      }));
+      try {
+        const backup = load();
+        await kubeRecord('k');
+        await expect(backup.create('k')).rejects.toThrow(/another houston home/u);
+        await expect(
+          backup.restoreLocked(
+            'k',
+            path.join(home, 'b.rcbak'),
+            { rc_version: '8.5.1' },
+            () => undefined,
+            {
+              allowUpgrade: false,
+              force: true,
+              created: false,
+            },
+          ),
+        ).rejects.toThrow(/another houston home/u);
+        expect(asked).toEqual(['k', 'k']);
+        expect(kubeAsked).toEqual([]);
+      } finally {
+        jest.dontMock('../../src/core/kube/namespace');
+      }
     });
 
     it('never puts the MongoDB operator password in an argument, on the host or in the pod', async () => {

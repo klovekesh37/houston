@@ -808,6 +808,8 @@ describe('the rest of the surface', () => {
     // `Restart=always` is only safe BECAUSE named accounts exist: with the old session
     // token every restart minted a new one and killed every bookmark.
     expect(unit).toContain('Restart=always');
+    // Paced, or a GUI that fails five times in ten seconds is never started again.
+    expect(unit).toContain('RestartSec=10\n');
     expect(unit).toContain('WantedBy=multi-user.target');
   });
 

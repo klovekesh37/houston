@@ -390,25 +390,35 @@ export async function current(name: string): Promise<Bag> {
  * `sets` adds or replaces; `unset` removes a key entirely (including a base or preset
  * default, which merely blanking it would not do).
  */
-export async function setEnv(
-  name: string,
-  sets: Record<string, string> | null = null,
-  unset: readonly string[] | null = null,
-  { restart = true, emit = nullEmit }: { restart?: boolean; emit?: Emit } = {},
-): Promise<Bag> {
-  // No Kubernetes path yet. Reaching for the compose project answers "no configuration
-  // file provided", which names nothing a user can act on — so this refuses and hands over
-  // the command that does the job. RESOLVED FIRST, because the refusal QUOTES the name.
-  // `requireCompose` ran on the raw argument, so `env --set X=1 --name TICKET-1234`
-  // handed over `helm -n houston-TICKET-1234 ...` — a namespace that does not exist, for a
-  // workspace really called `ticket-1234`. A refusal whose suggested command cannot work
-  // is worse than a bare refusal: it sends somebody to debug kubectl.
+/**
+ * The workspace an env change acts on, refused where it has no Compose document to change.
+ *
+ * No Kubernetes path yet. Reaching for the compose project answers "no configuration file
+ * provided", which names nothing a user can act on — so this refuses and hands over the
+ * command that does the job. RESOLVED FIRST, because the refusal QUOTES the name.
+ * `requireCompose` ran on the raw argument, so `env --set X=1 --name TICKET-1234` handed
+ * over `helm -n houston-TICKET-1234 ...` — a namespace that does not exist, for a workspace
+ * really called `ticket-1234`. A refusal whose suggested command cannot work is worse than
+ * a bare refusal: it sends somebody to debug kubectl. Exported so the GUI refuses before it
+ * queues a job, not inside one.
+ */
+export async function envTarget(name: string): Promise<string> {
   const target = await resolveName(name);
   await topology.requireCompose(target, 'env', {
     instead:
       `Use \`helm -n houston-${target} upgrade rocketchat --reuse-values ` +
       '--set extraEnv[0].name=...`, or `houston api` for a runtime setting.',
   });
+  return target;
+}
+
+export async function setEnv(
+  name: string,
+  sets: Record<string, string> | null = null,
+  unset: readonly string[] | null = null,
+  { restart = true, emit = nullEmit }: { restart?: boolean; emit?: Emit } = {},
+): Promise<Bag> {
+  const target = await envTarget(name);
   await requireDocker();
   // Serialised against every other mutating operation on this repro: this does
   // read-compose -> write-compose -> `docker compose up`, and interleaving that with a

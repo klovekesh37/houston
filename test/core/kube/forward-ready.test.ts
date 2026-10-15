@@ -31,6 +31,18 @@ let mockPids: number[] = [4242];
 const mockRepaired: number[] = [];
 let mockReachable = true;
 let mockInfo: Record<string, unknown> | null = { version: '8.5.1' };
+let mockForeign = false;
+
+// The namespace identity check asks the cluster, and this suite has none: it is tested on its
+// own in test/core/kube/tier3.test.ts. `mockForeign` makes it refuse, as it would for a
+// namespace another home made in this one's place.
+jest.mock('../../../src/core/kube/namespace', () => ({
+  ...jest.requireActual('../../../src/core/kube/namespace'),
+  requireOwnNamespace: () =>
+    mockForeign
+      ? Promise.reject(new Error('namespace houston-k was made by another houston home'))
+      : Promise.resolve(),
+}));
 
 jest.mock('../../../src/core/kube/status', () => ({
   ...jest.requireActual<typeof StatusNS>('../../../src/core/kube/status'),
@@ -101,6 +113,7 @@ beforeEach(() => {
   mockRepaired.length = 0;
   mockReachable = true;
   mockInfo = { version: '8.5.1' };
+  mockForeign = false;
 });
 
 afterEach(() => {
@@ -124,6 +137,16 @@ describe('ready, on a Kubernetes workspace', () => {
     mockReachable = true;
     const served = await drive(waitServingKubernetes(workspace(3999), nullEmit, 30));
     expect(served).toEqual({ ok: true, value: { ready: true, url: 'http://localhost:3999' } });
+  });
+
+  it("forwards to, and sets up, only a namespace that is still this workspace's own", async () => {
+    // By name, ready forwarded this workspace's port into a namespace another home had made
+    // in its place, and the setup that follows wrote to that home's Rocket.Chat.
+    mockForeign = true;
+    const refused = await drive(waitServingKubernetes(workspace(3010), nullEmit, 30));
+    expect(refused.ok).toBe(false);
+    expect(String((refused as { error: unknown }).error)).toContain('another houston home');
+    expect(mockRepaired).toEqual([]);
   });
 
   it('is reached by a Ctrl-C in its three-second sleep, as time.sleep is', async () => {

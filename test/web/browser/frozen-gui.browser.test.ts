@@ -378,6 +378,7 @@ const CASES: readonly BrowserCase[] = [
   ['clusters', 'the clusters view never shows a zero it did not read'],
   ['clusters', 'the cluster chip wants you in amber and is never red'],
   ['clusters', 'only an admin is offered the controls that spend or destroy'],
+  ['clusters', 'a member is offered no prepare or forget on a shared cluster'],
   ['clusters', 'the delete dialog will not arm until the name is typed'],
   ['clusters', 'the fake cluster status matches the real payload'],
   ['clusters', 'the cluster action pane survives the four second poll'],
@@ -442,7 +443,10 @@ const CASES: readonly BrowserCase[] = [
   ['clusters', 'the create dialog redraws a local cluster card when its status arrives'],
   ['surfaces rail', 'a workspace is handed over from its pane and its owner row follows'],
   ['surfaces rail', 'a refused hand over is said inside its dialog'],
-  ['surfaces rail', 'the delete confirm says who can hand a workspace over and names no command'],
+  [
+    'surfaces rail',
+    'a member on a colleague’s workspace is told who can hand it over and offered nothing to click',
+  ],
   [
     'surfaces rail',
     'every backup on the machine is listed and a deleted workspaces restores as new',
@@ -454,12 +458,14 @@ const CASES: readonly BrowserCase[] = [
   ['surfaces rail', 'an upgraded workspace rolls back behind a red confirm and the panel follows'],
 ];
 
-const CASES_DIGEST = '852fc4b3cbec0287492a454d22def80a25bb07eda3434d7dd81aeb1b455080f1';
+// Re-recorded when "a member is offered no prepare or forget on a shared cluster" joined: a
+// cluster's prepare and forget became an admin's.
+const CASES_DIGEST = '29940291c51cc3e20e606e4b9f712d356e74f06cb2d9702221d4a598b10de2b2';
 const caseIds = CASES.map(([file, name]) => `${file}: ${name}`);
 const casesDigest = crypto.createHash('sha256').update(JSON.stringify(CASES)).digest('hex');
-if (CASES.length !== 184 || new Set(caseIds).size !== 184 || casesDigest !== CASES_DIGEST) {
+if (CASES.length !== 185 || new Set(caseIds).size !== 185 || casesDigest !== CASES_DIGEST) {
   throw new Error(
-    `browser behavior inventory changed: expected 184 unique cases at ${CASES_DIGEST}, ` +
+    `browser behavior inventory changed: expected 185 unique cases at ${CASES_DIGEST}, ` +
       `got ${String(CASES.length)} cases, ${String(new Set(caseIds).size)} unique, ${casesDigest}`,
   );
 }
@@ -912,6 +918,11 @@ async function prepareClusterCase(name: string): Promise<void> {
     portedUser = 'ronly';
     portedPassword = 'read-only-password';
     await users.add(portedUser, portedPassword, 'readonly');
+  }
+  if (name === 'a member is offered no prepare or forget on a shared cluster') {
+    portedUser = 'mem';
+    portedPassword = 'member-password';
+    await users.add(portedUser, portedPassword, 'member');
   }
   useDefaultClusters();
   if (
@@ -2572,6 +2583,23 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     return;
   }
 
+  if (name === 'a member is offered no prepare or forget on a shared cluster') {
+    // A cluster is everybody's, and a member changes only their own workspaces: the server
+    // refuses a member's prepare and forget, so the pane does not offer them.
+    await openPlaceView(page, `eks:${CLUSTER_SUPPORT}`, 'support');
+    const pane = await page.locator('#actpane').innerText();
+    expect(pane).toContain('Copy kubeconfig command');
+    expect(pane).not.toContain('Prepare again');
+    expect(pane).toContain('admin action');
+    // Forget is offered for a cluster that does not answer -- perf here -- and to an admin only.
+    await page.locator('#detail .crumb').getByRole('button', { name: 'Clusters' }).click();
+    await openPlaceView(page, `eks:${CLUSTER_PERF}`, 'perf');
+    const unreachable = await page.locator('#actpane').innerText();
+    expect(unreachable).toContain('Copy context name');
+    expect(unreachable).not.toContain('Forget this cluster');
+    return;
+  }
+
   if (name === 'a cluster delete says in its job what aws still holds') {
     // "Done" is not "nothing is billing": the delete's own result names what AWS still
     // holds and the command that removes each, in the job a person is watching.
@@ -3803,7 +3831,8 @@ async function prepareSurface(name: string): Promise<void> {
   }
   if (
     name === 'a refused hand over is said inside its dialog' ||
-    name === 'the delete confirm says who can hand a workspace over and names no command'
+    name ===
+      'a member on a colleague’s workspace is told who can hand it over and offered nothing to click'
   ) {
     // A member, on the default policy: the owner, an admin or nobody else may hand over.
     portedUser = 'mem';
@@ -6204,23 +6233,20 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     expect(await page.locator('#owner-dialog').getAttribute('open')).not.toBeNull();
     return;
   }
-  if (name === 'the delete confirm says who can hand a workspace over and names no command') {
+  if (
+    name ===
+    'a member on a colleague’s workspace is told who can hand it over and offered nothing to click'
+  ) {
     await openWorkspace(page);
-    // The gate refuses this member, so nothing offers what it would refuse.
-    expect(await page.locator('#actpane button', { hasText: 'Hand over…' }).count()).toBe(0);
-    const said: string[] = [];
-    page.on('dialog', (dialog) => {
-      said.push(dialog.message());
-      void (said.length === 1 ? dialog.accept() : dialog.dismiss());
-    });
-    await page.locator('#actpane .apdanger button').click();
-    await page.waitForFunction(() => document.querySelector('#job-title')?.textContent === 'Done');
-    expect(said).toHaveLength(2);
-    // It sent a GUI user to `houston chown`, which a member may not run for themselves.
-    expect(said[1]).toContain('belongs to bob');
-    expect(said[1]).toContain('bob or an admin can hand it over to you with "Hand over…"');
-    expect(said[1]).not.toContain('houston');
-    expect(mockTeardown).toHaveBeenCalledWith('t1234', expect.objectContaining({ volumes: false }));
+    // The gate refuses this member everything that changes bob's workspace, taking it down
+    // included, so the pane offers nothing and says who to ask. It once sent a GUI user to
+    // `houston chown`, which a member may not run for themselves.
+    expect(await page.locator('#actpane button').count()).toBe(0);
+    const note = String(await page.locator('#actpane .apnote').textContent());
+    expect(note).toContain("This is bob's workspace");
+    expect(note).toContain('Ask bob to hand it over');
+    expect(note).not.toContain('houston');
+    expect(mockTeardown).not.toHaveBeenCalled();
     return;
   }
   if (name === 'every backup on the machine is listed and a deleted workspaces restores as new') {
@@ -6565,7 +6591,6 @@ describe('the frozen GUI against the in-process Fastify server', () => {
           name === 'a stopped job is said to be stopped not failed' ||
           name === 'a long scenario note wraps in the create result' ||
           name === 'a finished restore re-reads the workspace without a page error' ||
-          name === 'the delete confirm says who can hand a workspace over and names no command' ||
           name ===
             'every backup on the machine is listed and a deleted workspaces restores as new' ||
           name === 'an upgraded workspace rolls back behind a red confirm and the panel follows') &&

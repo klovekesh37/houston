@@ -2,16 +2,27 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type * as ContextNS from '../../src/lib/context';
 import type * as ErrorsNS from '../../src/lib/errors';
 import type * as PolicyNS from '../testsetup-policy';
 import type * as KubeOperatorNS from '../../src/core/kube/operator';
 import type * as RecordNS from '../../src/core/runner/record';
 import type * as UpgradeNS from '../../src/core/upgrade';
 
+// The namespace identity check asks the cluster, and this suite has none: it is tested on its
+// own in test/core/kube/tier3.test.ts.
+jest.mock('../../src/core/kube/namespace', () => ({
+  ...jest.requireActual('../../src/core/kube/namespace'),
+  requireOwnNamespace: async () => undefined,
+}));
+
 /** `plan`'s inputs, stubbed: a running Docker workspace `w` holding `meta`. */
 function stubPlanInputs(meta: Record<string, unknown>): void {
   jest.resetModules();
-  jest.doMock('../../src/core/lifecycle/naming', () => ({ resolveName: async (n: string) => n }));
+  jest.doMock('../../src/core/lifecycle/naming', () => ({
+    resolveName: async (n: string) => n,
+    refuseAmbiguous: async () => undefined,
+  }));
   jest.doMock('../../src/core/lifecycle/preconditions', () => ({
     requireEngine: async () => undefined,
   }));
@@ -220,7 +231,10 @@ describe('planning an upgrade', () => {
     // `require_running` used `require_docker()` above the resolve, so an upgrade of a
     // Kubernetes workspace on a Docker-less host refused with "Docker isn't running".
     jest.resetModules();
-    jest.doMock('../../src/core/lifecycle/naming', () => ({ resolveName: async (n: string) => n }));
+    jest.doMock('../../src/core/lifecycle/naming', () => ({
+      resolveName: async (n: string) => n,
+      refuseAmbiguous: async () => undefined,
+    }));
     jest.doMock('../../src/core/lifecycle/preconditions', () => ({
       requireEngine: async () => undefined,
     }));
@@ -487,7 +501,10 @@ describe('running an upgrade', () => {
     };
     const doc = { services: { rocketchat: { image: 'old', environment: { KEEP: '1' } } } };
 
-    jest.doMock('../../src/core/lifecycle/naming', () => ({ resolveName: async (n: string) => n }));
+    jest.doMock('../../src/core/lifecycle/naming', () => ({
+      resolveName: async (n: string) => n,
+      refuseAmbiguous: async () => undefined,
+    }));
     jest.doMock('../../src/core/lifecycle/preconditions', () => ({
       requireEngine: async () => undefined,
     }));
@@ -834,7 +851,10 @@ describe("the refusal text when a version's resolver fails", () => {
     // Only an `InvalidVersionError` from the version resolver is a refusal. An earlier version that
     // caught everything retyped a programmer error as a 400.
     jest.resetModules();
-    jest.doMock('../../src/core/lifecycle/naming', () => ({ resolveName: async (n: string) => n }));
+    jest.doMock('../../src/core/lifecycle/naming', () => ({
+      resolveName: async (n: string) => n,
+      refuseAmbiguous: async () => undefined,
+    }));
     jest.doMock('../../src/core/lifecycle/preconditions', () => ({
       requireEngine: async () => undefined,
     }));
@@ -968,7 +988,10 @@ describe('rolling back without a recorded bundle', () => {
 
   it('refuses, naming --bundle and `houston backups`', async () => {
     jest.resetModules();
-    jest.doMock('../../src/core/lifecycle/naming', () => ({ resolveName: async (n: string) => n }));
+    jest.doMock('../../src/core/lifecycle/naming', () => ({
+      resolveName: async (n: string) => n,
+      refuseAmbiguous: async () => undefined,
+    }));
     jest.doMock('../../src/core/lifecycle/preconditions', () => ({
       requireEngine: async () => undefined,
     }));
@@ -1074,6 +1097,11 @@ describe('an upgrade against a real record', () => {
   let previous: string | undefined;
   beforeEach(() => {
     for (const id of MOCKED) jest.dontMock(id);
+    // Except the namespace identity check, which asks a cluster this suite does not have.
+    jest.doMock('../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../src/core/kube/namespace'),
+      requireOwnNamespace: async () => undefined,
+    }));
     previous = process.env.HOUSTON_HOME;
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'houston-upgrade-'));
     process.env.HOUSTON_HOME = home;
@@ -1226,6 +1254,111 @@ describe('an upgrade against a real record', () => {
     const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
     const meta = await upgrade.requireRunning('k');
     expect([meta.name, meta.extra.runtime]).toEqual(['k', 'kubernetes']);
+  });
+
+  it("refuses to upgrade or roll back a name that could be somebody else's or the caller's own", async () => {
+    // `down` refused it, and these did not: both change, and a rollback drops, the data of
+    // whichever `test` answered while alice meant her own `alice-test`.
+    const record = require('../../src/core/runner/record') as typeof RecordNS;
+    await record.writeRecord('test', record.metadata({ name: 'test' }));
+    await record.writeRecord(
+      'alice-test',
+      record.metadata({ name: 'alice-test', extra: { created_by: 'alice' } }),
+    );
+    const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
+    const { runWithContext } = require('../../src/lib/context') as typeof ContextNS;
+    for (const run of [() => upgrade.requireRunning('test'), () => upgrade.rollback('test')]) {
+      const said = await runWithContext({ actor: 'alice' }, () =>
+        run().then(
+          () => 'ran',
+          (error: Error) => error.message,
+        ),
+      );
+      expect(said).toContain("'test' could mean 'test' (nobody's) or your own 'alice-test'");
+    }
+  });
+
+  it('asks again under the lock before an upgrade moves the chart', async () => {
+    // Once before the wait and again in the plan made under the lock, even with --no-backup:
+    // a namespace made in this one's place while the upgrade waited must not have its chart
+    // moved.
+    await kubeWorkspace('k');
+    let asked = 0;
+    jest.doMock('../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../src/core/kube/namespace'),
+      requireOwnNamespace: async () => {
+        asked += 1;
+        if (asked > 1) throw new Error('namespace houston-k was made by another houston home');
+      },
+    }));
+    jest.doMock('../../src/core/kube/tools', () => ({
+      ...(require('../testsetup-policy') as typeof PolicyNS).guardedTools(),
+      which: (name: string) => `/usr/bin/${name}`,
+    }));
+    jest.doMock('../../src/core/kube/status', () => ({
+      ...jest.requireActual('../../src/core/kube/status'),
+      workloadExists: async () => true,
+    }));
+    const chart: string[] = [];
+    jest.doMock('../../src/core/kube/release', () => ({
+      ...jest.requireActual('../../src/core/kube/release'),
+      upgradeImage: async () => {
+        chart.push('moved');
+      },
+    }));
+    const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
+    await expect(upgrade.run('k', '8.6.1', { noBackup: true })).rejects.toThrow(
+      /another houston home/u,
+    );
+    // Refused before the chart moved, not by the readiness check after it.
+    expect(chart).toEqual([]);
+    expect(asked).toBe(2);
+  });
+
+  it("upgrades and rolls back only a namespace that is still this workspace's own", async () => {
+    // By name, they reached a namespace another home had made in this one's place.
+    const bundle = path.join(home, 'pre.rcbak');
+    fs.writeFileSync(bundle, 'x');
+    await kubeWorkspace('k', {}, { last_upgrade_backup: bundle });
+    const asked: string[] = [];
+    jest.doMock('../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../src/core/kube/namespace'),
+      requireOwnNamespace: async (name: string) => {
+        asked.push(name);
+        throw new Error('namespace houston-k was made by another houston home');
+      },
+    }));
+    jest.doMock('../../src/core/kube/tools', () => ({
+      ...(require('../testsetup-policy') as typeof PolicyNS).guardedTools(),
+      which: (name: string) => `/usr/bin/${name}`,
+    }));
+    const touched: string[] = [];
+    jest.doMock('../../src/core/kube/status', () => ({
+      ...jest.requireActual('../../src/core/kube/status'),
+      workloadExists: async () => {
+        touched.push('workload');
+        return true;
+      },
+    }));
+    jest.doMock('../../src/core/backup', () => ({
+      ...jest.requireActual('../../src/core/backup'),
+      readManifest: async () => ({ rc_version: '8.5.1' }),
+      restoreLocked: async () => {
+        touched.push('restore');
+        return {};
+      },
+    }));
+    jest.doMock('../../src/core/kube/release', () => ({
+      ...jest.requireActual('../../src/core/kube/release'),
+      upgradeImage: async () => {
+        touched.push('chart');
+      },
+    }));
+    const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
+    await expect(upgrade.requireRunning('k')).rejects.toThrow(/another houston home/u);
+    await expect(upgrade.rollback('k')).rejects.toThrow(/another houston home/u);
+    expect(asked).toEqual(['k', 'k']);
+    expect(touched).toEqual([]);
   });
 
   it('reads migration errors from the Kubernetes logs on a Kubernetes workspace', async () => {
@@ -1402,6 +1535,63 @@ describe('an upgrade against a real record', () => {
     expect((await record.readMeta('k')).rcVersion).toBe('8.5.1');
   });
 
+  it('keeps the port-forward its pre-upgrade backup re-established', async () => {
+    // The record was read before the backup, which stops the forward and records the one it
+    // starts again; the upgrade then wrote its whole old copy back, dead pid and all. Every
+    // readiness check after that started another forward onto the port the live one held:
+    // the upgrade and its rollback timed out, and the live one outlived `down`. Seen live
+    // on k3s, on 2.1.1 as on 2.1.2's branch.
+    await kubeWorkspace(
+      'k',
+      { rcVersion: '7.9.3', rcImage: 'i' },
+      { namespace: 'houston-k', port_forward_pid: 111 },
+    );
+    anyEngine();
+    neverCompose();
+    const waitedWith: unknown[] = [];
+    jest.doMock('../../src/core/kube/status', () => ({
+      ...jest.requireActual('../../src/core/kube/status'),
+      workloadExists: async () => true,
+      logProcess: async () => ({ stdout: '' }),
+    }));
+    jest.doMock('../../src/core/backup', () => ({
+      ...jest.requireActual('../../src/core/backup'),
+      createLocked: async () => {
+        const record = require('../../src/core/runner/record') as typeof RecordNS;
+        await record.updateMeta('k', (m) => {
+          m.extra.port_forward_pid = 222;
+        });
+        return { path: path.join(home, 'b.rcbak') };
+      },
+    }));
+    jest.doMock('../../src/core/lifecycle/ready', () => ({
+      ...jest.requireActual('../../src/core/lifecycle/ready'),
+      waitAndFinalize: async (meta: RecordNS.Metadata) => {
+        waitedWith.push(meta.extra.port_forward_pid);
+        return {};
+      },
+    }));
+    jest.doMock('../../src/core/rcapi', () => ({
+      ...jest.requireActual('../../src/core/rcapi'),
+      apiInfo: async () => ({ version: '8.5.1' }),
+    }));
+    jest.doMock('../../src/core/kube/chart', () => ({
+      ...jest.requireActual('../../src/core/kube/chart'),
+      resolveChartVersion: async () => '7.0.0',
+    }));
+    jest.doMock('../../src/core/kube/release', () => ({
+      ...jest.requireActual('../../src/core/kube/release'),
+      upgradeImage: async () => undefined,
+    }));
+    const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
+    const record = require('../../src/core/runner/record') as typeof RecordNS;
+    await upgrade.run('k', '8.5.1', { offline: true });
+    expect(waitedWith).toEqual([222]);
+    const after = await record.readMeta('k');
+    expect([after.rcVersion, after.extra.port_forward_pid]).toEqual(['8.5.1', 222]);
+    expect(after.extra[upgrade.UPGRADE_FROM_KEY]).toBe('7.9.3');
+  });
+
   it('installs the MongoDB operator with its telemetry off', async () => {
     // The chart sends the cluster UID, the Kubernetes version and deployment UIDs to
     // MongoDB on a weekly timer, enabled by default. Nobody using a support reproduction
@@ -1429,6 +1619,90 @@ describe('an upgrade against a real record', () => {
     const install = seen.filter((argv) => argv.includes('upgrade') && argv.includes('--install'));
     expect(install.length).toBeGreaterThan(0);
     expect((install[0] ?? []).join(' ')).toContain('operator.telemetry.send.enabled=false');
+  });
+
+  /**
+   * A Compose rollback held up behind another command on the workspace, with `change` made to
+   * its record while it waits -- what a hand-over, a pin or an env change does meanwhile.
+   */
+  async function rollbackThatWaited(
+    actor: string,
+    change: (meta: RecordNS.Metadata) => void,
+  ): Promise<{ outcome: string; record: typeof RecordNS }> {
+    const bundle = path.join(home, 'pre.rcbak');
+    fs.writeFileSync(bundle, 'x');
+    await composeWorkspace('d');
+    const record = require('../../src/core/runner/record') as typeof RecordNS;
+    const meta = await record.readMeta('d');
+    meta.rcVersion = '8.6.1';
+    Object.assign(meta.extra, {
+      last_upgrade_backup: bundle,
+      upgraded_from: '8.5.1',
+      created_by: 'bob',
+    });
+    await record.writeRecord('d', meta);
+    anyEngine();
+    jest.doMock('../../src/core/backup', () => ({
+      ...jest.requireActual('../../src/core/backup'),
+      readManifest: async () => ({
+        rc_version: '8.5.1',
+        rc_image: 'registry.rocket.chat/rocketchat/rocket.chat',
+      }),
+      restoreLocked: async () => ({ restored: true }),
+    }));
+    jest.doMock('../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../src/core/runner/engine'),
+      up: async () => 0,
+    }));
+    const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
+    const { reproLock } = require('../../src/core/runner/locks') as {
+      reproLock: <T>(name: string, body: () => Promise<T>) => Promise<T>;
+    };
+    const { runWithContext } = require('../../src/lib/context') as {
+      runWithContext: <T>(values: { actor: string }, fn: () => T) => T;
+    };
+    const gate = { release: (): void => undefined, taken: false };
+    const held = reproLock(
+      'd',
+      () =>
+        new Promise<void>((done) => {
+          gate.release = done;
+          gate.taken = true;
+        }),
+    );
+    for (let wait = 0; wait < 200 && !gate.taken; wait += 1) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    const rolling = runWithContext({ actor }, () => upgrade.rollback('d')).then(
+      () => '',
+      (error: Error) => error.message,
+    );
+    await new Promise((done) => setTimeout(done, 200));
+    const now = await record.readMeta('d');
+    change(now);
+    await record.writeRecord('d', now);
+    gate.release();
+    await held;
+    return { outcome: await rolling, record };
+  }
+
+  it('asks again under the lock, so a workspace handed over while the rollback waited is left alone', async () => {
+    const { outcome } = await rollbackThatWaited('bob', (meta) => {
+      meta.extra.owner = 'alice';
+    });
+    expect(outcome).toContain('d belongs to alice');
+  });
+
+  it('keeps what changed in the record while the rollback waited', async () => {
+    // The record was read before the wait and written back after it, so a hand-over or a
+    // pin made in between was quietly undone.
+    const { outcome, record } = await rollbackThatWaited('', (meta) => {
+      meta.pinned = true;
+      meta.extra.owner = 'carol';
+    });
+    expect(outcome).toBe('');
+    const after = await record.readMeta('d');
+    expect([after.rcVersion, after.pinned, after.extra.owner]).toEqual(['8.5.1', true, 'carol']);
   });
 });
 

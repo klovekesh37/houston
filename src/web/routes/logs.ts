@@ -20,6 +20,7 @@ import {
   preauthShouldAudit,
   resolvePeer,
   sessionToken,
+  workspaceRefusal,
 } from '../security';
 
 function kubeStatusModule(): typeof KubeStatusNS {
@@ -149,6 +150,16 @@ export async function authenticateSocket(
       `${String(bag(request.params).name)} refused=role need=${String(need)} have=${role}`,
       { origin: 'session', outcome: 'denied' },
     );
+    await closePolicy();
+    return null;
+  }
+  // A member reads only their own workspace's logs, as on every other member route.
+  const why = await workspaceRefusal(String(bag(request.params).name), session.user);
+  if (why !== '') {
+    audit.audit(session.user, 'logs-open', `${String(bag(request.params).name)} refused=owner`, {
+      origin: 'session',
+      outcome: 'denied',
+    });
     await closePolicy();
     return null;
   }

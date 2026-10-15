@@ -478,7 +478,10 @@ export async function rowFor(
     kubeReads?: KubernetesReads;
   },
 ): Promise<Record<string, unknown>> {
-  const rcStatus = statusMap[meta.project] ?? '';
+  // Compose's answer is a Docker workspace's alone: one left under a Kubernetes record (as
+  // 2.1.1's takeover left them) lent that row its own uptime and health.
+  const rcStatus =
+    topology.ofMeta(meta) === topology.KUBERNETES ? '' : (statusMap[meta.project] ?? '');
   // `states` is only consulted for "does this project have ANY container", never for the
   // state itself -- see reproState. A Kubernetes workspace has no compose project, so
   // asking docker whether its containers exist answered `down` for a workspace that was

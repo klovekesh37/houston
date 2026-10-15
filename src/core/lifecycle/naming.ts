@@ -12,6 +12,7 @@ import { NotFoundError, ValidationError } from '../../lib/errors';
 import { quotedText } from '../../lib/format';
 import { type Emit, event, warn } from '../../lib/events';
 import * as paths from '../runner/paths';
+import { readMeta } from '../runner/record';
 
 import type { CreateReq } from './types';
 
@@ -178,6 +179,39 @@ export function nameCandidates(name: string, actor = ''): string[] {
   return out;
 }
 
+/** Whose a workspace is, as `ownership.ownerOf` reads it; '' for nobody's or unreadable. */
+async function ownedBy(name: string): Promise<string> {
+  try {
+    const extra = (await readMeta(name)).extra as Record<string, unknown>;
+    const owner =
+      typeof extra.owner === 'string' && extra.owner !== '' ? extra.owner : extra.created_by;
+    return typeof owner === 'string' ? owner : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Refuse `typed` when it names `exact`, which is not the actor's, AND the actor's own
+ * workspace of that short name.
+ *
+ * `--name test` makes `alice-test` once there are accounts, and a typed name resolves exact
+ * first -- so when a `test` that is not alice's appeared later, her `down --name test
+ * --volumes` deleted that one instead of hers. Neither guess is safe, so neither is made.
+ */
+export async function refuseAmbiguous(typed: string, exact: string, actor: string): Promise<void> {
+  if (actor === '') return;
+  const own = ownerPrefix(sanitize(typed), actor);
+  if (own === exact || !(await paths.exists(own))) return;
+  const owner = await ownedBy(exact);
+  if (owner === actor) return;
+  throw new ValidationError(
+    `${quotedText(typed)} could mean '${exact}' (${owner === '' ? 'nobody' : owner}'s) or ` +
+      `your own '${own}' - type '${own}' for yours; '${exact}' itself is reached from the ` +
+      'GUI, or from a command run without HOUSTON_USER',
+  );
+}
+
 /** Whether the config's `default_repro` is set: a truth test, not a presence test. */
 function truthy(value: unknown): boolean {
   if (value === null || value === undefined || value === false) return false;
@@ -197,7 +231,9 @@ function truthy(value: unknown): boolean {
 export async function resolveName(name: string | null | undefined, actor = ''): Promise<string> {
   if (name) {
     for (const candidate of nameCandidates(name, actor)) {
-      if (await paths.exists(candidate)) return candidate;
+      if (!(await paths.exists(candidate))) continue;
+      await refuseAmbiguous(name, candidate, actor);
+      return candidate;
     }
     // Nothing matched. Report the shape problem when there is one -- "invalid name" is
     // more use than "not found" for `--name 'my repro!'` -- and otherwise say what was

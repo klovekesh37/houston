@@ -405,6 +405,26 @@ describe('the cluster ledger', () => {
     expect(eks.createCluster).not.toHaveBeenCalled();
   });
 
+  it("lets only an admin prepare a cluster or forget one, as it is everybody's", async () => {
+    // A member could install a cluster's ingress and certificates, and `forget --force`
+    // removed this server's kubeconfig entry for everyone -- while members change only
+    // their own workspaces.
+    const member = await signIn(app, 'mem', 'member');
+    const boss = await signIn(app, 'boss', 'admin');
+    for (const url of ['/api/clusters/prepare', '/api/clusters/forget']) {
+      const refused = await app.inject({
+        method: 'POST',
+        url,
+        payload: { context: 'x', force: true },
+        headers: as(member),
+      });
+      expect({ url, status: refused.statusCode }).toEqual({ url, status: 403 });
+      // Past the role gate an admin meets the route's own checks: no context, a 400.
+      const bad = await app.inject({ method: 'POST', url, payload: {}, headers: as(boss) });
+      expect({ url, status: bad.statusCode }).toEqual({ url, status: 400 });
+    }
+  });
+
   it('parses the expiry of a create exactly as the flag does', async () => {
     // Trusting it would let an unparseable value become "no expiry", and the expiry tag is
     // the only thing that will later say this cluster was meant to be temporary.

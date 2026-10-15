@@ -53,7 +53,7 @@ import {
 
 import * as audit from './audit';
 import * as backup from './backup';
-import { resolveName } from './lifecycle/naming';
+import { refuseAmbiguous, resolveName } from './lifecycle/naming';
 import { mayDestroy } from './lifecycle/ownership';
 import { requireEngine } from './lifecycle/preconditions';
 import { LAST_BACKUP_KEY, UPGRADE_FROM_KEY } from './lifecycle/types';
@@ -124,6 +124,9 @@ export function resolveOrRefuse(
  */
 export async function requireRunning(name: string): Promise<Metadata> {
   const target = await resolveName(name);
+  // As `down` refuses it: an upgrade or a rollback of somebody else's `test` while your own
+  // `alice-test` is what you meant drops its data either way.
+  if (name !== '') await refuseAmbiguous(name, target, audit.actor());
   // THE RIGHT ENGINE, not always Docker.
   await requireEngine(target);
   // BEFORE the running check, not after: `rcState` asks docker about containers, so a
@@ -137,6 +140,8 @@ export async function requireRunning(name: string): Promise<Metadata> {
         ? bagOf(meta.extra)[config.EXTRA_CONTEXT]
         : CONTEXT,
     );
+    // Its own namespace still, before an upgrade or a rollback changes what runs in it.
+    await (await import('./kube/namespace')).requireOwnNamespace(target, { context });
     if (await workloadExists(target, { context })) {
       return meta;
     }
@@ -471,10 +476,20 @@ export async function pullAndRecreate({
       // when the helm call then failed the workspace was left running the OLD version
       // while `list`, `info` and the GUI card all reported the new one.
       await applyKubernetes(target, p, emit);
+      // ONLY WHAT THE UPGRADE CHANGED, onto the record as it is now. `meta` was read before
+      // the pre-upgrade backup, which stops the port-forward and records the one it starts
+      // again: written back whole, it put the dead pid back, so every readiness check after
+      // it started another forward onto the port the live one held -- the upgrade and its
+      // rollback timed out, and the live forward, named by nothing, outlived `down`.
       await updateMeta(target, (m) => {
         m.rcVersion = meta.rcVersion;
         m.rcImage = meta.rcImage;
-        m.extra = meta.extra;
+        const now = bagOf(m.extra);
+        for (const key of [UPGRADE_FROM_KEY, LAST_BACKUP_KEY]) {
+          if (Object.hasOwn(bagOf(meta.extra), key)) now[key] = bagOf(meta.extra)[key];
+          else delete now[key];
+        }
+        m.extra = now;
       });
     } else if ((await up(target)) !== 0) {
       throw new DockerError('`docker compose up` failed applying the new image');
@@ -931,7 +946,6 @@ export async function rollbackUnderLock(
   emit: Emit,
   kubeFlag: boolean,
   manifest: Bag,
-  meta: Metadata,
   bundle: string,
   previous: { rcVersion: string; rcImage: string },
   resolved: Resolved,
@@ -939,12 +953,22 @@ export async function rollbackUnderLock(
 ): Promise<Bag> {
   const { reproLock } = await import('./runner/locks');
   return await reproLock(target, async () => {
+    // AGAIN UNDER THE LOCK: handed over while this waited, it is somebody else's data now.
+    await refuseUnlessMayDestroy(target);
+    // Recorded before the current data is dropped for the bundle's: only a refusal was.
+    audit.record('upgrade-rollback', target);
     if (kubeFlag) {
+      // Before the chart moves: its own namespace still, not one another home made of that name.
+      const { requireOwnNamespace } = await import('./kube/namespace');
+      await requireOwnNamespace(target, { context: await backup.kube(target) });
       await rollbackKubernetes(target, previous, bundle, emit);
       return { restored: true };
     }
     const doc = await readCompose(target);
     applyImage(doc, previous.rcImage, previous.rcVersion, resolved.oplog);
+    // Read HERE, not before the wait: a record read earlier and written back undid a
+    // hand-over, a pin or an env change made in between.
+    const meta = await readMeta(target);
     meta.rcVersion = previous.rcVersion;
     meta.rcImage = previous.rcImage;
     delete bagOf(meta.extra)[UPGRADE_FROM_KEY];
@@ -960,22 +984,27 @@ export async function rollbackUnderLock(
   });
 }
 
+async function refuseUnlessMayDestroy(target: string): Promise<void> {
+  const [allowed, why] = await mayDestroy(target, audit.actor());
+  if (!allowed) {
+    audit.record('upgrade-rollback', target, { outcome: 'denied' });
+    throw new ConflictError(why);
+  }
+}
+
 /** Undo the last upgrade of this repro from its automatic pre-upgrade backup. */
 export async function rollback(
   name: string,
   { bundle = '', emit = nullEmit }: { bundle?: string; emit?: Emit } = {},
 ): Promise<Bag> {
   const target = await resolveName(name);
+  if (name !== '') await refuseAmbiguous(name, target, audit.actor());
   // A rollback DROPS THE CURRENT DATABASE and loads an older one, which destroys a
   // colleague's reproduction state exactly as thoroughly as `down --volumes`.
   //
   // BEFORE requireEngine, because "you may not do this" does not depend on whether
   // Docker is up.
-  const [allowed, why] = await mayDestroy(target, audit.actor());
-  if (!allowed) {
-    audit.record('upgrade-rollback', target, { outcome: 'denied' });
-    throw new ConflictError(why);
-  }
+  await refuseUnlessMayDestroy(target);
   await requireEngine(target); // same reason as requireRunning
   const meta = await readMeta(target);
   const extra = bagOf(meta.extra);
@@ -1006,7 +1035,6 @@ export async function rollback(
     emit,
     kubeFlag,
     manifest,
-    meta,
     recorded,
     previous,
     resolved,

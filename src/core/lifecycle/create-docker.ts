@@ -17,6 +17,7 @@ import * as config from '../../lib/config';
 import {
   ConflictError,
   DockerError,
+  NotFoundError,
   PreflightError,
   ValidationError,
   errorText,
@@ -371,10 +372,16 @@ export async function reuse(
   }
   if (req.license !== '') mismatch.push('the licence');
   if (mismatch.length > 0) {
+    // A rebuild onto another preset removes what the old one kept -- an s3_minio workspace's
+    // uploads -- so that is said where --force is offered, not discovered after it.
+    const dropsData =
+      presetName !== '' && presetName !== meta.preset && (meta.preset || 'default') !== 'default'
+        ? ` (a --force rebuild as '${presetName}' removes the data '${meta.preset}' kept)`
+        : '';
     const msg =
       `'${name}' already exists and is reused as-is, ignoring requested ` +
       mismatch.join('; ') +
-      '. Use --force to rebuild it, or --fresh to also wipe its data.';
+      `. Use --force to rebuild it${dropsData}, or --fresh to also wipe its data.`;
     warn(emit, msg, {
       phase: 'create',
       code: 'VERSION_IGNORED_ON_REUSE',
@@ -477,18 +484,17 @@ export async function resolveAxesStep(plan: CreatePlan): Promise<void> {
     plan.req.runtime = await topology.ofRepro(existing);
   }
   await carryRecordedAxes(plan.req, existing);
-  // No --preset at all, on a composed workspace: rebuild ITS presets (and their params, when
-  // no --set is given), not a vanilla one that silently drops all of them. On Kubernetes,
-  // where `up` on a workspace means "bring it back", any recorded preset is kept: dropping
-  // it re-installed Rocket.Chat without the preset's settings while the preset's own
-  // objects stayed in the namespace. A one-preset Compose workspace behaves as it always has.
+  // No --preset at all: rebuild ITS presets (and their params, when no --set is given), not a
+  // vanilla one that silently drops them. On Kubernetes dropping it re-installed Rocket.Chat
+  // without the preset's settings while the preset's own objects stayed in the namespace; on
+  // Compose a one-preset workspace was rebuilt vanilla, and the preset's volumes -- MinIO's,
+  // holding every upload of an s3_minio workspace -- were then removed as left over. Only a
+  // preset ASKED FOR replaces the recorded one.
   if (plan.req.preset === '' && existing && (await paths.exists(existing))) {
     try {
       const meta = await record.readMeta(existing);
       const composed = namesOf(meta.preset).length > 1;
-      const kept =
-        composed ||
-        (topology.ofMeta(meta) === topology.KUBERNETES && (meta.preset || 'default') !== 'default');
+      const kept = (meta.preset || 'default') !== 'default';
       if (kept) {
         plan.req.preset = meta.preset;
         if (Object.keys(plan.req.params).length === 0) {
@@ -557,7 +563,17 @@ export async function resolvePairing(plan: CreatePlan): Promise<void> {
       { phase: 'resolve' },
     );
   }
-  request.chooseImage(plan.resolved, plan.req.rcImage, plan.cfg.rc_image);
+  // The flag, then -- for a workspace rebuilt on the release it runs -- the image it was built
+  // from, as a Kubernetes re-up keeps it: `--force` swapped an `--rc-image` for the default
+  // repository's. Another release is another image, so that one is resolved afresh.
+  const name = naming.deriveFor(plan.req);
+  const before =
+    name !== '' && (await paths.exists(name))
+      ? await record.readMeta(name).catch(() => null)
+      : null;
+  const kept =
+    before !== null && before.rcVersion === plan.resolved.rcVersion ? before.rcImage : '';
+  request.chooseImage(plan.resolved, plan.req.rcImage || kept, plan.cfg.rc_image);
   if (plan.req.mongo) applyMongoOverride(plan.resolved, plan.req.mongo);
 
   // Before any docker work: this pairing cannot boot on this engine, and mongod says so by
@@ -978,7 +994,10 @@ export function buildRecord(plan: CreatePlan): void {
     pinned: plan.req.pin || isTruthy(plan.previousMeta?.pinned),
     publicUrl: plan.public,
     adminPassword: plan.adminPassword,
-    createdAt: new Date().toISOString().slice(0, 19) + '+00:00',
+    // Kept by a `--force` rebuild, which keeps the data; `--fresh` starts it again.
+    createdAt:
+      (!plan.req.fresh && plan.previousMeta?.createdAt) ||
+      new Date().toISOString().slice(0, 19) + '+00:00',
   });
   // Stamped on every create, compose included, so "absent" keeps meaning exactly one
   // thing: a workspace older than the key.
@@ -1084,6 +1103,9 @@ export async function replaceExisting(plan: CreatePlan): Promise<void> {
       auditRecord('up-fresh', plan.reproName, { outcome: 'denied' });
       throw new ConflictError(why);
     }
+    // And when it goes ahead: only the refusals were recorded, so a wiped database had no
+    // trace of who wiped it.
+    auditRecord('up-fresh', plan.reproName);
   }
   // Volumes the OLD compose file declared but the new one doesn't (switching preset with
   // --force, dropping --monitor) would be orphaned: `down -v` only removes what the file
@@ -1104,6 +1126,16 @@ export async function replaceExisting(plan: CreatePlan): Promise<void> {
     throw new DockerError(
       `could not tear down the existing '${plan.reproName}'; not overwriting it`,
     );
+  }
+  if (stale.length > 0) {
+    // SAID AND RECORDED: these hold the data of a preset this rebuild was asked to drop.
+    warn(
+      plan.emit,
+      `removing ${stale.sort().join(', ')}: the data of what '${plan.reproName}' no longer ` +
+        'has, which nothing could reach once its compose file is rewritten',
+      { phase: 'create' },
+    );
+    auditRecord('volumes-removed', plan.reproName);
   }
   for (const bad of await removeVolumes(plan.reproName, stale.sort())) {
     warn(plan.emit, `could not remove ${bad}, left over from the previous preset`, {
@@ -1349,6 +1381,31 @@ export async function prepareEdge(plan: CreatePlan): Promise<void> {
 }
 
 /**
+ * A name is one workspace, on one runtime. 8.5.1 on Docker and then 8.5.1 on Kubernetes
+ * derived the same name, and each runtime took the other's workspace for its own to bring
+ * back: Kubernetes rewrote the Docker record and left its containers running with nothing
+ * pointing at them, and Docker ran `compose up` on a workspace with no compose file.
+ * Refused before anything is written, `--force` included. A record that cannot be read is
+ * left to the existence checks downstream, as it always was.
+ */
+export async function refuseTheOtherRuntime(req: CreateReq): Promise<void> {
+  const name = naming.deriveFor(req);
+  if (!name || !(await paths.exists(name))) return;
+  let was: string;
+  try {
+    was = topology.ofMeta(await record.readMeta(name));
+  } catch {
+    return;
+  }
+  if (was === req.runtime) return;
+  throw new ConflictError(
+    `'${name}' is already a ${topology.label(was)} workspace. A ${topology.label(req.runtime)} ` +
+      'one needs its own name (Name in the dialog, or --name), or delete this one first: ' +
+      `\`houston down --name ${name} --volumes\`.`,
+  );
+}
+
+/**
  * The Compose create, as a plan and the steps that fill it in.
  *
  * The ORDER below is the specification. Each step's own docstring and comments say why it
@@ -1374,16 +1431,35 @@ export async function createReproLocked(
     monitorAttach,
     ...(versionFetcher === undefined ? {} : { versionFetcher }),
   });
-  // AGAIN UNDER THE LOCK, on either runtime: `claimTypedName` looked before it, and a
-  // hand-over while this request waited would have it rebuild somebody else's workspace.
-  if (req.exactName) {
-    const [allowed, why] = await ownership.mayDestroy(naming.deriveFor(req), auditActor());
-    if (!allowed) throw new ConflictError(why);
-  }
   // Before anything, on either runtime: the format check is also what keeps the licence to
   // one line of the env file it is written to.
   if (req.license !== '') req.license = request.requireLicense(req.license);
   await resolveAxesStep(plan);
+  // THE NAME RESOLVING SETTLED ON is the one locked and asked about. `--deployment
+  // multi-instance` and a kept set of presets rename a derived name after the caller locked
+  // it, so the create held one name, asked who owned it, and built another: a member rebuilt
+  // a workspace handed to somebody else, and nothing kept a `down` or a second create off it.
+  // Re-entrant, so the name the caller already holds costs nothing.
+  return await reproLock(naming.deriveFor(req), async () => await createSettled(plan));
+}
+
+/** The create, once its name is settled and held. */
+async function createSettled(plan: CreatePlan): Promise<Bag> {
+  const { req, emit } = plan;
+  // AGAIN UNDER THE LOCK, on either runtime: `claimTypedName` looked before it, and a
+  // hand-over while this request waited would have it rebuild somebody else's workspace.
+  // Whatever name it derives, not only an exact one: a member's own prefix (`bob-x`) is
+  // somebody else's once it is handed over, and a create there starts, pins or rebuilds it.
+  // A name nothing holds yet has no owner, so a new workspace always passes.
+  const [allowed, why] = await ownership.mayDestroy(naming.deriveFor(req), auditActor());
+  if (!allowed) throw new ConflictError(why);
+  if (req.bringBack && !(await paths.exists(naming.deriveFor(req)))) {
+    throw new NotFoundError(
+      `'${naming.deriveFor(req)}' was deleted while this waited its turn, so there is nothing ` +
+        'to bring up - create it again instead',
+    );
+  }
+  await refuseTheOtherRuntime(req);
 
   if (req.runtime === topology.KUBERNETES) {
     // A PARALLEL path, not a branch woven through this function. Everything below is
@@ -1396,8 +1472,8 @@ export async function createReproLocked(
     // on a Kubernetes workspace did nothing at all and said nothing about it.
     preconditions.refuseUnsupportedOnKubernetes(req);
     return await createKubernetes(req, emit, {
-      monitorAttach,
-      ...(versionFetcher === undefined ? {} : { versionFetcher }),
+      monitorAttach: plan.monitorAttach,
+      ...(plan.versionFetcher === undefined ? {} : { versionFetcher: plan.versionFetcher }),
     });
   }
   await resolvePairing(plan);

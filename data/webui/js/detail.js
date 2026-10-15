@@ -148,7 +148,7 @@ async function renderBackups(body, d) {
   body.append(ctx.el("p", { class: "hint" },
     "Backups hold this workspace's Rocket.Chat database plus the version and preset "
     + "that produced it. Sidecar data (uploads, IdP state) is not included."));
-  if (ctx.canWrite()) {
+  if (ctx.canChange(d)) {
     const attrs = ctx.SERVER_ONLINE ? {} : { disabled: "" };
     body.append(ctx.el("div", { class: "row2" },
       ctx.el("button", { ...attrs, class: "btn primary", onclick: () => doBackup(d.name) }, "Back up now")));
@@ -168,12 +168,13 @@ async function renderBackups(body, d) {
     list.append(ctx.el("p", { class: "empty" }, "No backups yet for this workspace."));
     return;
   }
-  list.append(backupTable(rows, d.name));
+  list.append(backupTable(rows, d.name, ctx.canChange(d)));
 }
 
 // One table for both places bundles are listed: a workspace's Backups tab (`here` names
 // that workspace) and the Backups page (`here` is ""), which lists every bundle on the box.
-function backupTable(rows, here) {
+// `mine`: this viewer may change the workspace `here` names (its owner, or an admin).
+function backupTable(rows, here, mine = false) {
   const cols = here ? ["bundle", "from", "size", ""] : ["bundle", "workspace", "from", "size", ""];
   const t = ctx.el("table", { class: "dtable" },
     ctx.el("tr", {}, ...cols.map((c) => ctx.el("th", {}, c))));
@@ -197,12 +198,15 @@ function backupTable(rows, here) {
     row.append(ctx.el("td", { class: "v" }, `RC ${b.rc_version}`),
       ctx.el("td", { class: "v" }, fmtBytes(b.bytes)));
     const act = ctx.el("td", {});
-    if (here && ctx.canWrite()) {
+    if (here && mine) {
       act.append(
         ctx.el("button", { class: "btn small primary", onclick: () => doRestore(b, here) }, "restore"),
         ctx.el("button", { class: "btn small", onclick: () => openRestoreNew(b) }, "as new"),
         ctx.el("button", { class: "btn small danger", onclick: () => doDeleteBackup(b) }, "delete"));
     } else if (!here && ctx.canWrite()) {
+      // A colleague's bundle restored as new would copy their data and admin login, so the
+      // server refuses it to anyone but its owner and admins; the Backups page offers it
+      // and the refusal names the owner.
       act.append(ctx.el("button", { class: "btn small primary", onclick: () => openRestoreNew(b) },
         "restore as new"));
     }

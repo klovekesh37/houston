@@ -940,6 +940,7 @@ async function dispatch(
         orphans: bool(o.orphans),
         force: bool(o.force),
         only: shown,
+        onlyStray: stray,
         emit,
       });
     }

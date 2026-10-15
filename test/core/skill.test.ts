@@ -306,17 +306,6 @@ describe('projectCopy', () => {
   });
 });
 
-describe('the copies checked into the repository', () => {
-  it('match the packaged skill, so a fresh clone teaches what an install would', () => {
-    // Three copies of one file is how they drift; the packaged copy is what
-    // `skill install` writes on a machine with no checkout.
-    const want = fs.readFileSync(packaged(), 'utf8');
-    for (const rel of ['.claude/skills/houston/SKILL.md', '.agents/skills/houston/SKILL.md']) {
-      expect(fs.readFileSync(path.join(ROOT, rel), 'utf8')).toBe(want);
-    }
-  });
-});
-
 describe('the copy an agent actually reads', () => {
   const before = process.cwd();
   afterEach(() => {

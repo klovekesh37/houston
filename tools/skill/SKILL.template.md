@@ -276,8 +276,9 @@ what order. It is for reading, not a contract.
 `capabilities.skill.current` is false when a copy that exists does not match the
 build. `capabilities.skill.hosts` names each one and its scope:
 
-- `project` — the checkout's own `.claude/skills/houston/SKILL.md`. This is the one
-  in play when you are working inside the repository, and it travels with the branch.
+- `project` — a `.claude/skills/houston/SKILL.md` in the directory you are working in
+  or one above it. An agent reads it before the user copies, so a stale one is the one
+  in play: update it or delete it.
 - `user` — `~/.claude/skills/` and `~/.agents/skills/`, for a machine with no
   checkout. `houston skill install` writes these; it refuses to overwrite a copy
   you have edited unless you pass `--force`.

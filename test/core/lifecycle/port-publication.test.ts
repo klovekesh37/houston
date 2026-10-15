@@ -27,6 +27,9 @@ jest.mock('../../../src/core/runner/host', () => {
 jest.mock('../../../src/core/runner/queries', () => ({
   ...jest.requireActual('../../../src/core/runner/queries'),
   projectConfigFiles: jest.fn(async () => ({})),
+  // No MongoDB left by another home: the guard refuses an unanswered ask, and there is no
+  // Docker here to answer it.
+  projectDataVolumes: jest.fn(async () => []),
 }));
 jest.mock('../../../src/core/lifecycle/sizing', () => ({
   ...jest.requireActual('../../../src/core/lifecycle/sizing'),

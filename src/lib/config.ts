@@ -24,8 +24,9 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import type { ScalarTag, Tags } from 'yaml';
 
+import { ConflictError } from './errors';
 import { pathHome, joinPath } from './home';
-import { parseFloat_, intFromText, quotedText } from './format';
+import { fileErrorText, parseFloat_, intFromText, quotedText } from './format';
 import { mkdirParents } from './mkdir-parents';
 import { JsonFloat, stripText } from './float-text';
 import { safeDump } from './yaml-dump';
@@ -248,6 +249,65 @@ export function home(): string {
   // neither.
   const root = env('HOUSTON_HOME');
   return root ? joinPath(root) : joinPath(pathHome(), '.houston');
+}
+
+/** What `homeId` keeps in the home, and the shape it must have to be believed. */
+export const HOME_ID_FILE = 'home-id';
+const HOME_ID = /^[0-9a-f]{16}$/u;
+
+/**
+ * This home's own id, made on first use and kept in the home.
+ *
+ * WHAT TELLS TWO HOMES APART on one Kubernetes cluster. A workspace's name, its namespace
+ * and even its owner's account name are the same in two homes -- a laptop and the server,
+ * or two people with no accounts -- so a namespace one home made was adopted, and deleted,
+ * by the other. Random rather than derived from the host or the path, so a home keeps it
+ * when either changes. A file of its own, so a 1.x reading config.yaml never sees it.
+ */
+export function homeId(): string {
+  const file = joinPath(home(), HOME_ID_FILE);
+  // '' when there is no file yet; null when one is there and holds no id.
+  const read = (): string | null => {
+    let text: string;
+    try {
+      text = fs.readFileSync(file, 'utf8').trim();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      // Not damage, so not the remedy for it: deleting a file that only could not be read
+      // would give this home a new id. A `sudo houston` that left it root's is the usual cause.
+      throw new ConflictError(
+        `could not read ${file}, this home's id on Kubernetes clusters (${fileErrorText(error)}) ` +
+          '- fix its permissions rather than deleting it',
+      );
+    }
+    return HOME_ID.test(text) ? text : null;
+  };
+  const damaged = (): never => {
+    throw new ConflictError(
+      `${file} does not hold this home's id (16 hex digits), and a new one would make every ` +
+        "namespace this home marked read as another home's. Put the id back -- `kubectl get " +
+        'namespaces -L houston.io/home` shows the ones in use -- or delete the file to start a ' +
+        "new id, then claim each of this home's namespaces with `kubectl label namespace <ns> " +
+        'houston.io/home=<new id> --overwrite`',
+    );
+  };
+  const known = read();
+  if (known === null) return damaged();
+  if (known !== '') return known;
+  mkdirParents(home(), 0o700);
+  const tmp = `${file}.${String(process.pid)}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, `${crypto.randomBytes(8).toString('hex')}\n`, { mode: 0o600 });
+  try {
+    // LINKED, never renamed into place: two first commands at once must agree on ONE id,
+    // and a link refuses to replace what the other one made. Renamed only where nothing is
+    // there and the filesystem has no links to make.
+    fs.linkSync(tmp, file);
+  } catch {
+    if (read() === '') fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  return read() ?? damaged();
 }
 
 export function reprosDir(): string {

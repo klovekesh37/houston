@@ -12,7 +12,7 @@ import { MONITOR_PORTS } from '../lib/config';
 import { grafanaFrameOrigins } from '../core/lifecycle/inspect';
 import { installJobs, type JobManager } from './jobs';
 import { markFormBody, RequestValidationError } from './route-deps';
-import { installRouteCompleteness, routeRequirement } from './route-table';
+import { installRouteCompleteness, ownerScoped, routeRequirement } from './route-table';
 import { registerAll } from './routes';
 import {
   COOKIE_PLAIN,
@@ -295,6 +295,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     publicHttps: () => publicHttps,
     trustedProxies: options.trustedProxies ?? [],
     routeRequirement,
+    ownerScoped,
   };
   installSecurity(app, context);
   // A JSON response is `application/json`, with no charset, as it always has been: only a

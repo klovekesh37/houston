@@ -11,6 +11,7 @@ jest.mock('../../../src/seams/docker-cli', () => ({
   composeFromFile: jest.fn(),
   invalidateQueries: jest.fn(),
   docker: jest.fn(),
+  STALE_UNIT: jest.requireActual('../../../src/seams/docker-cli').STALE_UNIT,
 }));
 
 const composeMock = seam.compose as jest.MockedFunction<typeof seam.compose>;
@@ -60,6 +61,107 @@ describe('a compose command for one workspace', () => {
       '--no-deps',
       'rocketchat',
     ]);
+  });
+});
+
+// `State.Error` as Docker recorded it on a production box, every time a stopped workspace started.
+const STALE =
+  'failed to create task for container: failed to create shim task: OCI runtime create failed: ' +
+  'runc create failed: unable to start container process: unable to apply cgroup configuration: ' +
+  'unable to start unit "docker-2cbc.scope" (properties [{Name:Slice Value:"system.slice"}]): ' +
+  'Unit docker-2cbc.scope was already loaded or has a fragment file.';
+
+/** Every start fails until compose is asked to recreate; containers report `stateError`. */
+function staleWorld(stateError: string): void {
+  composeMock.mockImplementation(async (args) => {
+    if (args[0] === 'ps') return answer({ stdout: 'c1\nc2\n' });
+    if (args.includes('--force-recreate')) return answer();
+    return answer({ exitCode: 1 });
+  });
+  dockerMock.mockResolvedValue(answer({ stdout: `\n${stateError}\n` }));
+}
+
+describe('a start systemd refuses because the last run left its unit loaded', () => {
+  it.each([
+    ['start', () => engine.start('x'), ['start']],
+    ['restart', () => engine.restart('x'), ['restart']],
+    ['up', () => engine.up('x', { pull: false }), ['up', '-d', '--remove-orphans']],
+  ])('%s recreates the containers, data kept, and succeeds', async (_name, run, first) => {
+    staleWorld(STALE);
+    expect(await run()).toBe(0);
+    expect(composeMock.mock.calls.map((call) => call[0])).toEqual([
+      first,
+      ['ps', '--all', '-q'],
+      ['up', '-d', '--force-recreate', '--remove-orphans'],
+    ]);
+    expect(dockerMock.mock.calls[0]?.[0]).toEqual([
+      'inspect',
+      '--format',
+      '{{.State.Error}}',
+      'c1',
+      'c2',
+    ]);
+  });
+
+  it('recreates on the error production printed, whole property list and all', async () => {
+    // Verbatim from `start` on an email workspace on 2.1.1, mailpit's line.
+    staleWorld(
+      'failed to create task for container: failed to create shim task: OCI runtime create ' +
+        'failed: runc create failed: unable to start container process: unable to apply cgroup ' +
+        'configuration: unable to start unit "docker-2cbcc01802f3c840a7e45c843038b24e7a9e133de' +
+        '5540d2e115ee38778985d71.scope" (properties [{Name:Description Value:"libcontainer ' +
+        'container 2cbcc01802f3c840a7e45c843038b24e7a9e133de5540d2e115ee38778985d71"} ' +
+        '{Name:Slice Value:"system.slice"} {Name:Delegate Value:true} {Name:PIDs Value:@au ' +
+        '[3002698]} {Name:MemoryAccounting Value:true} {Name:CPUAccounting Value:true} ' +
+        '{Name:IOAccounting Value:true} {Name:TasksAccounting Value:true} ' +
+        '{Name:DefaultDependencies Value:false}]): Unit docker-2cbcc01802f3c840a7e45c843038b24' +
+        'e7a9e133de5540d2e115ee38778985d71.scope was already loaded or has a fragment file.',
+    );
+    expect(await engine.start('x')).toBe(0);
+    expect(composeMock.mock.calls.at(-1)?.[0]).toEqual([
+      'up',
+      '-d',
+      '--force-recreate',
+      '--remove-orphans',
+    ]);
+  });
+
+  it('a backup restarting Rocket.Chat recreates only Rocket.Chat', async () => {
+    staleWorld(STALE);
+    expect(await engine.startServices('x', ['rocketchat'])).toBe(0);
+    expect(composeMock.mock.calls.map((call) => call[0])).toEqual([
+      ['start', 'rocketchat'],
+      ['ps', '--all', '-q', 'rocketchat'],
+      ['up', '-d', '--force-recreate', '--no-deps', 'rocketchat'],
+    ]);
+  });
+
+  it('an env apply that recreates Rocket.Chat recreates only Rocket.Chat again, never Mongo', async () => {
+    let ups = 0;
+    composeMock.mockImplementation(async (args) => {
+      if (args[0] === 'ps') return answer({ stdout: 'c1\n' });
+      return answer({ exitCode: args[0] === 'up' && ups++ === 0 ? 1 : 0 });
+    });
+    dockerMock.mockResolvedValue(answer({ stdout: `${STALE}\n` }));
+    expect(await engine.up('x', { pull: false, forceRecreate: 'rocketchat' })).toBe(0);
+    expect(composeMock.mock.calls.map((call) => call[0]).slice(1)).toEqual([
+      ['ps', '--all', '-q', 'rocketchat'],
+      ['up', '-d', '--force-recreate', '--no-deps', 'rocketchat'],
+    ]);
+  });
+
+  it.each([
+    ['a held port', 'Bind for 127.0.0.1:3000 failed: port is already allocated'],
+    // Each container's State.Error is one line: a `.scope` in one and "already exists" in
+    // another are two unrelated failures, not this one.
+    [
+      'two unrelated errors',
+      'cgroup docker-c1.scope is busy\nendpoint with name x already exists in network y',
+    ],
+  ])('any other failed start (%s) is left to its caller, recreating nothing', async (_n, error) => {
+    staleWorld(error);
+    expect(await engine.start('x')).toBe(1);
+    expect(composeMock.mock.calls.some((call) => call[0].includes('--force-recreate'))).toBe(false);
   });
 });
 

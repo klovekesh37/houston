@@ -25,6 +25,7 @@ jest.mock('../../../src/core/topology', () => ({
 import { createApp } from '../../../src/web/app';
 import * as sessions from '../../../src/core/sessions';
 import * as users from '../../../src/core/users';
+import * as record from '../../../src/core/runner/record';
 import * as naming from '../../../src/core/lifecycle/naming';
 import * as runnerEngine from '../../../src/core/runner/engine';
 import { authenticateSocket, type LogSocket, runLogStream } from '../../../src/web/routes/logs';
@@ -188,6 +189,37 @@ describe('the WebSocket log route', () => {
       await serverClosed;
       release('demo');
       await new Promise((resolve) => setImmediate(resolve));
+      expect(mockStream).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('closes a member’s socket on somebody else’s workspace, as every member route refuses it', async () => {
+    // A member reads only their own workspaces' logs: they carry LDAP bind passwords and
+    // OAuth secrets, and the REST read was refused while this live one still streamed.
+    const token = await signedIn('logs-bob');
+    await record.write(
+      'demo-carol',
+      'services: {}\n',
+      record.metadata({ name: 'demo-carol', extra: { created_by: 'carol' } }),
+    );
+    const app = await createApp({ accounts: true });
+    try {
+      await app.ready();
+      const close = jest.fn();
+      const request = handshake({ origin: 'http://localhost', cookie: `houston_session=${token}` });
+      (request.params as { name: string }).name = 'demo-carol';
+      await expect(
+        authenticateSocket(app, request, { close } as unknown as LogSocket),
+      ).resolves.toBeNull();
+      expect(close).toHaveBeenCalledWith(1008);
+      expect(mockAudit).toHaveBeenCalledWith(
+        'logs-bob',
+        'logs-open',
+        'demo-carol refused=owner',
+        expect.objectContaining({ outcome: 'denied' }),
+      );
       expect(mockStream).not.toHaveBeenCalled();
     } finally {
       await app.close();

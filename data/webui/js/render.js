@@ -20,7 +20,7 @@ function triageOf(d) {
   const push = (title, why, actions) => out.push({ title, why, actions: actions.filter(Boolean) });
   // Logs are member+ on the server (they carry an LDAP bind password), so offering
   // the button to a readonly reader would offer them a 403.
-  const logs = ctx.canWrite() && ["Open the logs", () => ctx.switchTab("logs"), true];
+  const logs = ctx.canChange(d) && ["Open the logs", () => ctx.switchTab("logs"), true];
   const pods = ["See the pods", () => ctx.switchTab("containers")];
 
   // The STATE comes first and comes alone. The health of a workspace that is not
@@ -36,7 +36,7 @@ function triageOf(d) {
     push("This workspace is not running",
          `Its record and its data volume are still here, and :${d.host_port} stays `
          + "reserved for it. Bringing it up reuses both.",
-         [ctx.canWrite() && ["Bring it up", () => ctx.doBringUp(d.name), true]]);
+         [ctx.canChange(d) && ["Bring it up", () => ctx.doBringUp(d.name), true]]);
     return out;
   }
   if (d.state === "stopped") {
@@ -44,7 +44,7 @@ function triageOf(d) {
          d.runtime === "kubernetes"
            ? "Its release is scaled to zero. The data and the namespace are intact."
            : "Its containers exist and are not running. The data volume is intact.",
-         [ctx.canWrite() && ["Start it", () => ctx.doState(d.name, "start"), true]]);
+         [ctx.canChange(d) && ["Start it", () => ctx.doState(d.name, "start"), true]]);
     return out;
   }
 
@@ -197,11 +197,12 @@ function renderDetail() {
     const key = t === "env vars" ? "env" : t;
     // Logs and env are member+ on the server: both hand over real credentials.
     // Rendering a tab that can only answer 403 is worse than not rendering it.
-    if (!ctx.canWrite() && (key === "logs" || key === "env")) continue;
+    // And only the owner's or an admin's: a member reads them on their own workspaces.
+    if (!ctx.canChange(d) && (key === "logs" || key === "env")) continue;
     tabs.append(ctx.el("button", { class: "tab" + (ctx.dstate.tab === key ? " active" : ""), onclick: () => ctx.switchTab(key) },
       t.charAt(0).toUpperCase() + t.slice(1)));
   }
-  if (!ctx.canWrite() && (ctx.dstate.tab === "logs" || ctx.dstate.tab === "env")) {
+  if (!ctx.canChange(d) && (ctx.dstate.tab === "logs" || ctx.dstate.tab === "env")) {
     ctx.dstate.tab = "overview";
     ctx.saveLocation({ replace: true });
   }
@@ -215,6 +216,9 @@ function renderDetail() {
   } else if (!ctx.canWrite()) {
     actions.append(ctx.el("span", { class: "inline-note", title: ctx.READONLY_WHY },
       "readonly — you can look, but not change anything here"));
+  } else if (!ctx.canChange(d)) {
+    actions.append(ctx.el("span", { class: "inline-note" },
+      `${ctx.ownerOf(d)}'s workspace — you can look; only ${ctx.ownerOf(d)} or an admin can change it`));
   } else if (d.state === "running") {
     actions.append(dBtn("Stop", () => ctx.doState(d.name, "stop")));
     actions.append(dBtn("Restart", () => ctx.doState(d.name, "restart")));
@@ -233,7 +237,7 @@ function renderDetail() {
   // a column. It scrolls the pane into view as well as revealing it: the pane follows
   // the stage in the document, so revealing it silently would put it below a panel
   // that can be several screens tall.
-  if (ctx.canWrite()) {
+  if (ctx.canChange(d)) {
     actions.append(ctx.el("button", { class: "btn small panetoggle", onclick: () => {
       const open = !document.body.classList.contains("pane-open");
       document.body.classList.toggle("pane-open", open);
@@ -379,6 +383,8 @@ function renderTab() {
     // sandbox credential, not a secret; the CLI prints it on up/ready/info.)
     if (d.login) {
       body.append(box2("Admin login", `${d.login.user} / ${d.login.password}`, d.login.password));
+    } else if (!ctx.canChange(d)) {
+      body.append(box2("Admin login", `Hidden. Only ${ctx.ownerOf(d)} or an admin can see it.`));
     }
     // The env tab masks credentials and points the reader at the compose file on
     // disk; this is where that file lives.

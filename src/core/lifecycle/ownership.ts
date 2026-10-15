@@ -17,6 +17,7 @@ import {
   storedText,
 } from '../../lib/format';
 import { actor as auditActor, record as auditRecord } from '../audit';
+import { reproLock } from '../runner/locks';
 import * as paths from '../runner/paths';
 import { type Metadata, readMeta, updateMeta } from '../runner/record';
 import { anyUsers, atLeast, roleOf } from '../users';
@@ -101,7 +102,10 @@ export async function claimTypedName(req: CreateReq): Promise<void> {
   const name = naming.sanitize(req.name);
   if (req.exactName || req.actor === '' || name === '' || name.length > naming.NAME_MAX) return;
   if (!(await paths.exists(name))) return;
-  [req.exactName] = await ownerGate(name, req.actor);
+  const [mayAct] = await ownerGate(name, req.actor);
+  // Only when it would be taken as typed: somebody else's still gets the actor's own.
+  if (mayAct) await naming.refuseAmbiguous(req.name, name, req.actor);
+  req.exactName = mayAct;
 }
 
 export async function ownerOf(name: string): Promise<unknown> {
@@ -133,14 +137,33 @@ export async function setOwner(
   to: string;
 }> {
   const target = await naming.resolveName(name);
-  // Enforced HERE, beside the mutation, exactly as `teardown` enforces `mayDestroy`: the
-  // CLI and the GUI both reach this function, and a check at either front end alone would
-  // leave the other open.
+  // Asked at once, so a refusal does not wait for the lock, and again with the write under
+  // ONE hold of it: checked only before, a hand-over landing while this waited let the
+  // previous owner give away what is no longer theirs.
+  await refuseUnlessMayChown(target, by);
+  // The wait the record's own write has always had.
+  return await reproLock(target, async () => await handOver(target, to, by), {
+    timeoutMs: 60_000,
+  });
+}
+
+async function refuseUnlessMayChown(target: string, by: string): Promise<void> {
   const [allowed, why] = await mayChown(target, by || auditActor());
   if (!allowed) {
     auditRecord('chown', target, { outcome: 'denied' });
     throw new ConflictError(why);
   }
+}
+
+async function handOver(
+  target: string,
+  to: string,
+  by: string,
+): Promise<{ name: string; from: unknown; to: string }> {
+  // Enforced HERE, beside the mutation, exactly as `teardown` enforces `mayDestroy`: the
+  // CLI and the GUI both reach this function, and a check at either front end alone would
+  // leave the other open.
+  await refuseUnlessMayChown(target, by);
   // `stripText`: `trim()` kept a leading \x1f or NEL that `stripText` strips and stripped a BOM
   // it keeps, so the recorded owner differed from the one earlier releases record.
   const owner = stripText(to || '').toLowerCase();
@@ -191,10 +214,17 @@ export function maySetPrivilegedFields(actor: string): boolean {
  * destroying it -- it is the act that DECIDES who may destroy it.
  */
 export async function ownerGate(name: string, actor: string): Promise<[boolean, string]> {
+  return ownedGate(await ownerOf(name), actor);
+}
+
+/**
+ * `ownerGate` for an owner already known -- a backup's, read from the record it carries,
+ * which outlives its workspace and is not whoever holds that name now.
+ */
+export function ownedGate(owner: unknown, actor: string): [boolean, string] {
   if (config.loadConfig()[DESTROY_POLICY_KEY] === 'anyone') return [true, ''];
   if (!actor) return [true, '']; // no accounts on this box: nothing to bound
   if (roleOf(actor) === 'admin') return [true, ''];
-  const owner = await ownerOf(name);
   // The owner equals the actor only as the same string: an int 123 against the actor
   // "123" is not, and the refusal names the owner as `toTextAny` spells it.
   if (!isTruthy(owner) || owner === actor) return [true, ''];
@@ -215,6 +245,22 @@ export async function mayDestroy(name: string, actor: string): Promise<[boolean,
     `${name} belongs to ${owner} — ask ${owner}, or an admin can ` +
       `force it. (${owner} or an admin can hand it over to ${actor} for good: ` +
       `Hand over… in its panel, or \`houston chown -n ${name} --to ${actor}\`.)`,
+  ];
+}
+
+/**
+ * (allowed, why not) for anything else a GUI member does to a workspace: stop it, change it,
+ * read its logs, env vars or admin login. Enforced for every member route that names a
+ * workspace (`web/route-table`'s `ownerScoped`); the same gate, so the same people pass.
+ */
+export async function mayChange(name: string, actor: string): Promise<[boolean, string]> {
+  const [allowed, owner] = await ownerGate(name, actor);
+  if (allowed) return [true, ''];
+  return [
+    false,
+    `${name} belongs to ${owner} — you can look at it, but only ${owner} or an admin can ` +
+      `change it or read its logs, env vars and login. (${owner} or an admin can hand it ` +
+      `over to ${actor}: Hand over… in its panel.)`,
   ];
 }
 

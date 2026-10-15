@@ -60,6 +60,9 @@ export const WORKSPACE_LABEL = 'houston.io/workspace';
 
 export const OWNER_OF_LABEL = 'houston.io/owner';
 
+/** Which houston home made a namespace (`config.homeId`): on the namespace alone. */
+export const HOME_LABEL = 'houston.io/home';
+
 /** A tool's floor, as the major/minor pair it must reach. */
 export type Floor = readonly [number, number];
 

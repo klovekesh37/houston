@@ -402,6 +402,98 @@ describe("a Kubernetes create's image and port", () => {
     expect(back.resolved?.rcImage).toBe('mirror.example/rc/rocket.chat');
   });
 
+  it('refuses to bring a workspace back on another Rocket.Chat version', async () => {
+    // A re-up re-applies the chart: `up -v 8.5.1` on a workspace upgraded to 8.6.1 moved
+    // Rocket.Chat back down over a database 8.6.1 had already migrated.
+    await writeRecord(
+      'kver',
+      metadata({ name: 'kver', project: 'houston-kver', rcVersion: '8.6.1', mongoTag: '8.0' }),
+    );
+    const back = job('kver');
+    back.reproName = 'kver';
+    back.reused = true;
+    await expect(resolvePairing(back)).rejects.toThrow(
+      "'kver' runs Rocket.Chat 8.6.1, and this asks for 8.5.1",
+    );
+  });
+
+  it('refuses to bring back under the operator a workspace whose MongoDB houston ran', async () => {
+    // The operator keeps its data in a claim of its own: brought back with --mongo-operator,
+    // the workspace came up empty, its data in a claim nothing read until `down --volumes`
+    // deleted it.
+    await writeRecord(
+      'kop',
+      metadata({
+        name: 'kop',
+        project: 'houston-kop',
+        rcVersion: '8.5.1',
+        mongoTag: '8.0',
+        extra: { mongo_managed_by: 'statefulset' },
+      }),
+    );
+    const back = job('kop', { mongoOperator: true });
+    back.reproName = 'kop';
+    back.reused = true;
+    await expect(resolvePairing(back)).rejects.toThrow(
+      "'kop' keeps its data in a MongoDB houston runs itself, and this would bring it back " +
+        'under the MongoDB operator',
+    );
+    // As it was, it comes back.
+    const same = job('kop');
+    same.reproName = 'kop';
+    same.reused = true;
+    await expect(resolvePairing(same)).resolves.toBeUndefined();
+  });
+
+  it('brings a workspace back on the MongoDB it ran, not a fresh pairing', async () => {
+    // The pairing was looked up again on every re-up, and the GUI's Start looks it up
+    // offline while the CLI asks releases.rocket.chat: the two could swap MongoDB under the
+    // same data.
+    await writeRecord(
+      'kmongo',
+      metadata({ name: 'kmongo', project: 'houston-kmongo', rcVersion: '8.5.1', mongoTag: '7.0' }),
+    );
+    const back = job('kmongo');
+    back.reproName = 'kmongo';
+    back.reused = true;
+    await resolvePairing(back);
+    expect(back.resolved?.mongoTag).toBe('7.0');
+  });
+
+  it('still keeps its version after a re-up that failed half way', async () => {
+    // Every re-up's write-ahead record said `incomplete`, and a re-up that failed left it so:
+    // the next `up` read a half-made workspace with nothing to keep, and went down a version.
+    const born = '2026-10-01T09:00:00+00:00';
+    await writeRecord(
+      'kfail',
+      metadata({
+        name: 'kfail',
+        project: 'houston-kfail',
+        rcVersion: '8.5.1',
+        mongoTag: '8.0',
+        createdAt: born,
+      }),
+    );
+    const first = job('kfail');
+    first.reproName = 'kfail';
+    first.reused = true;
+    await settleEnv(first);
+    await resolvePairing(first);
+    first.plan = { context: 'c', distribution: 'k3s' } as ClusterPlan;
+    first.presetForNotes = load('default', {});
+    await writeProvisionalRecord(first);
+    // ...and the re-up dies here, leaving its write-ahead record.
+    const left = await readMeta('kfail');
+    expect([left.extra.incomplete, left.createdAt]).toEqual([false, born]);
+    const second = job('kfail', { version: '8.4.0' });
+    second.reproName = 'kfail';
+    second.reused = true;
+    await settleEnv(second);
+    await expect(resolvePairing(second)).rejects.toThrow(
+      "'kfail' runs Rocket.Chat 8.5.1, and this asks for 8.4.0",
+    );
+  });
+
   it('keeps a workspace pinned when it comes back without --pin', async () => {
     // The record is rewritten on a re-up with `pinned: --pin`, so a plain `up` after `down`
     // unpinned it, and the next `prune` took it.

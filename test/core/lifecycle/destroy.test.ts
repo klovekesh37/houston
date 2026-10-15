@@ -6,6 +6,7 @@ import { metadata, writeRecord } from '../../../src/core/runner/record';
 import * as paths from '../../../src/core/runner/paths';
 
 import type * as DestroyNS from '../../../src/core/lifecycle/destroy';
+import type * as RecordNS from '../../../src/core/runner/record';
 import type * as JournalNS from '../../../src/core/journal';
 
 it('Grafana public URL regression: destroying a TLS workspace removes its shared-namespace resources', async () => {
@@ -33,6 +34,79 @@ it('Grafana public URL regression: destroying a TLS workspace removes its shared
   } finally {
     jest.dontMock('../../../src/core/kube/monitoring');
     jest.dontMock('../../../src/core/kube/operator');
+    jest.resetModules();
+  }
+});
+
+it('removes the record of a TLS workspace whose cluster can no longer be asked about its route', async () => {
+  // Its namespace was proved gone with the deleted cluster, then the Grafana route's removal
+  // raised "could not ask", and the record could never be removed by `down` or `prune`.
+  jest.resetModules();
+  jest.doMock('../../../src/core/kube/monitoring', () => ({
+    ...jest.requireActual<object>('../../../src/core/kube/monitoring'),
+    removeGrafanaIngress: async () => {
+      throw new Error("could not ask cluster 'gone' about its ingresses");
+    },
+    removeMonitoring: async () => false,
+  }));
+  jest.doMock('../../../src/core/kube/operator', () => ({
+    ...jest.requireActual<object>('../../../src/core/kube/operator'),
+    removeOperator: async () => false,
+  }));
+  const destroy = require('../../../src/core/lifecycle/destroy') as typeof DestroyNS;
+  const record = require('../../../src/core/runner/record') as typeof RecordNS;
+  const workspacePaths = require('../../../src/core/runner/paths') as typeof paths;
+  try {
+    await record.writeRecord(
+      'tlsgone',
+      record.metadata({ name: 'tlsgone', extra: { tls: 'local' } }),
+    );
+    const said: string[] = [];
+    await destroy.removeTheClusterSide(
+      'gone',
+      ((event: { message: string }) => said.push(event.message)) as Emit,
+      record.metadata({ name: 'tlsgone', extra: { tls: 'local' } }),
+      'tlsgone',
+      true,
+    );
+    expect(await workspacePaths.exists('tlsgone')).toBe(false);
+    expect(said.join(' ')).toContain("could not remove 'tlsgone''s Grafana route");
+  } finally {
+    jest.dontMock('../../../src/core/kube/monitoring');
+    jest.dontMock('../../../src/core/kube/operator');
+    jest.resetModules();
+  }
+});
+
+it('says so when a Compose teardown removed the data but could not remove the record', async () => {
+  // Swallowed: `down --volumes` reported "removed" while `list` went on showing a workspace
+  // with nothing behind it. The Kubernetes path already said so.
+  jest.resetModules();
+  jest.doMock('../../../src/core/runner/engine', () => ({
+    ...jest.requireActual<object>('../../../src/core/runner/engine'),
+    stop: async () => 0,
+    down: async () => 0,
+  }));
+  jest.doMock('../../../src/core/edge/networks', () => ({
+    ...jest.requireActual<object>('../../../src/core/edge/networks'),
+    detach: async () => undefined,
+  }));
+  jest.doMock('../../../src/core/runner/paths', () => ({
+    ...jest.requireActual<object>('../../../src/core/runner/paths'),
+    remove: async () => undefined, // as a root-owned file inside it would leave it
+  }));
+  const destroy = require('../../../src/core/lifecycle/destroy') as typeof DestroyNS;
+  const record = require('../../../src/core/runner/record') as typeof RecordNS;
+  try {
+    await record.writeRecord('stuck', record.metadata({ name: 'stuck', project: 'houston-stuck' }));
+    const said: string[] = [];
+    await destroy.teardownCompose('stuck', true, ((event: { message: string }) =>
+      said.push(event.message)) as Emit);
+    expect(said.join(' ')).toContain("`list` will still show 'stuck'");
+  } finally {
+    for (const id of ['runner/engine', 'edge/networks', 'runner/paths']) {
+      jest.dontMock(`../../../src/core/${id}`);
+    }
     jest.resetModules();
   }
 });
@@ -542,5 +616,170 @@ describe('closing pooled edge connections before a Compose teardown', () => {
     expect(state.pooledSocketOpen).toBe(false);
     expect(detach).toHaveBeenCalledWith('warmed');
     expect(down).toHaveBeenCalledWith('warmed', { volumes: false });
+  });
+});
+
+describe('a Kubernetes record with Docker containers left under its name', () => {
+  afterEach(() => {
+    for (const id of [
+      '../../../src/core/lifecycle/preconditions',
+      '../../../src/core/edge/networks',
+      '../../../src/core/edge/routes',
+      '../../../src/core/runner/engine',
+      '../../../src/core/kube/namespace',
+      '../../../src/core/kube/operator',
+      '../../../src/core/kube/monitoring',
+    ]) {
+      jest.dontMock(id);
+    }
+    jest.resetModules();
+  });
+
+  function load(downCode = 0) {
+    jest.resetModules();
+    const calls: string[] = [];
+    jest.doMock('../../../src/core/lifecycle/preconditions', () => ({
+      ...jest.requireActual('../../../src/core/lifecycle/preconditions'),
+      requireEngine: async () => undefined,
+    }));
+    jest.doMock('../../../src/core/edge/networks', () => ({
+      ...jest.requireActual('../../../src/core/edge/networks'),
+      detach: async (name: string) => void calls.push(`detach ${name}`),
+    }));
+    jest.doMock('../../../src/core/edge/routes', () => ({
+      ...jest.requireActual('../../../src/core/edge/routes'),
+      deregister: () => undefined,
+    }));
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      stop: async (name: string) => {
+        calls.push(`stop ${name}`);
+        return 0;
+      },
+      down: async (name: string, { volumes = false } = {}) => {
+        calls.push(`down ${name}${volumes ? ' -v' : ''}`);
+        return downCode;
+      },
+    }));
+    jest.doMock('../../../src/core/kube/namespace', () => ({
+      ...jest.requireActual('../../../src/core/kube/namespace'),
+      namespaceFor: async (name: string) => `houston-${name}`,
+      deleteNamespace: async () => {
+        calls.push('delete namespace');
+        return true;
+      },
+    }));
+    jest.doMock('../../../src/core/kube/operator', () => ({
+      ...jest.requireActual('../../../src/core/kube/operator'),
+      removeOperator: async () => false,
+    }));
+    jest.doMock('../../../src/core/kube/monitoring', () => ({
+      ...jest.requireActual('../../../src/core/kube/monitoring'),
+      removeMonitoring: async () => true,
+    }));
+    return { calls, destroy: require('../../../src/core/lifecycle/destroy') as typeof DestroyNS };
+  }
+
+  async function mixed(name: string): Promise<void> {
+    // What 2.1.1's Kubernetes create left of a Docker workspace it took over: a Kubernetes
+    // record, and the Docker workspace's compose file beside it.
+    await writeRecord(
+      name,
+      metadata({
+        name,
+        project: `houston-${name}`,
+        extra: { runtime: 'kubernetes', context: 'default' },
+      }),
+    );
+    await fs.writeFile(`${paths.workspace(name)}/docker-compose.yml`, 'services: {}\n');
+  }
+
+  it('brings the Docker containers down with their data before the namespace and the record go', async () => {
+    const { calls, destroy } = load();
+    await mixed('both');
+    await destroy.teardown('both', { volumes: true, confirm: true });
+    expect(calls).toEqual(['stop both', 'detach both', 'down both -v', 'delete namespace']);
+    expect(await paths.exists('both')).toBe(false);
+  });
+
+  it('removes nothing when the Docker containers will not go, and says how to remove them', async () => {
+    const { calls, destroy } = load(1);
+    await mixed('stuck');
+    await expect(destroy.teardown('stuck', { volumes: true, confirm: true })).rejects.toThrow(
+      '`docker compose -p houston-stuck down -v` removes them',
+    );
+    expect(calls).not.toContain('delete namespace');
+    expect(await paths.exists('stuck')).toBe(true);
+  });
+
+  it('asks again under the lock, so a workspace handed over while down --volumes waited is kept', async () => {
+    // The owner was asked before the wait for the lock and not after: bob's `down --volumes`
+    // queued behind a backup deleted the workspace that had meanwhile been handed to alice.
+    const { calls, destroy } = load();
+    await writeRecord(
+      'ho',
+      metadata({ name: 'ho', project: 'houston-ho', extra: { created_by: 'bob' } }),
+    );
+    const { reproLock } = require('../../../src/core/runner/locks') as {
+      reproLock: <T>(name: string, body: () => Promise<T>) => Promise<T>;
+    };
+    const { runWithContext } = require('../../../src/lib/context') as {
+      runWithContext: <T>(values: { actor: string }, fn: () => T) => T;
+    };
+    const gate = { release: (): void => undefined, taken: false };
+    const held = reproLock(
+      'ho',
+      () =>
+        new Promise<void>((done) => {
+          gate.release = done;
+          gate.taken = true;
+        }),
+    );
+    for (let wait = 0; wait < 200 && !gate.taken; wait += 1) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    const said: string[] = [];
+    const down = runWithContext({ actor: 'bob' }, () =>
+      destroy.teardown('ho', {
+        volumes: true,
+        confirm: true,
+        emit: (event) => void said.push(event.message),
+      }),
+    ).then(
+      () => '',
+      (error: Error) => error.message,
+    );
+    for (let wait = 0; wait < 100 && said.length === 0; wait += 1) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    expect(said[0]).toContain("another houston command is working on 'ho'");
+    await writeRecord(
+      'ho',
+      metadata({ name: 'ho', project: 'houston-ho', extra: { created_by: 'bob', owner: 'alice' } }),
+    );
+    gate.release();
+    await held;
+    expect(await down).toContain('ho belongs to alice');
+    expect(calls).toEqual([]);
+    expect(await paths.exists('ho')).toBe(true);
+    // A refusal is not also written down as done.
+    const audit = await fs.readFile(`${config.home()}/audit.log`, 'utf8');
+    expect(audit.split('\n').filter((line) => line.includes('\tdown-volumes\tho\t'))).toEqual([
+      expect.stringMatching(/denied/u),
+    ]);
+  });
+
+  it('asks nothing of Docker for a Kubernetes workspace that has no compose file', async () => {
+    const { calls, destroy } = load();
+    await writeRecord(
+      'pure',
+      metadata({
+        name: 'pure',
+        project: 'houston-pure',
+        extra: { runtime: 'kubernetes', context: 'default' },
+      }),
+    );
+    await destroy.teardown('pure', { volumes: true, confirm: true });
+    expect(calls).toEqual(['delete namespace']);
   });
 });

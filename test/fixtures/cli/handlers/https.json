@@ -45,7 +45,7 @@
     "edge restart, start fails": {
       "code": 1,
       "stdout": "✓ edge stopped; it no longer holds :80 or :443.\n",
-      "stderr": "error: the edge did not start. Check nothing else holds :80 or :443:\n    sudo lsof -i :443\n",
+      "stderr": "error: the edge did not start: Error response from daemon: failed to create task for container: unable to start unit \"docker-5db7.scope\": Unit docker-5db7.scope was already loaded or has a fragment file.\n",
       "dialled": []
     },
     "edge delete, nothing there": {

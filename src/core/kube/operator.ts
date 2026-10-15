@@ -117,6 +117,11 @@ export function operatorSupports(mongoTag: string, { forced = false } = {}): boo
   return major > floorMajor || (major === floorMajor && minor >= floorMinor);
 }
 
+/** Whether a create would put MongoDB under the operator: asked for, and able to run it. */
+export function wouldUseOperator(mongoTag: string, forced: boolean): boolean {
+  return (forced || operatorEnabled()) && operatorSupports(mongoTag, { forced });
+}
+
 /** A label block at the manifest indent the templates below use. */
 function labelBlock(name: string, owner: string): string {
   return Object.entries(labelsFor(name, owner))

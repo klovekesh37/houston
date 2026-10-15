@@ -56,7 +56,7 @@ import {
   mongodbCommunityManifest,
   operatorEnabled,
   operatorMongoUrl,
-  operatorSupports,
+  wouldUseOperator,
   operatorVersion,
   licenseSecretManifest,
   regTokenSecretManifest,
@@ -226,7 +226,7 @@ async function provisionDatabase(
   emit: Emit,
 ): Promise<Database> {
   const requested = useOperator || operatorEnabled();
-  if (requested && operatorSupports(resolved.mongoTag, { forced: useOperator })) {
+  if (wouldUseOperator(resolved.mongoTag, useOperator)) {
     return await operatorDatabase(name, resolved, owner, namespace, context, emit);
   }
   return await statefulSetDatabase(name, resolved, owner, namespace, context, emit, requested);

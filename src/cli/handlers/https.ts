@@ -73,11 +73,12 @@ async function edgeStart(io: CliIo, action: string): Promise<void> {
   const runtime = require('../../core/edge/runtime') as typeof EdgeRuntimeNS;
   // RENDERED, not raised: a ConflictError here is an edge from another HOUSTON_HOME
   // holding the port, a real and actionable condition. It propagates as the red line.
-  const started = (await runtime.up({ pull: false })).returncode === 0;
-  if (!started) {
-    throw new ReproError(
-      'the edge did not start. Check nothing else holds :80 or :443:\n    sudo lsof -i :443',
-    );
+  const res = await runtime.up({ pull: false });
+  if (res.returncode !== 0) {
+    // Docker's own reason. A guess that something held :80 or :443 was printed for every
+    // failure, and sent the reader to `lsof` over a stale systemd unit that held neither.
+    const engine = require('../../core/edge/engine') as typeof EdgeEngineNS;
+    throw new ReproError(`the edge did not start: ${engine.why(res)}`);
   }
   // BOUND IS NOT REACHABLE.
   const claim = await portClaimNote();
@@ -414,47 +415,6 @@ export function tlsTroubleshoot(
   }
 }
 
-/** Ask THIS host, on both loopback families, what it is really serving. */
-async function probeTlsEndpoint(
-  cafile: string,
-  host: string,
-  meta: Metadata,
-  port: number,
-): Promise<TlsReport> {
-  const tls = require('../../core/tls') as typeof TlsNS;
-  const withCa = cafile === '' ? {} : { cafile };
-  // On a Kubernetes workspace this box is not in the path at all: the certificate is a
-  // Secret in the cluster and the cluster's ingress holds :443. Probing loopback there
-  // reaches whatever else is listening here, which reported a healthy EKS workspace as
-  // broken. So the NAME is what gets probed when TLS terminates elsewhere.
-  if (String(meta.extra.tls_terminates ?? '') === 'cluster') {
-    // THE ORIGIN, when this box's edge passes the name through to the cluster: the name
-    // itself may be answered by a CDN in front, and behind Cloudflare this reported its
-    // certificate (Google Trust Services WE1) as the workspace's, exit 0, while the cluster
-    // served its ingress default -- which hid a certificate that never issued. The recorded
-    // ingress endpoint, asked with the name as SNI, is what the edge hands the bytes to.
-    const origin = /^(.+):(\d+)$/u.exec(String(meta.extra.ingress_endpoint ?? ''));
-    if (isTruthy(meta.extra.edge) && origin !== null) {
-      return await tls.verify(String(origin[1]), {
-        port: Number(origin[2]),
-        sni: host,
-        ...withCa,
-      });
-    }
-    return await tls.verify(host, { port, ...withCa });
-  }
-  // BOTH LOOPBACK FAMILIES, because one of them may not be ours: k3s's ServiceLB DNATs
-  // IPv4 :443 into the cluster, so 127.0.0.1 answered `CN = TRAEFIK DEFAULT CERT` while
-  // [::1] -- the houston edge -- served the real one. The first answer that is not a
-  // fallback wins; if every family answers with a placeholder, that IS the finding.
-  let report: TlsReport | null = null;
-  for (const probe of ['127.0.0.1', '::1']) {
-    report = await tls.verify(probe, { port, sni: host, ...withCa });
-    if (report.serving && !report.fallback) break;
-  }
-  return report as TlsReport;
-}
-
 /** The certificate actually being served; exit 1 for the placeholder. */
 function renderTlsPanel(
   io: CliIo,
@@ -662,7 +622,7 @@ export async function tlsStatus(io: CliIo, name: string): Promise<number> {
   const cafile = mode === tls.MODE_LOCAL ? joinPath(tls.caDir(), tls.CA_CRT) : '';
   say(io, `Checking ${meta.publicUrl} ...`);
 
-  const r = await probeTlsEndpoint(cafile, host, meta, port);
+  const r = await tls.probeServed(host, port, meta.extra, { cafile, ask: tls.verify });
   if (!r.serving) {
     say(io, `  ✗ nothing is serving TLS on this host's port ${String(port)} - ${r.error}`);
     tlsTroubleshoot(io, meta, mode, host, port);

@@ -41,6 +41,17 @@ export const DOCKER_TTL_MS = 3_000;
 /** How long a read-only docker query is reused: two and a half seconds. */
 export const QUERY_TTL_MS = 2_500;
 
+/**
+ * A container's `State.Error` when systemd still holds the unit of its previous run.
+ *
+ * Under the systemd cgroup driver every container runs in `docker-<id>.scope`, and a
+ * start reuses the container, so its id and its unit name. A unit left loaded by the last
+ * run -- seen on a production box after every stop -- fails each start with "Unit
+ * docker-<id>.scope was already loaded or has a fragment file" (older systemd: "already
+ * exists"). Nothing short of root clears the unit; a recreated container has a new id.
+ */
+export const STALE_UNIT = /\.scope\b.*(?:already loaded|already exists)/u;
+
 export interface DockerOptions {
   readonly input?: string | Buffer;
   readonly cwd?: string;

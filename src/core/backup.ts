@@ -69,7 +69,7 @@ import * as journal from './journal';
 import { MONOLITH_SELECTOR } from './kube/names';
 import { login } from './lifecycle/admin';
 import { createRepro } from './lifecycle/create-docker';
-import { ownerPrefix, resolveName, sanitize } from './lifecycle/naming';
+import { ownerPrefix, refuseAmbiguous, resolveName, sanitize } from './lifecycle/naming';
 import { mayDestroy } from './lifecycle/ownership';
 import { requireDocker } from './lifecycle/preconditions';
 import { waitAndFinalize, waitServing } from './lifecycle/ready';
@@ -568,7 +568,9 @@ export async function create(
   // Docker is required only when Docker is what runs it. Everything below this is
   // runtime-agnostic: the bundle, the manifest and the safety checks are the same on
   // both, and only the five places that touch a container differ.
-  if ((await kube(target)) === '') await requireDocker();
+  const context = await kube(target);
+  if (context === '') await requireDocker();
+  else await (await import('./kube/namespace')).requireOwnNamespace(target, { context });
   const { reproLock } = await import('./runner/locks');
   // UNWOUND by a Ctrl-C: through `Quiesced.exit`, the staging directory's removal and the
   // lock's release. `composeExecToFile` passes the interrupted dump's Interrupted on
@@ -576,7 +578,13 @@ export async function create(
   // cleanup and then `runCli`, which answers it as the interrupt it is.
   return await unwindsOnInterrupt(
     async () =>
-      await reproLock(target, async () => await createLocked(target, { out, note, live, emit })),
+      await reproLock(target, async () => {
+        // AGAIN UNDER THE LOCK: it quiesces and dumps what is in the namespace by name.
+        if (context !== '') {
+          await (await import('./kube/namespace')).requireOwnNamespace(target, { context });
+        }
+        return await createLocked(target, { out, note, live, emit });
+      }),
   );
 }
 
@@ -1126,12 +1134,7 @@ export async function listBackups(name = ''): Promise<Bag[]> {
     }
   }
   for (const row of out) {
-    row.predates_workspace = Boolean(
-      born !== '' &&
-      row.created_at !== undefined &&
-      row.created_at !== '' &&
-      String(row.created_at) < born,
-    );
+    row.predates_workspace = predates(row.created_at, born);
   }
   return out.sort((left, right) => Number(right.mtime) - Number(left.mtime));
 }
@@ -1199,15 +1202,18 @@ export async function restore(
     emit = nullEmit,
   }: { name?: string; new?: boolean; allowUpgrade?: boolean; force?: boolean; emit?: Emit } = {},
 ): Promise<Bag> {
-  // Docker only when Docker is what runs the TARGET. `new=true` has no target yet, so
-  // it is checked below once the name is known -- and restoring into a fresh workspace
-  // still creates a Compose one, because a bundle carries no runtime.
   const existing = name !== '' && !isNew ? await resolveName(name) : '';
+  // As `down` refuses it: `--name test` while your own `alice-test` is there, and the `test`
+  // that answers is not yours, would drop the wrong workspace's collections.
+  if (existing !== '') await refuseAmbiguous(name, existing, audit.actor());
   // Authorisation FIRST, when the target is already known.
   if (existing !== '') await requireMayDestroy(existing);
-  if (!(existing !== '' && (await kube(existing)) !== '')) await requireDocker();
   const bundleFile = expandUser(bundle);
   const manifest = await readManifest(bundleFile);
+  // Docker only when Docker is what runs the TARGET, which the bundle names when `--name`
+  // does not: asked before it was read, a restore into a Kubernetes workspace by the
+  // bundle's own name, or as new from a Kubernetes bundle, demanded Docker on a box with none.
+  if (!(await restoresOnKubernetes(isNew, existing, manifest))) await requireDocker();
 
   if (isNew) {
     // THE NAME THE CREATE WILL SETTLE ON, owner prefix and all: the create puts
@@ -1230,15 +1236,78 @@ export async function restore(
   }
   await requireMayDestroy(resolved);
   const { reproLock } = await import('./runner/locks');
-  return await reproLock(
-    resolved,
-    async () =>
-      await restoreLocked(resolved, bundleFile, manifest, emit, {
-        allowUpgrade,
-        force,
-        created: false,
-      }),
+  return await reproLock(resolved, async () => {
+    // AGAIN UNDER THE LOCK: handed over while this waited, it is somebody else's data now.
+    await requireMayDestroy(resolved);
+    if (name === '') await refuseANewerNamesake(resolved, manifest, bundleFile);
+    // Recorded before its collections are dropped, as `down --volumes` is before its work.
+    audit.record('restore', resolved);
+    return await restoreLocked(resolved, bundleFile, manifest, emit, {
+      allowUpgrade,
+      force,
+      created: false,
+    });
+  });
+}
+
+/** Whether a bundle made at `madeAt` is older than a workspace born at `born` (ISO times). */
+function predates(madeAt: unknown, born: string): boolean {
+  return born !== '' && madeAt !== undefined && madeAt !== '' && String(madeAt) < born;
+}
+
+/**
+ * A bundle restored in place by its own name goes back to "the repro it came from" -- and a
+ * derived name comes back every time a workspace of that version is made again, so the
+ * workspace holding the name now can be a newer one whose data the restore would replace.
+ * `--name` says the caller means it; `--new` makes the bundle's own workspace again.
+ */
+async function refuseANewerNamesake(target: string, manifest: Bag, bundle: string): Promise<void> {
+  const born = String((await readMeta(target)).createdAt || '');
+  // NOR AN OLDER ONE THAT ONLY SHARES THE NAME. A bundle made today from a colleague's
+  // `rc8-5-1` passed the check below over your own `rc8-5-1` of last week, and dropped its
+  // data. The bundle carries its workspace's record, and a workspace keeps its birth across a
+  // rebuild, so a different birth is a different workspace.
+  const source = await sourceBirth(bundle);
+  if (source !== '' && born !== '' && source !== born) {
+    throw new ConflictError(
+      `${quotedText(target)} is not the workspace this backup was taken from (that one was ` +
+        `made ${source}, this one ${born}), and restoring would replace this one's data. ` +
+        `Restore with --new to bring the backup back as its own workspace, or --name ${target} ` +
+        "to replace this one's data anyway.",
+    );
+  }
+  if (!predates(manifest.created_at, born)) return;
+  throw new ConflictError(
+    `${quotedText(target)} was made after this backup (backup ${String(manifest.created_at)}, ` +
+      `workspace ${born}), so it is a newer workspace with the same name, and restoring would ` +
+      `replace its data. Restore with --new to bring the backup back as its own workspace, or ` +
+      `--name ${target} to replace this one's data anyway.`,
   );
+}
+
+/** Whose a bundle's data is, from the record it carries; '' when it names nobody or cannot say. */
+export async function bundleOwner(bundle: string): Promise<string> {
+  try {
+    const raw = await readMember(bundle, RECORD);
+    if (raw === null) return '';
+    const extra = (JSON.parse(raw.toString('utf8')) as Bag).extra as Bag | undefined;
+    const owner = isTruthy(extra?.owner) ? extra?.owner : extra?.created_by;
+    return typeof owner === 'string' ? owner : '';
+  } catch {
+    return '';
+  }
+}
+
+/** When the bundle's own workspace was made, from the record it carries; '' when it says not. */
+async function sourceBirth(bundle: string): Promise<string> {
+  try {
+    const raw = await readMember(bundle, RECORD);
+    if (raw === null) return '';
+    const born = (JSON.parse(raw.toString('utf8')) as Bag).created_at;
+    return typeof born === 'string' ? born : '';
+  } catch {
+    return ''; // a record it cannot read decides nothing; the check above still runs
+  }
 }
 
 /**
@@ -1315,6 +1384,50 @@ export async function deriveNewName(manifest: Bag, actor = ''): Promise<string> 
   return candidate;
 }
 
+/**
+ * An archive that recorded its axes rebuilds from them; an older one falls back to
+ * inferring them from the preset name. The preset comes from the manifest in BOTH branches.
+ */
+function manifestAxes(manifest: Bag): Partial<CreateReq> {
+  const deployment = manifest.deployment;
+  return deployment !== undefined && deployment !== null && String(deployment) !== ''
+    ? {
+        runtime: String(manifest.runtime ?? ''),
+        deployment: String(deployment),
+        preset: String(manifest.preset ?? '') || 'default',
+        context: String(manifest.context ?? ''),
+        mongoOperator: manifest.mongo_operator === true,
+      }
+    : { preset: String(manifest.preset ?? '') || 'default' };
+}
+
+/**
+ * Whether the restore lands on Kubernetes: the workspace restored in place, by `--name` or
+ * by the bundle's own name, or -- as new -- the runtime the bundle recorded.
+ */
+async function restoresOnKubernetes(
+  isNew: boolean,
+  existing: string,
+  manifest: Bag,
+): Promise<boolean> {
+  if (isNew) {
+    try {
+      return topology.normalize(manifestAxes(manifest).runtime) === topology.KUBERNETES;
+    } catch {
+      return false; // an unknown runtime: the create refuses it by name
+    }
+  }
+  let into = existing;
+  if (into === '') {
+    try {
+      into = await resolveName(String(manifest.repro ?? ''));
+    } catch {
+      return false; // nothing to restore into: said below, after the engine
+    }
+  }
+  return (await kube(into)) !== '';
+}
+
 /** Materialise a workspace matching the bundle, then leave it ready to load. */
 export async function createFromManifest(target: string, manifest: Bag, emit: Emit): Promise<void> {
   if (await exists(target)) {
@@ -1329,20 +1442,7 @@ export async function createFromManifest(target: string, manifest: Bag, emit: Em
       `(preset ${String(manifest.preset ?? '') || 'default'})`,
     { phase: 'create', pct: 5 },
   );
-  // An archive that recorded its axes rebuilds from them; an older one falls back to
-  // inferring them from the preset name. The preset comes from the manifest in BOTH
-  // branches.
-  const deployment = manifest.deployment;
-  const axes: Partial<CreateReq> =
-    deployment !== undefined && deployment !== null && String(deployment) !== ''
-      ? {
-          runtime: String(manifest.runtime ?? ''),
-          deployment: String(deployment),
-          preset: String(manifest.preset ?? '') || 'default',
-          context: String(manifest.context ?? ''),
-          mongoOperator: manifest.mongo_operator === true,
-        }
-      : { preset: String(manifest.preset ?? '') || 'default' };
+  const axes = manifestAxes(manifest);
   const req = createReq({
     version: String(manifest.rc_version ?? ''),
     name: target,
@@ -1572,6 +1672,12 @@ export async function restoreLocked(
   { allowUpgrade, force, created }: { allowUpgrade: boolean; force: boolean; created: boolean },
 ): Promise<Bag> {
   const meta = await readMeta(target);
+  // Into this workspace's own namespace only: by name, a restore once dropped the
+  // collections of a namespace another home had made in its place.
+  const context = await kube(target);
+  if (context !== '') {
+    await (await import('./kube/namespace')).requireOwnNamespace(target, { context });
+  }
   const compat = compatibility(manifest, meta);
   if (!compat.allowed && !force) {
     throw new ValidationError(compat.blocked_reason + ' Pass --force to try anyway.');

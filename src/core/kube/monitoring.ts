@@ -690,12 +690,19 @@ export async function monitoringWanted(
   return String(labels[MONITORING_LABEL] ?? '').trim() === 'true';
 }
 
-/** Mark (or unmark) a namespace as wanting the shared stack. */
+/**
+ * Mark (or unmark) a namespace as wanting the shared stack.
+ *
+ * THE MARK IS THE STACK'S REFERENCE COUNT, so one that did not land is raised, not ignored:
+ * an attach whose label was refused still recorded `monitoring: true`, and the next teardown
+ * of any other workspace counted nobody, uninstalled the stack and deleted its volumes. An
+ * unmark that did not land only keeps the stack, so that one is let go.
+ */
 export async function setMonitoringLabel(
   namespace: string,
   { context, wanted }: { context: string; wanted: boolean },
 ): Promise<void> {
-  await kube.run(
+  const res = await kube.run(
     [
       'kubectl',
       '--context',
@@ -708,6 +715,13 @@ export async function setMonitoringLabel(
     ],
     { own: isOurs(context) },
   );
+  if (wanted && res.returncode !== 0) {
+    throw new DockerError(
+      `could not mark namespace ${namespace} as using the shared monitoring stack: ${why(res)} ` +
+        "— monitoring was not attached, so another workspace's teardown cannot remove the " +
+        'stack from under it',
+    );
+  }
 }
 
 /** Namespaces other than `excluding` that still request the shared stack. */

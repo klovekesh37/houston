@@ -45,6 +45,7 @@ import { deregister as deregisterRoute, routeHost } from '../edge/routes';
 import { installed as edgeInstalled } from '../edge/spec';
 import { assertNamespaceAvailable, namespaceFor, namespaceLabels } from '../kube/namespace';
 import { mintNamespace } from '../kube/names';
+import { wouldUseOperator } from '../kube/operator';
 import { type ClusterPlan, planCluster } from '../kube/context';
 import { ensureKubeconfig } from '../kube/cluster';
 import { helmReachable } from '../kube/reachability';
@@ -187,6 +188,14 @@ export function kubeCreate(
     result: {},
     ...values,
   };
+}
+
+/**
+ * When the workspace was made: kept on a re-up, which keeps its data. Stamped afresh, a backup
+ * taken before a `down` and re-up read as one from an earlier workspace with the same name.
+ */
+function bornAt(previous: Metadata | null): string {
+  return previous?.createdAt || new Date().toISOString().slice(0, 19) + '+00:00';
 }
 
 /** The longest a namespace, a DNS label, may be. */
@@ -372,7 +381,37 @@ export async function resolvePairing(job: KubeCreate): Promise<void> {
     job.req.rcImage || (before === null ? '' : String(before.rcImage || '')),
     config.loadConfig().rc_image,
   );
+  // A WORKSPACE COMES BACK AS IT WAS. A re-up re-applies the chart and MongoDB from this
+  // request: another version helm-moved Rocket.Chat over a database a different release had
+  // migrated -- downwards too, which `upgrade` refuses -- and a fresh pairing swapped the
+  // MongoDB image under its data. A create that never finished has nothing to keep.
+  const kept = before !== null && before.extra.incomplete !== true ? before : null;
+  if (kept !== null && kept.rcVersion !== '' && job.resolved.rcVersion !== kept.rcVersion) {
+    throw new ValidationError(
+      `'${job.reproName}' runs Rocket.Chat ${kept.rcVersion}, and this asks for ` +
+        `${job.resolved.rcVersion}. It comes back at its own version: \`--version ` +
+        `${kept.rcVersion}\`. \`houston upgrade --name ${job.reproName} --to ` +
+        `${job.resolved.rcVersion}\` moves it, with a backup to roll back to.`,
+    );
+  }
   if (job.req.mongo) applyMongoOverride(job.resolved, job.req.mongo);
+  else if (kept !== null && kept.mongoTag !== '') applyMongoOverride(job.resolved, kept.mongoTag);
+  // NOR UNDER ANOTHER MONGODB. The operator keeps its data in a claim of its own, so a kept
+  // workspace brought back with --mongo-operator (or HOUSTON_MONGO_OPERATOR set since) came up
+  // on an empty database, its data in a claim nothing read -- and `down --volumes` deleted it.
+  if (
+    kept !== null &&
+    kept.extra.mongo_managed_by === 'statefulset' &&
+    wouldUseOperator(job.resolved.mongoTag, job.req.mongoOperator)
+  ) {
+    throw new ValidationError(
+      `'${job.reproName}' keeps its data in a MongoDB houston runs itself, and this would bring ` +
+        'it back under the MongoDB operator, on an empty volume. Bring it back without ' +
+        '--mongo-operator (and with HOUSTON_MONGO_OPERATOR unset). To move it to the operator: ' +
+        `\`houston backup --name ${job.reproName}\`, \`down --volumes\`, then \`restore --new\` ` +
+        'with the operator.',
+    );
+  }
 
   // A workspace that comes back must come back at the SAME address. Allocating afresh
   // moved it from :3382 to :3000 on the `up` after a `down` -- so every bookmark, every
@@ -633,7 +672,7 @@ export async function writeProvisionalRecord(job: KubeCreate): Promise<void> {
     versionSource: resolved.source,
     pinned: job.req.pin || job.wasPinned,
     adminPassword: job.adminPassword,
-    createdAt: new Date().toISOString().slice(0, 19) + '+00:00',
+    createdAt: bornAt(job.previousMeta),
   });
   topology.stamp(job.provisional.extra, topology.KUBERNETES);
   job.provisional.extra[config.EXTRA_DEPLOYMENT] = job.req.deployment || topology.MICROSERVICES;
@@ -648,7 +687,11 @@ export async function writeProvisionalRecord(job: KubeCreate): Promise<void> {
   // right only while houston's own cluster was the only one it could use.
   job.provisional.extra[config.EXTRA_CONTEXT] = plan.context;
   job.provisional.extra.distribution = plan.distribution;
-  job.provisional.extra.incomplete = true;
+  // A RE-UP OF A FINISHED WORKSPACE IS NOT A HALF-MADE ONE. Marked incomplete, a re-up that
+  // failed left the flag behind, and the next `up` skipped the checks that keep a workspace's
+  // version, MongoDB and presets -- the ones a half-made workspace has nothing to keep for.
+  job.provisional.extra.incomplete =
+    job.previousMeta === null || job.previousMeta.extra.incomplete === true;
   if (job.req.actor) job.provisional.extra.created_by = job.req.actor;
   // In the write-ahead record too: a re-up after a killed create carries forward from it.
   if (Object.keys(job.envOverrides).length > 0) job.provisional.extra.env = job.envOverrides;
@@ -792,7 +835,7 @@ export async function buildRecord(job: KubeCreate): Promise<void> {
     versionSource: resolved.source,
     pinned: job.req.pin || job.wasPinned,
     adminPassword: job.adminPassword,
-    createdAt: new Date().toISOString().slice(0, 19) + '+00:00',
+    createdAt: bornAt(job.previousMeta),
   });
   // The preset's own record fields -- `mailpit_url`, which `admin.login` reads to fetch an
   // email-2FA code, so without it every login to an email workspace here failed at 2FA.
