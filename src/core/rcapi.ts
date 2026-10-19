@@ -978,6 +978,32 @@ export async function addLivechatAgent(
   }
 }
 
+/** Give user `id` a voice call extension; false when Rocket.Chat refuses (Voice unlicensed). */
+export async function setVoiceExtension(
+  rootUrl: string,
+  auth: Auth,
+  password: string,
+  id: string,
+  extension: string,
+  { timeoutMs = 15_000 } = {},
+): Promise<boolean> {
+  const headers = {
+    ...authHeaders(auth),
+    'Content-Type': 'application/json',
+    ...(await password2faHeaders(password)),
+  };
+  try {
+    const resp = await post(`${trimEnd(rootUrl)}/api/v1/users.update`, {
+      headers,
+      json: { userId: id, data: { freeSwitchExtension: extension } },
+      timeoutMs,
+    });
+    return resp.status === 200 && body(resp).success === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve a username to its `_id` via users.info, or null. */
 export async function getUserId(
   rootUrl: string,

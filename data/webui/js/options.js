@@ -55,6 +55,15 @@ function whyOff(name) {
   if (rival && ticked(rival)) return "One sign-in provider per workspace";
   return "";
 }
+// voice's phone options: each needs the one before it, and all of them Docker. A hidden one is
+// not sent either, or a value typed before switching place would have the create refused.
+const voiceOn = (key) => P("voice")[key] === "on";
+function voiceShown(key) {
+  if (key === "ice_servers") return true;
+  if (runtime() === "kubernetes") return false;
+  if (key === "sip") return true;
+  return key === "fs_dialplan" ? voiceOn("sip") && voiceOn("pbx") : voiceOn("sip");
+}
 // ldap's own single sign-on follows a ticked saml or oidc preset: one Keycloak per workspace.
 const keycloakPreset = () => ticked("saml") || ticked("oidc");
 const ldapIdp = () => (ticked("saml") ? "saml" : ticked("oidc") ? "oidc" : P("ldap").idp || "none");
@@ -284,9 +293,29 @@ const DESIGNED = {
     "Require email verification on new accounts")) },
   s3_minio: { presigned: () => row("Presigned URLs", check("s3_minio", "presigned", ["true", "false"], "false",
     "Serve downloads from presigned MinIO URLs, not through Rocket.Chat")) },
+  // Each phone option opens once the one it needs is on; on Kubernetes none is offered.
+  voice: {
+    sip: () => (runtime() === "kubernetes"
+      ? row("Phone services", hint("Dialling numbers and the lab phone system (SIP) run on Docker only. Calls between users work here."))
+      : row("Phone services", check("voice", "sip", ["on", "off"], "off", "Drachtio and FreeSWITCH",
+        "(dial numbers, take calls from a phone system)"),
+      voiceOn("sip") ? hint("voice-alice and voice-bob get extensions 1001 and 1002. Dial 123 to hear yourself.") : null)),
+    voip_domain: () => (voiceShown("voip_domain") ? row("Reached at", txt("voice", "voip_domain", "this machine only"),
+      hint("For a browser on another machine: this machine's LAN IP, public IP, or a domain with UDP open to it.")) : []),
+    rtp_ports: () => (voiceShown("rtp_ports") ? row("Audio ports", txt("voice", "rtp_ports", "20000-20046"),
+      hint("UDP, start-end, at most 200. A second lab on this machine needs its own range.")) : []),
+    pbx: () => (voiceShown("pbx") ? row("Phone system", check("voice", "pbx", ["on", "off"], "off",
+      "A lab phone system (Asterisk)", "(desk phones, ring groups, an outside caller)")) : []),
+    fs_dialplan: () => (voiceShown("fs_dialplan") ? row("FreeSWITCH dialplans",
+      seg("voice", "fs_dialplan", [["stock", "As shipped"], ["edit", "Editable copies"]]),
+      P("voice").fs_dialplan === "edit" ? hint("public.xml and drachtio.xml in the workspace folder; kept across rebuilds and backups.") : null) : []),
+    ice_servers: () => row("ICE servers", txt("voice", "ice_servers", "Rocket.Chat's own"),
+      hint("stun:, turn: or turns:host:port, comma-separated; user:password@ is allowed and shown masked. Empty keeps Rocket.Chat's own (Google STUN).")),
+  },
 };
 const ORDER = { ldap: ["users", "domain", "directory", "groups", "bind", "tls", "trust", "idp", "mfa", "idp_host"],
-  e2ee: ["policy", "users", "files", "allow_unencrypted"] };
+  e2ee: ["policy", "users", "files", "allow_unencrypted"],
+  voice: ["sip", "voip_domain", "rtp_ports", "pbx", "fs_dialplan", "ice_servers"] };
 
 function paramPanel(name) {
   const help = presetOf(name).params_help || {}, keys = Object.keys(help);
@@ -310,6 +339,7 @@ function optionsRequest() {
     for (const [k, v] of Object.entries(S.params[p] || {})) {
       if (String(v).trim() === "") continue;
       if (p === "ldap" && keycloakPreset() && ["idp", "mfa", "idp_host"].includes(k)) continue;
+      if (p === "voice" && !voiceShown(k)) continue;
       out[k] = String(v).trim();
     }
     return out;

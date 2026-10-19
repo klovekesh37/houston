@@ -45,6 +45,7 @@ import './multi-instance';
 import './oidc';
 import './s3-minio';
 import './saml';
+import './voice';
 
 /**
  * `core/topology.ts`'s `DOCKER`. Spelled out rather than imported because presets is the

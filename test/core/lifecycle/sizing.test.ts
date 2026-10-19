@@ -125,6 +125,17 @@ describe('capacity arithmetic', () => {
     // A Keycloak in front of the directory costs what the saml preset's does.
     expect(neededMb('ldap', false, req({ idp: 'oidc' }))).toBe(base + (PRESET_MB.saml ?? 0));
   });
+
+  it('charges the SIP stack and the PBX lab, alone or composed', () => {
+    const req = (params: Record<string, string>) => createReq({ version: '8.8.1', params });
+    const base = neededMb('voice', false, req({}));
+    expect(neededMb('voice', false, req({ sip: 'on' }))).toBe(base + 60);
+    // The Asterisk idled at 48.5 MiB (2026-10-16), with room for calls.
+    expect(neededMb('voice', false, req({ sip: 'on', pbx: 'on' }))).toBe(base + 140);
+    expect(neededMb('email+voice', false, req({ 'voice.sip': 'on', 'voice.pbx': 'on' }))).toBe(
+      neededMb('email+voice', false, req({})) + 140,
+    );
+  });
 });
 
 import type * as SizingNS from '../../../src/core/lifecycle/sizing';
@@ -500,5 +511,20 @@ describe("a composed workspace's memory", () => {
     expect(neededMb('email+ldap', false, req)).toBe(1100 + 40 + 80);
     expect(neededMb('oidc+ldap', false, req)).toBe(1100 + 450 + 80);
     expect(neededMb('saml', false, req)).toBe(1550);
+  });
+
+  it('charges voice for Drachtio and FreeSWITCH only when sip=on starts them', () => {
+    // Measured idle on 8.7.0: FreeSWITCH 27 MiB, Drachtio 7 MiB; the rest is room for calls.
+    expect(neededMb('voice', false, createReq({ version: '8.7.0' }))).toBe(1100);
+    expect(neededMb('voice', false, createReq({ version: '8.7.0', params: { sip: 'on' } }))).toBe(
+      1100 + 60,
+    );
+    expect(
+      neededMb(
+        'email+voice',
+        false,
+        createReq({ version: '8.7.0', params: { 'voice.sip': 'on' } }),
+      ),
+    ).toBe(1100 + 40 + 60);
   });
 });

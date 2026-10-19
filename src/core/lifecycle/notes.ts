@@ -8,18 +8,23 @@
  * `noteGroupsOf`'s callers, so a builder can return an empty group rather than branching
  * at every call site.
  */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { namesOf, presetsLabel } from '../../lib/presets/composite';
 import * as config from '../../lib/config';
 import { grafanaUrl, notes as monitoringNotes } from '../../lib/monitoring';
 import { toText } from '../../lib/format';
 import * as presets from '../../lib/presets/index';
 import { publicPathsOf, withPublicUrl } from '../../lib/presets/public';
+import { type Preset } from '../../lib/presets/types';
 import { ACME_ISSUER, CA_ISSUER, tlsSecretFor } from '../kube/certmanager';
 import { forwardAlive } from '../kube/forward';
 import { CONTEXT as KUBE_CONTEXT, RELEASE, isOurs } from '../kube/names';
 import { MONITORING_NAMESPACE } from '../kube/monitoring';
 import { OPERATOR_MIN_MONGO, OPERATOR_NAMESPACE } from '../kube/operator';
 import { ownedKubeconfig } from '../kube/exec';
+import * as paths from '../runner/paths';
 import { type Metadata } from '../runner/record';
 import { MODE_ACME } from '../tls';
 import * as topology from '../topology';
@@ -226,10 +231,31 @@ export function scenarioGroup(meta: Metadata): NoteGroup[] {
     // describe itself rather than answer 500.
     return [];
   }
-  const notes = [...pre.notes];
+  const edited = editedFiles(meta.name, pre);
+  const notes = [
+    ...pre.notes,
+    ...(edited.length > 0
+      ? [
+          'Edited lab files (kept by up --force; delete one and run up --force for the default): ' +
+            edited.join(', '),
+        ]
+      : []),
+  ];
   if (notes.length === 0) return [];
   // kind="scenario", not a title the panel has to recognise by its prefix.
   return [noteGroup(`Scenario · ${presetsLabel(pre.name)}`, { kind: 'scenario', body: notes })];
+}
+
+/** The kept files (a lab dialplan) whose copy in the workspace is not the preset's default. */
+function editedFiles(name: string, pre: Preset): string[] {
+  const stock = new Map(pre.files);
+  return (pre.keepFiles ?? []).filter((file) => {
+    try {
+      return fs.readFileSync(path.join(paths.workspace(name), file), 'utf8') !== stock.get(file);
+    } catch {
+      return false; // absent or unreadable: a read path says nothing rather than fail
+    }
+  });
 }
 
 /**

@@ -56,11 +56,25 @@ export const URL_USERINFO = new RegExp(
   'gu',
 );
 
-/** Mask credentials named by their key or embedded in URL userinfo. */
+/**
+ * A credential in Rocket.Chat's Ice Servers form: `user:password@turn:host:port`, comma-separated.
+ *
+ * It has no `://`, so `URL_USERINFO` passed it through, and the voice preset puts a TURN
+ * server's password exactly there. Anchored on what follows the `@`, so a bare `rc:s3cret@mongo`,
+ * which earlier releases left readable, still is.
+ */
+const ICE_USERINFO = /(^|,\s*)([^,:@\s]+):([^,@\s]+)@(?=(?:stun|turns?):)/gu;
+
+/** Mask the passwords in an Ice Servers list, or one entry of it. */
+export function redactIceServers(value: string): string {
+  return value.replace(ICE_USERINFO, `$1$2:${REDACTED}@`);
+}
+
+/** Mask credentials named by their key or embedded in URL or Ice Servers userinfo. */
 export function redactEnv(key: string, value: string): string {
   const low = key.toLowerCase();
   if (value && SECRET_KEY_HINTS.some((h) => low.includes(h))) return REDACTED;
-  return (value || '').replace(URL_USERINFO, `$1:${REDACTED}@`);
+  return redactIceServers((value || '').replace(URL_USERINFO, `$1:${REDACTED}@`));
 }
 
 /** Flags whose whole value is a credential. */

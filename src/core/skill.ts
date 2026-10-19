@@ -175,14 +175,17 @@ export function hostState(host: string): HostState {
 /**
  * The CHECKOUT's own copy, if the caller is working inside one.
  *
- * An agent reads `.claude/skills/` relative to the project before it reads the one in a
- * home directory, so in a checkout that is the file actually in play -- and reporting only
- * the home copy meant `capabilities` said `current: false` to a developer who was, at that
- * moment, reading a perfectly current skill. It then told them to run `skill install`,
- * which writes a DIFFERENT copy somewhere the agent was not reading. Found by driving the
- * skill and watching it say that.
+ * With no copy in the home directory, an agent reads `.claude/skills/` relative to the
+ * project, so in a checkout that can be the file actually in play -- and reporting only the
+ * home copies meant `capabilities` said `current: false` to a developer who was, at that
+ * moment, reading a perfectly current skill. Found by driving the skill and watching it say
+ * that. The reverse holds too: Claude Code reads a user copy in preference to a project
+ * copy of the same name, so a stale home copy wins inside a checkout. Neither copy answers
+ * alone, which is why `state()` reports both.
  *
- * Walked upward from the working directory, the same way the tooling finds it.
+ * Walked upward from the working directory, the same way the tooling finds it, past the
+ * home's own copy: from anywhere under the home the walk reaches it, and it is the `claude`
+ * user copy, not a checkout's.
  */
 export function projectCopy(start?: string): string | null {
   const here = path.resolve(start ?? process.cwd());
@@ -195,11 +198,24 @@ export function projectCopy(start?: string): string | null {
     const candidate = path.join(directory, '.claude', tail, SKILL_DIR, SKILL_FILE);
     // `pathExists`, which throws for a directory it may not enter where existsSync said no
     // and walked on -- to a parent's copy the established walk never reports.
-    if (pathExists(candidate)) return candidate;
+    if (pathExists(candidate) && !sameFile(candidate, target('claude'))) return candidate;
     const parent = path.dirname(directory);
     if (parent === directory) return null;
     directory = parent;
   }
+}
+
+/** One file under both spellings: the working directory comes back resolved (macOS's
+ * `/var` is `/private/var`), a home from the environment may not. */
+function sameFile(a: string, b: string): boolean {
+  const real = (file: string): string => {
+    try {
+      return fs.realpathSync(file);
+    } catch {
+      return path.resolve(file);
+    }
+  };
+  return real(a) === real(b);
 }
 
 export interface SkillState {

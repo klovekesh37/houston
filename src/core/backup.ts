@@ -68,8 +68,8 @@ import { compatibility } from './backup-compat';
 import * as journal from './journal';
 import { MONOLITH_SELECTOR } from './kube/names';
 import { login } from './lifecycle/admin';
-import { createRepro } from './lifecycle/create-docker';
-import { ownerPrefix, refuseAmbiguous, resolveName, sanitize } from './lifecycle/naming';
+import { createPlan, createRepro, loadPreset } from './lifecycle/create-docker';
+import { deriveFor, ownerPrefix, refuseAmbiguous, resolveName, sanitize } from './lifecycle/naming';
 import { mayDestroy } from './lifecycle/ownership';
 import { requireDocker } from './lifecycle/preconditions';
 import { waitAndFinalize, waitServing } from './lifecycle/ready';
@@ -1165,7 +1165,7 @@ export async function restoreNew(
 ): Promise<Bag> {
   const { reproLock } = await import('./runner/locks');
   return await reproLock(target, async () => {
-    await createFromManifest(target, manifest, emit);
+    await createFromManifest(target, manifest, emit, bundle);
     try {
       return await restoreLocked(target, bundle, manifest, emit, {
         allowUpgrade,
@@ -1428,8 +1428,37 @@ async function restoresOnKubernetes(
   return (await kube(into)) !== '';
 }
 
+/**
+ * The files a person edits (`Preset.keepFiles`: a voice lab's dialplans) from the bundle, put
+ * where the create finds them: it writes a kept file only when absent, so the rebuilt
+ * workspace starts with the edits it was backed up with, not the files as shipped.
+ * Returns the folder when this made it, for a failed create to take away again.
+ */
+async function placeKeptFiles(bundle: string, req: CreateReq): Promise<string> {
+  if (bundle === '' || req.runtime === topology.KUBERNETES) return '';
+  const plan = createPlan({ req, emit: nullEmit });
+  loadPreset(plan);
+  const ws = workspace(deriveFor(req));
+  const made = !pathExists(ws);
+  // shortcut: one pass over the bundle per kept file, fine for a lab's few small files; read
+  // them in one pass if a preset ever keeps many, or a large database makes it slow.
+  for (const relative of plan.pre?.keepFiles ?? []) {
+    const content = await readMember(bundlePath(bundle), `${FILES_DIR}/${relative}`);
+    if (content === null) continue;
+    const file = joinPath(ws, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  return made && pathExists(ws) ? ws : '';
+}
+
 /** Materialise a workspace matching the bundle, then leave it ready to load. */
-export async function createFromManifest(target: string, manifest: Bag, emit: Emit): Promise<void> {
+export async function createFromManifest(
+  target: string,
+  manifest: Bag,
+  emit: Emit,
+  bundle = '',
+): Promise<void> {
   if (await exists(target)) {
     throw new ConflictError(
       `${quotedText(target)} already exists; drop --new to restore into it, or pass ` +
@@ -1462,7 +1491,17 @@ export async function createFromManifest(target: string, manifest: Bag, emit: Em
     actor: audit.actor(),
     wait: true,
   });
-  await createRepro(req, emit);
+  const placed = await placeKeptFiles(bundle, req);
+  try {
+    await createRepro(req, emit);
+  } catch (error) {
+    // Left in a folder with no record, the next workspace of that name would take the
+    // files up as if someone had edited them there.
+    if (placed !== '' && !(await exists(deriveFor(req)))) {
+      fs.rmSync(placed, { recursive: true, force: true });
+    }
+    throw error;
+  }
 }
 
 /**

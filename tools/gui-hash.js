@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const EXPECTED = 'd156744b46b0ee8ed99d4d497a92d81a94a525188d2ef936a183d1d7d83dff53';
+const EXPECTED = 'd43a36615321b906c4d9f5c2940f54990163ae3bc8fb9be61cb110153d086b34';
+// Re-recorded for voice's designed controls: each phone option opens once the one it needs is
+// on, none is offered on Kubernetes, and a hidden one is not sent.
 // Re-recorded for a cluster's Prepare and Forget offered to admins only, as the server now
 // allows them only to admins.
 // Re-recorded for a member's view of a colleague's workspace: no Stop, Restart, Logs, Env

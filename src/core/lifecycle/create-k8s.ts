@@ -39,6 +39,7 @@ import {
 import { refuseChartOwnedEnv } from '../kube/chart';
 import * as ownership from './ownership';
 import { refuseEnforcedBefore880 } from '../../lib/presets/e2ee';
+import { refuseVoiceBefore800 } from '../../lib/presets/voice';
 import { endpointString } from '../kube/endpoints';
 import { stopForward } from '../kube/forward';
 import { deregister as deregisterRoute, routeHost } from '../edge/routes';
@@ -503,6 +504,8 @@ export function settleAddressing(job: KubeCreate): void {
     job.regToken,
   );
   if (premium !== '') warn(job.emit, premium, { phase: 'plan' });
+  const voice = request.voiceLicenceWarning(names, job.licensed, job.regToken);
+  if (voice !== '') warn(job.emit, voice, { phase: 'plan' });
   const samlEmail = request.samlEmailWarning(
     job.presetForNotes as Preset,
     job.resolved?.rcVersion ?? '',
@@ -1021,6 +1024,7 @@ export async function createKubernetes(
     settleAddressing(job);
     // Before the cluster is probed or anything is written.
     refuseEnforcedBefore880(requestedPreset(job), (job.resolved as Resolved).rcVersion);
+    refuseVoiceBefore800(requestedPreset(job), (job.resolved as Resolved).rcVersion);
     await claimSidecarPorts(job);
     await planClusterStep(job);
     await planTls(job);

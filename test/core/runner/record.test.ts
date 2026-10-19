@@ -375,6 +375,41 @@ describe('the repro.json format', () => {
     ).toBe('https://rc.example.test');
   });
 
+  it('writes a kept file only when it is absent, so an edit survives a rebuild', async () => {
+    const dir = path.join(paths.workspace('lab'), 'voice', 'pbx');
+    const keep = new Set(['voice/pbx/extensions.conf']);
+    const files = (gen: string): [string, string][] => [
+      ['voice/pbx/extensions.conf', 'default\n'],
+      ['voice/pbx/transports.conf', `${gen}\n`],
+    ];
+    await write('lab', 'services: {}\n', sample({ name: 'lab' }), files('v1'), keep);
+    expect(fs.readFileSync(path.join(dir, 'extensions.conf'), 'utf8')).toBe('default\n');
+    fs.writeFileSync(path.join(dir, 'extensions.conf'), 'edited\n');
+    await write('lab', 'services: {}\n', sample({ name: 'lab' }), files('v2'), keep);
+    expect(fs.readFileSync(path.join(dir, 'extensions.conf'), 'utf8')).toBe('edited\n');
+    // Not kept: rewritten as before.
+    expect(fs.readFileSync(path.join(dir, 'transports.conf'), 'utf8')).toBe('v2\n');
+    fs.rmSync(path.join(dir, 'extensions.conf'));
+    await write('lab', 'services: {}\n', sample({ name: 'lab' }), files('v3'), keep);
+    expect(fs.readFileSync(path.join(dir, 'extensions.conf'), 'utf8')).toBe('default\n');
+  });
+
+  it('writes a kept file over the empty folder Docker leaves at a deleted one', async () => {
+    // A kept file deleted to reset it, then a restart instead of `up --force`: Docker creates
+    // a folder at the missing mount source, which must not count as "someone's edit".
+    const dir = path.join(paths.workspace('lab2'), 'voice', 'freeswitch');
+    fs.mkdirSync(path.join(dir, 'public.xml'), { recursive: true });
+    const keep = new Set(['voice/freeswitch/public.xml']);
+    await write(
+      'lab2',
+      'services: {}\n',
+      sample({ name: 'lab2' }),
+      [['voice/freeswitch/public.xml', '<include/>\n']],
+      keep,
+    );
+    expect(fs.readFileSync(path.join(dir, 'public.xml'), 'utf8')).toBe('<include/>\n');
+  });
+
   it('updates a record under the workspace lock', async () => {
     await writeRecord('updating', sample({ name: 'updating' }));
     const updated = await updateMeta('updating', (meta) => {

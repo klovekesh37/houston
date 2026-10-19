@@ -30,6 +30,7 @@ import {
   samlProviderReady,
   samlProviderState,
   setSetting,
+  setVoiceExtension,
   settingIds,
   waitReady,
 } from '../../src/core/rcapi';
@@ -848,5 +849,36 @@ describe('the REST seam the callers go through', () => {
     } finally {
       rcapi.call = real;
     }
+  });
+});
+
+describe('a voice call extension', () => {
+  it('is set through users.update, and only a success body counts', async () => {
+    script([[at('/api/v1/users.update'), { status: 200, text: '{"success":true}' }]]);
+    expect(
+      await setVoiceExtension('http://x', { token: 't', userId: 'u' }, 'pw', 'id1', '1001'),
+    ).toBe(true);
+    const sent = seen.find((r) => r.url.endsWith('/api/v1/users.update'));
+    expect([sent?.method, sent?.json]).toEqual([
+      'POST',
+      { userId: 'id1', data: { freeSwitchExtension: '1001' } },
+    ]);
+  });
+
+  it('is refused while Voice is unlicensed, and a refusal is false, not a throw', async () => {
+    // Rocket.Chat lets an extension be edited only while SIP integration is effective.
+    script([
+      [
+        at('/api/v1/users.update'),
+        { status: 400, text: '{"success":false,"errorType":"error-action-not-allowed"}' },
+      ],
+    ]);
+    expect(
+      await setVoiceExtension('http://x', { token: 't', userId: 'u' }, 'pw', 'id1', '1001'),
+    ).toBe(false);
+    script([], new RequestFailed('refused', 'http://x'));
+    expect(
+      await setVoiceExtension('http://x', { token: 't', userId: 'u' }, 'pw', 'id1', '1001'),
+    ).toBe(false);
   });
 });

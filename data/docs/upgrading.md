@@ -11,10 +11,16 @@
 ```bash
 npm update -g @klovekesh37/houston
 houston --version
+houston skill install     # refresh the agent skill copies; an update does not touch them
+houston doctor
 ```
 
 From a clone: `git pull`, then `corepack enable && yarn install --immutable`. There is
 nothing to build.
+
+Run `houston skill install` as the user who runs `houston serve`. Until it runs, `houston
+doctor`, in the GUI too, warns that the installed agent skill is out of date. If houston runs
+as a service, restart it after the update so the GUI serves the new version.
 
 ## Replacing an older install
 

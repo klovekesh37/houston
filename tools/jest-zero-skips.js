@@ -115,7 +115,27 @@ const ROOT = path.resolve(__dirname, '..');
 // showed, by UID; a bundle gated on its own owner; a refused monitoring mark; a re-up under
 // the operator; a legacy namespace marked; backups re-checked under the lock; teardowns that
 // cannot finish saying so; restores audited.
-const FLOOR = 4578;
+// The voice preset: its settings and SIP services, the 8.0 refusal on both runtimes, the test
+// users and their extensions and sign-in, the licence warning, and what sip=on adds to the memory
+// charge.
+// Its SIP stack as Rocket.Chat's compose files define it: voip_domain, rtp_ports, ice_servers
+// and their refusals, and a UDP range bound to the bind address; a TURN password in Rocket.Chat's
+// Ice Servers form is masked wherever env or argv is printed, after a comma and a space too, and
+// in a refused entry; the create dialog's sentence names the licence.
+// Its PBX lab: the official external FreeSWITCH settings, the editable dialplans mounted per
+// file, the Asterisk and its kept files, ports, refusals and notes; kept files written only when
+// absent, over the empty folder Docker leaves at a deleted one; the PBX memory charge; info naming the
+// edited lab files.
+// The PBX follows FreeSWITCH to a new address after a restart; the lab composes with every
+// other built-in preset.
+// restore --new brings back the edited lab files, and leaves none behind when its create fails;
+// a combined preset's Docker-only setting is refused on Kubernetes as early as one alone.
+// doctor names an agent skill another build installed; the skill names the package to
+// install; the skill eval scores only what an agent says it would run; a home copy is never
+// also a project copy, and a same-version copy is not called another build; the shipped skill
+// names a support ticket among its uses and teaches no load testing yet.
+// The skill eval refuses a run that would score nothing, rather than report a pass.
+const FLOOR = 4669;
 
 /** Every authored construct that removes a test from a run or inverts what it asserts. */
 const SKIP_CONSTRUCTS = [

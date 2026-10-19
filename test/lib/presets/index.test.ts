@@ -59,11 +59,16 @@ function recordedListing(
   return answer[0] === 'ok' ? ['ok', answer[1].map(recordedPreset)] : answer;
 }
 
-/** Keep every old row byte-exact; the new preset has its own complete contract spec. */
+/** Presets added since the recorded catalogue; each has its own complete contract spec. */
+const NEW_PRESETS: readonly string[] = ['e2ee', 'voice'];
+
+/** Keep every old row byte-exact. */
 function legacyCatalogue(): Preset[] {
   const rows = listPresets();
-  expect(rows.filter((preset) => preset.name === 'e2ee')).toHaveLength(1);
-  return rows.filter((preset) => preset.name !== 'e2ee');
+  for (const name of NEW_PRESETS) {
+    expect(rows.filter((preset) => preset.name === name)).toHaveLength(1);
+  }
+  return rows.filter((preset) => !NEW_PRESETS.includes(preset.name));
 }
 
 /** Every field a Preset carries, paired with the snake_case name earlier releases dump. */
@@ -111,8 +116,10 @@ function expectSame(ours: Preset, expected: Record<string, unknown>): void {
 }
 
 describe('the shipped catalogue', () => {
-  it('preserves the recorded names and adds the E2EE scenario in sorted order', () => {
-    expect(scenarioNames()).toEqual([...(recorded('scenario_names') as string[]), 'e2ee'].sort());
+  it('preserves the recorded names and adds the E2EE and voice scenarios in sorted order', () => {
+    expect(scenarioNames()).toEqual(
+      [...(recorded('scenario_names') as string[]), ...NEW_PRESETS].sort(),
+    );
   });
 
   it.each([

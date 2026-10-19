@@ -7,6 +7,7 @@ import type * as DoctorNS from '../../src/core/doctor';
 import type * as KubeToolsNS from '../../src/core/kube/tools';
 import type * as NamesNS from '../../src/core/kube/names';
 import type * as RecordNS from '../../src/core/runner/record';
+import type * as SkillNS from '../../src/core/skill';
 import type * as VersionsNS from '../../src/lib/versions';
 import type * as PolicyNS from '../testsetup-policy';
 import type * as ConfigMod from '../../src/lib/config';
@@ -64,6 +65,7 @@ describe('the published check vocabulary', () => {
       'kubernetes-skew',
       'kubernetes-cloud-owned',
       'install-fresh',
+      'agent-skill',
       'edge-config-drift',
       'preset-browser-host',
       'interrupted-work',
@@ -1827,6 +1829,119 @@ describe('the build that is answering', () => {
     } finally {
       jsonout.setHoustonVersion(before);
     }
+  });
+});
+
+describe('the agent skill', () => {
+  // Upgrading houston does not rewrite the skill copies `skill install` made, and Claude Code
+  // reads a user copy ahead of a project one, so a stale copy goes on teaching an agent the
+  // flags of the build it came from. Doctor is where somebody looks when a box misbehaves.
+  const before = process.cwd();
+  let box: string;
+
+  beforeEach(() => {
+    box = fs.mkdtempSync(path.join(os.tmpdir(), 'houston-doctor-skill-'));
+    process.env.HOUSTON_SKILL_HOME = path.join(box, 'home');
+    fs.mkdirSync(path.join(box, 'work'), { recursive: true });
+    process.chdir(path.join(box, 'work'));
+  });
+
+  afterEach(() => {
+    process.chdir(before);
+    delete process.env.HOUSTON_SKILL_HOME;
+    fs.rmSync(box, { recursive: true, force: true });
+  });
+
+  async function skillRows(): Promise<Record<string, unknown>[]> {
+    const doctor = require('../../src/core/doctor') as typeof DoctorNS;
+    return (await doctor.checkInstall({} as never)).filter((row) => row.check === 'agent-skill');
+  }
+
+  function plant(file: string, text: string, sidecar?: Record<string, string>): void {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, 'utf8');
+    if (sidecar !== undefined)
+      fs.writeFileSync(
+        path.join(path.dirname(file), '.houston-skill.json'),
+        JSON.stringify(sidecar),
+        'utf8',
+      );
+  }
+
+  it('says how to install one when there is none', async () => {
+    const rows = await skillRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'ok' });
+    expect(String(rows[0]?.message)).toContain('houston skill install');
+  });
+
+  it('warns about a copy an older build installed, naming its version and the fix', async () => {
+    const skill = require('../../src/core/skill') as typeof SkillNS;
+    const old = 'the skill an older build shipped\n';
+    plant(skill.target('claude'), old, { houston_version: '2.0.0', sha256: skill.sha256(old) });
+    const rows = await skillRows();
+    expect(rows).toEqual([
+      {
+        check: 'agent-skill',
+        status: 'warn',
+        message: expect.stringContaining(skill.target('claude')) as unknown,
+      },
+    ]);
+    expect(String(rows[0]?.message)).toContain('2.0.0');
+    expect(String(rows[0]?.message)).toContain('`houston skill install`');
+  });
+
+  it('leaves an edited copy alone, and says --force replaces it', async () => {
+    const skill = require('../../src/core/skill') as typeof SkillNS;
+    plant(skill.target('agents'), 'my own notes\n', { houston_version: '2.0.0', sha256: 'f00' });
+    const rows = await skillRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'ok' });
+    expect(String(rows[0]?.message)).toContain('--force');
+  });
+
+  it('files one row for a home copy when working under the home, not a second as a project copy', async () => {
+    // The project walk from a directory under the home reaches the home's own copy; reported
+    // twice, an edited copy got "leaves it alone" and "copy over it, or delete it" together.
+    const skill = require('../../src/core/skill') as typeof SkillNS;
+    plant(skill.target('claude'), 'my own notes\n', { houston_version: '2.0.0', sha256: 'f00' });
+    const under = path.join(box, 'home', 'work');
+    fs.mkdirSync(under, { recursive: true });
+    process.chdir(under);
+    const rows = await skillRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'ok' });
+  });
+
+  it('does not call a copy from this same version another build', async () => {
+    const skill = require('../../src/core/skill') as typeof SkillNS;
+    const jsonout = require('../../src/lib/jsonout') as typeof JsonoutMod;
+    const old = 'the skill before a template edit\n';
+    plant(skill.target('claude'), old, {
+      houston_version: jsonout.getHoustonVersion(),
+      sha256: skill.sha256(old),
+    });
+    const message = String((await skillRows())[0]?.message);
+    expect(message).toContain('`houston skill install`');
+    expect(message).not.toContain(`not ${jsonout.getHoustonVersion()}`);
+  });
+
+  it('warns about a stale project copy above the working directory', async () => {
+    const file = path.join(box, '.claude', 'skills', 'houston', 'SKILL.md');
+    plant(file, 'what an older branch shipped\n');
+    const rows = await skillRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'warn' });
+    expect(String(rows[0]?.message)).toContain(file);
+  });
+
+  it('is ok once every copy matches this build', async () => {
+    const skill = require('../../src/core/skill') as typeof SkillNS;
+    skill.install('all');
+    const rows = await skillRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'ok' });
+    expect(String(rows[0]?.message)).toContain(skill.target('claude'));
   });
 });
 

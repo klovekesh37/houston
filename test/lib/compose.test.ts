@@ -316,6 +316,16 @@ describe('binding', () => {
     expect(bound(['8000-8005'])).toEqual(['127.0.0.1::8000-8005']);
   });
 
+  it('binds a UDP range, and a bare UDP port, rather than refusing them', () => {
+    // A protocol suffix fell outside every recognised shape and was refused, so the voice
+    // preset could not publish FreeSWITCH's RTP range the way Rocket.Chat's compose file does.
+    expect(bound(['20000-20046:20000-20046/udp'])).toEqual([
+      '127.0.0.1:20000-20046:20000-20046/udp',
+    ]);
+    expect(bound(['20000-20046/udp'])).toEqual(['127.0.0.1::20000-20046/udp']);
+    expect(bound(['3478/udp'])).toEqual(['127.0.0.1::3478/udp']);
+  });
+
   it('handles compose long syntax by setting host_ip, not by stringifying it', () => {
     // THE TYPE CHECK COMES FIRST: stringifying long syntax gives a text containing two
     // colons, which matched the already-qualified branch, and the object's text was

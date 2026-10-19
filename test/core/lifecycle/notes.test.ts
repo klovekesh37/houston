@@ -1,6 +1,10 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import * as presets from '../../../src/lib/presets/index';
 import { ownedKubeconfig } from '../../../src/core/kube/exec';
 import { CONTEXT as KUBE_CONTEXT } from '../../../src/core/kube/names';
+import * as paths from '../../../src/core/runner/paths';
 import { type Metadata, metadata } from '../../../src/core/runner/record';
 
 import { summary } from '../../../src/core/lifecycle/inspect';
@@ -427,6 +431,29 @@ describe('which notes a record produces', () => {
     // The port-forward comes back the way it was published, or the workspace is
     // unreachable from the machines the note just warned about.
     expect(loud['2 · Open the way in']?.commands[0]).toContain('--address 0.0.0.0');
+  });
+});
+
+describe("a PBX lab's notes", () => {
+  it('names the lab files that differ from the default', () => {
+    const meta = metadata({
+      name: 'labn',
+      preset: 'voice',
+      extra: { runtime: 'docker', params: { sip: 'on', pbx: 'on' } },
+    });
+    const dir = path.join(paths.workspace('labn'), 'voice', 'pbx');
+    fs.mkdirSync(dir, { recursive: true });
+    const stock =
+      presets
+        .load('voice', { sip: 'on', pbx: 'on' })
+        .files.find(([file]) => file === 'voice/pbx/extensions.conf')?.[1] ?? '';
+    fs.writeFileSync(path.join(dir, 'extensions.conf'), stock);
+    const body = (): string => (scenarioGroup(meta)[0]?.body ?? []).join('\n');
+    expect(body()).not.toContain('Edited lab files');
+    fs.writeFileSync(path.join(dir, 'extensions.conf'), `${stock}; mine\n`);
+    expect(body()).toContain(
+      'Edited lab files (kept by up --force; delete one and run up --force for the default): voice/pbx/extensions.conf',
+    );
   });
 });
 

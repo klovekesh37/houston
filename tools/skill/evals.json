@@ -1,0 +1,102 @@
+[
+  {
+    "id": "ldap-sync",
+    "request": "Users from our test LDAP directory can't log in after the nightly sync on Rocket.Chat 7.4.1 (issue 88231). Set the same up so I can look.",
+    "run": [
+      "houston up\\b[^\\n]*--version 7\\.4\\.1\\b",
+      "houston up\\b[^\\n]*--preset ldap\\b",
+      "houston up\\b[^\\n]*--name \\S*88231"
+    ],
+    "never_run": ["--preset \\S*/"]
+  },
+  {
+    "id": "partial-version",
+    "request": "Spin up Rocket.Chat 6.12 so I can look at how message search behaves.",
+    "never_run": ["houston up\\b[^\\n]*--version 6\\.12(?![.\\d])"],
+    "say": ["6\\.12\\.\\d|full version|exact version|patch"]
+  },
+  {
+    "id": "pr-build",
+    "request": "Pull request #42617 changes how thread notifications work. Spin up its build so I can try it.",
+    "run": ["houston up\\b[^\\n]*--version pr-42617\\b"]
+  },
+  {
+    "id": "version-compare",
+    "request": "Emoji reactions on thread replies show on 7.3.0 but not after upgrading to 7.4.1 (issue 51200). Set up both versions so I can compare, and make sure nothing is left running afterwards.",
+    "run": [
+      "houston up\\b[^\\n]*--version 7\\.3\\.0\\b",
+      "houston up\\b[^\\n]*--version 7\\.4\\.1\\b"
+    ],
+    "say": ["houston down\\b"]
+  },
+  {
+    "id": "https-oauth",
+    "request": "I need Rocket.Chat 8.5.1 on my laptop served over HTTPS to test Google OAuth sign-in.",
+    "run": ["houston up\\b[^\\n]*--(https|domain)\\b"],
+    "never_run": ["^\\s*(sudo\\s+)?houston trust-ca\\b"],
+    "ask": ["trust-ca|domain"]
+  },
+  {
+    "id": "rest-call",
+    "request": "On a 7.10.0 workspace, show me what GET /api/v1/rooms.info returns for #general.",
+    "run": ["houston api\\b[^\\n]*GET[^\\n]*/api/v1/rooms\\.info"]
+  },
+  {
+    "id": "outside-dump",
+    "request": "Someone sent a mongodump (dump-7.4.1.tar.gz) from their 7.4.1 server. Load it into a 7.4.1 workspace so I can look at the data.",
+    "never_run": ["houston restore\\b[^\\n]*dump", "mongorestore"],
+    "say": ["rcbak|bundle"]
+  },
+  {
+    "id": "not-installed",
+    "request": "I ran `houston up --version 8.5.1` and my shell says: command not found: houston. How do I get it?",
+    "say": ["npm (i|install) (-g|--global) {{package}}"]
+  },
+  {
+    "id": "eks-without-cluster",
+    "request": "I need Rocket.Chat 8.4.0 on EKS with microservices, and we don't have a cluster yet, so set that up.",
+    "never_run": ["houston cluster create\\b"],
+    "ask": ["cluster create|cost|bill|money|pay"]
+  },
+  {
+    "id": "voice-pbx",
+    "request": "I want to try Rocket.Chat Voice calls with a PBX behind them on 8.7.0. My licence file is ~/licences/voice.lic.",
+    "run": [
+      "houston up\\b[^\\n]*--preset voice\\b",
+      "houston up\\b[^\\n]*--license \\S*voice\\.lic",
+      "houston up\\b[^\\n]*sip=on",
+      "houston up\\b[^\\n]*pbx=on"
+    ]
+  },
+  {
+    "id": "demo",
+    "request": "I'm showing Rocket.Chat 8.5.1 to a colleague tomorrow. Set up a workspace with realistic rooms, threads and users already in it.",
+    "run": ["houston up\\b[^\\n]*--version 8\\.5\\.1\\b", "--seed\\b|houston seed\\b"]
+  },
+  {
+    "id": "docs-question",
+    "request": "How does Rocket.Chat's LDAP background sync decide which users to deactivate?",
+    "never_run": ["houston up\\b"]
+  },
+  {
+    "id": "enterprise-licence",
+    "request": "On Rocket.Chat 7.4.1, users get deactivated after the LDAP background sync runs. Set up a workspace where I can watch that sync happen.",
+    "run": ["houston up\\b[^\\n]*--preset ldap\\b"],
+    "say": ["licen[cs]e"]
+  },
+  {
+    "id": "same-preset-busy",
+    "request": "My workspace issue-88231 (7.4.1 with --preset ldap) is running and I'm using it. Also boot pull request 42878's build with LDAP so I can compare the two.",
+    "never_run": ["houston (down|stop)\\b[^\\n]*issue-88231"],
+    "ask": ["issue-88231|one at a time|8082|port"]
+  },
+  {
+    "id": "stale-skill-copy",
+    "request": "Inside the houston checkout, `houston capabilities` says skill.current is false: the project copy .claude/skills/houston is current, but ~/.claude/skills/houston is from 2.0.0. Which copy is Claude Code reading, and what do I do?",
+    "say": ["houston skill install"],
+    "never_say": [
+      "(takes precedence|wins|is read first|comes first) over (the |any |a )?user",
+      "read(s|ing)? the \\W*project\\W[^\\n]{0,160}\\bbefore (any|the|a) user"
+    ]
+  }
+]

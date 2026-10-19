@@ -23,7 +23,7 @@ On a shared machine, set `HOUSTON_USER=<account>` so the audit log names who ran
 `skill` take `--json`; `capabilities` always prints JSON. Every reply is one envelope:
 
 ```json
-{"schema":"houston.info.v1","contract":2,"houston_version":"2.1.2",
+{"schema":"houston.info.v1","contract":2,"houston_version":"2.1.3",
  "generated_at":"…","ok":true,"data":{…},"warnings":[],"error":null}
 ```
 
@@ -99,4 +99,9 @@ houston skill status           # absent, current, stale or modified
 
 `skill install` will not overwrite a copy you edited (`modified`) unless you pass
 `--force`. `houston capabilities` reports `skill.current: false` when an installed copy
-is out of date.
+is out of date, and `houston doctor` names it.
+
+Upgrading houston does not update an installed copy, so run `houston skill install` after
+each upgrade. Claude Code reads a copy in `~/.claude/skills` in preference to a project's
+`.claude/skills` copy of the same name, so a stale one in your home directory is the one
+in play even inside a project that has a current copy.

@@ -38,47 +38,61 @@ describe('a Kubernetes create of the e2ee preset', () => {
     jest.resetModules();
   });
 
-  it('refuses policy=enforced before 8.8.0 before certificates, the cluster or the record', async () => {
-    jest.resetModules();
-    const probe = jest.fn(async () => {
-      throw new Error('reached the cluster');
-    });
-    const certificate = jest.fn(async () => {
-      throw new Error('wrote a directory certificate');
-    });
-    jest.doMock('../../../src/core/lifecycle/sizing', () => ({
-      checkCapacity: async () => undefined,
-    }));
-    jest.doMock('../../../src/core/lifecycle/ports', () => ({
-      ...jest.requireActual('../../../src/core/lifecycle/ports'),
-      pickHostPort: async () => 3391,
-      checkSidecarPorts: async () => undefined,
-    }));
-    jest.doMock('../../../src/core/lifecycle/tlsplan', () => ({
-      ...jest.requireActual('../../../src/core/lifecycle/tlsplan'),
-      resolveTls: async () => null,
-      issueDirectoryCertificate: certificate,
-    }));
-    jest.doMock('../../../src/core/kube/probe', () => ({ preflight: probe }));
-    const create = require('../../../src/core/lifecycle/create-k8s') as typeof CreateK8sNS;
-    const refused = create.createKubernetes(
-      createReq({
-        name: 'e2ee-kube-enforced',
-        version: '8.5.1',
-        preset: 'e2ee+ldap',
-        params: { 'e2ee.policy': 'enforced', 'ldap.tls': 'starttls' },
-        runtime: 'kubernetes',
-        offline: true,
-      }),
-    );
-    await expect(refused).rejects.toThrow(
+  it.each([
+    [
+      'e2ee+ldap',
+      { 'e2ee.policy': 'enforced', 'ldap.tls': 'starttls' },
+      '8.5.1',
       'e2ee policy=enforced needs Rocket.Chat 8.8.0 or later; 8.5.1 would not enforce it.',
-    );
-    await expect(refused).rejects.toHaveProperty('exitCode', 2);
-    expect(certificate).not.toHaveBeenCalled();
-    expect(probe).not.toHaveBeenCalled();
-    await expect(readMeta('e2ee-kube-enforced')).rejects.toThrow();
-  });
+    ],
+    [
+      'voice',
+      {},
+      '7.13.0',
+      'the voice preset needs Rocket.Chat 8.0.0 or later; 7.13.0 has the older Team Voice Calls.',
+    ],
+  ])(
+    'refuses %s %j on %s before certificates, the cluster or the record',
+    async (preset, params, version, said) => {
+      jest.resetModules();
+      const probe = jest.fn(async () => {
+        throw new Error('reached the cluster');
+      });
+      const certificate = jest.fn(async () => {
+        throw new Error('wrote a directory certificate');
+      });
+      jest.doMock('../../../src/core/lifecycle/sizing', () => ({
+        checkCapacity: async () => undefined,
+      }));
+      jest.doMock('../../../src/core/lifecycle/ports', () => ({
+        ...jest.requireActual('../../../src/core/lifecycle/ports'),
+        pickHostPort: async () => 3391,
+        checkSidecarPorts: async () => undefined,
+      }));
+      jest.doMock('../../../src/core/lifecycle/tlsplan', () => ({
+        ...jest.requireActual('../../../src/core/lifecycle/tlsplan'),
+        resolveTls: async () => null,
+        issueDirectoryCertificate: certificate,
+      }));
+      jest.doMock('../../../src/core/kube/probe', () => ({ preflight: probe }));
+      const create = require('../../../src/core/lifecycle/create-k8s') as typeof CreateK8sNS;
+      const refused = create.createKubernetes(
+        createReq({
+          name: 'kube-too-old',
+          version,
+          preset,
+          params,
+          runtime: 'kubernetes',
+          offline: true,
+        }),
+      );
+      await expect(refused).rejects.toThrow(said);
+      await expect(refused).rejects.toHaveProperty('exitCode', 2);
+      expect(certificate).not.toHaveBeenCalled();
+      expect(probe).not.toHaveBeenCalled();
+      await expect(readMeta('kube-too-old')).rejects.toThrow();
+    },
+  );
 });
 
 describe('a Kubernetes re-up of a handed-over workspace', () => {
@@ -258,6 +272,24 @@ describe('publishing the actual Kubernetes host-port allocation', () => {
     await writeProvisionalRecord(job);
     expect(job.req.monitor).toBe(true);
     expect((await readMeta(job.reproName)).extra.monitoring_ports).toEqual([5050]);
+  });
+});
+
+describe('an unlicensed Kubernetes voice workspace', () => {
+  it('is warned that it boots without a call button', () => {
+    config.updateConfig((cfg) => {
+      delete cfg.reg_token;
+    });
+    const events: Event[] = [];
+    const job = kubeCreate({
+      req: createReq({ version: '8.7.0', name: 'kvoice', preset: 'voice', runtime: 'kubernetes' }),
+      emit: (e) => events.push(e),
+      monitorAttach: missingMonitorAttach,
+    });
+    settleAddressing(job);
+    expect(
+      events.filter((e) => e.message.includes('Voice add-on (teams-voip)')).map((e) => e.level),
+    ).toEqual(['warn']);
   });
 });
 

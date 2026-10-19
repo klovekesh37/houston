@@ -28,14 +28,18 @@ const ROOT = path.resolve(__dirname, '..');
 const TEMPLATE = path.join(ROOT, 'tools', 'skill', 'SKILL.template.md');
 const TARGET = path.join(ROOT, 'data', 'skill', 'SKILL.md');
 /**
- * The copies a checkout keeps for its own agent, which reads the project's `.claude/skills/`
- * first. Ignored, never committed: written here so they never go stale, and checked only
- * where they exist, because a fresh clone has none.
+ * The copies a checkout keeps for its own agent: an agent with no user copy reads the
+ * project's `.claude/skills/` (Claude Code prefers a user copy of the same name). Ignored,
+ * never committed: written here so they never go stale, and checked only where they exist,
+ * because a fresh clone has none.
  */
 const PROJECT_COPIES = [
   path.join(ROOT, '.claude', 'skills', 'houston', 'SKILL.md'),
   path.join(ROOT, '.agents', 'skills', 'houston', 'SKILL.md'),
 ];
+
+/** Commands the skill does not teach yet, though the build has them. */
+const UNTAUGHT = new Set(['capacity', 'loadtest']);
 
 /** What each non-zero exit code means to a caller, keyed by the name `capabilities` gives it. */
 const EXIT_PROSE = {
@@ -98,8 +102,12 @@ function listed(names) {
   return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
 }
 
-/** Render the template against a manifest; every placeholder must be consumed. */
-function render(manifest, template, version) {
+/**
+ * Render the template against a manifest; every placeholder must be consumed. `pkg` is
+ * package.json: the install line names the package and its Node floor, which would go stale
+ * as prose.
+ */
+function render(manifest, template, version, pkg = {}) {
   const data = dataOf(manifest);
   const commands = Array.isArray(data.commands) ? data.commands : [];
   const values = {
@@ -111,12 +119,16 @@ function render(manifest, template, version) {
       .map(code)
       .join(', '),
     streams: listed(commands.filter((c) => c.streams).map((c) => c.name)),
+    // Load testing stays out of the skill for now (owner, 2026-10-19); `capabilities` still
+    // lists both commands for a caller that asks.
     json_commands: commands
-      .filter((c) => c.json)
+      .filter((c) => c.json && !UNTAUGHT.has(c.name))
       .map((c) => c.name)
       .map(code)
       .join(', '),
     houston_version: version,
+    ...(pkg.name ? { package: pkg.name } : {}),
+    ...(pkg.engines?.node ? { node: pkg.engines.node.replace(/^>=\s*/u, '') } : {}),
   };
   const out = template.replaceAll(/\{\{([a-z_]+)\}\}/gu, (whole, key) => {
     if (!(key in values)) throw new Error(`the template names {{${key}}}, which nothing renders`);
@@ -130,8 +142,8 @@ function render(manifest, template, version) {
 function generate() {
   require(path.join(ROOT, 'tools', 'ts-require')).install();
   const { capabilities } = require(path.join(ROOT, 'src', 'cli', 'capabilities.ts'));
-  const version = require(path.join(ROOT, 'package.json')).version;
-  return render(capabilities(), fs.readFileSync(TEMPLATE, 'utf8'), version);
+  const pkg = require(path.join(ROOT, 'package.json'));
+  return render(capabilities(), fs.readFileSync(TEMPLATE, 'utf8'), pkg.version, pkg);
 }
 
 if (require.main === module) {

@@ -1179,6 +1179,87 @@ describe('the e2ee test users', () => {
   });
 });
 
+describe('the voice test users', () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  function voiceMeta(extensions: boolean): ReturnType<typeof meta> {
+    const m = meta({ preset: 'voice' });
+    m.extra.post_ready = [{ action: 'voice_users', extensions }];
+    return m;
+  }
+
+  it('creates voice-alice and voice-bob, and gives no extension without SIP', async () => {
+    const made: string[] = [];
+    const extended: string[] = [];
+    const postready = withRcapi({
+      createUser: (_u: string, _a: unknown, _p: string, username: string) => {
+        made.push(username);
+        return Promise.resolve(true);
+      },
+      getUserId: () => Promise.resolve(null),
+      setVoiceExtension: (_u: string, _a: unknown, _p: string, id: string) => {
+        extended.push(id);
+        return Promise.resolve(true);
+      },
+    });
+    const { said, emit } = recorder();
+    expect(await postready.runPostReady(voiceMeta(false), AUTH, emit, { sleep: noSleep })).toEqual(
+      [],
+    );
+    expect([made, extended]).toEqual([['voice-alice', 'voice-bob'], []]);
+    expect(said.join(' ')).toContain('Voice test users ready: voice-alice, voice-bob');
+  });
+
+  it('with SIP gives voice-alice 1001 and voice-bob 1002', async () => {
+    const extended: string[] = [];
+    const postready = withRcapi({
+      createUser: () => Promise.resolve(true),
+      getUserId: (_u: string, _a: unknown, username: string) => Promise.resolve(`${username}-id`),
+      setVoiceExtension: (_u: string, _a: unknown, _p: string, id: string, ext: string) => {
+        extended.push(`${id}=${ext}`);
+        return Promise.resolve(true);
+      },
+    });
+    const { said, emit } = recorder();
+    expect(await postready.runPostReady(voiceMeta(true), AUTH, emit, { sleep: noSleep })).toEqual(
+      [],
+    );
+    expect(extended).toEqual(['voice-alice-id=1001', 'voice-bob-id=1002']);
+    expect(said.join(' ')).toContain('voice-alice has extension 1001, voice-bob 1002');
+  });
+
+  it('warns, and does not fail, when Rocket.Chat refuses the extensions (no Voice licence)', async () => {
+    // An extension can be set only while SIP integration is on, which needs the Voice add-on.
+    const postready = withRcapi({
+      createUser: () => Promise.resolve(true),
+      getUserId: (_u: string, _a: unknown, username: string) => Promise.resolve(`${username}-id`),
+      setVoiceExtension: () => Promise.resolve(false),
+    });
+    const { said, emit } = recorder();
+    expect(await postready.runPostReady(voiceMeta(true), AUTH, emit, { sleep: noSleep })).toEqual(
+      [],
+    );
+    expect(said.join(' ')).toContain('could not give voice-alice, voice-bob their extensions');
+    // Once licensed, `ready` runs this action again and sets them.
+    expect(said.join(' ')).toContain('then run houston ready --name w');
+  });
+
+  it('is a failure naming the users that could not be made', async () => {
+    const postready = withRcapi({
+      createUser: (_u: string, _a: unknown, _p: string, username: string) =>
+        Promise.resolve(username === 'voice-alice'),
+      getUserId: () => Promise.resolve(null),
+    });
+    const { said, emit } = recorder();
+    expect(await postready.runPostReady(voiceMeta(false), AUTH, emit, { sleep: noSleep })).toEqual([
+      'voice_users',
+    ]);
+    expect(said.join(' ')).toContain('could not create the Voice test users voice-bob');
+  });
+});
+
 describe('the keycloak action reads its fields the way earlier releases do', () => {
   afterEach(() => {
     jest.resetModules();

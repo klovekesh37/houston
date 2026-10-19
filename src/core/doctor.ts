@@ -41,6 +41,7 @@ import {
 } from './runner/host';
 import { pickPort, portFree } from './runner/ports';
 import { listMeta, type Metadata } from './runner/record';
+import * as skill from './skill';
 import * as users from './users';
 import * as sessions from './sessions';
 import * as eventlog from './eventlog';
@@ -111,6 +112,7 @@ export const CHECKS = Object.freeze([
   'kubernetes-skew',
   'kubernetes-cloud-owned',
   'install-fresh',
+  'agent-skill',
   'edge-config-drift',
   'preset-browser-host',
   'interrupted-work',
@@ -544,7 +546,75 @@ export async function checkInstall(_ctx: Ctx): Promise<Row[]> {
   } catch {
     line('install-fresh', 'warn', 'could not determine which houston build is running');
   }
+  try {
+    skillCopies(line);
+  } catch {
+    line(
+      'agent-skill',
+      'warn',
+      'could not check the agent skill — `houston skill status` shows it',
+    );
+  }
   return report.rows;
+}
+
+/**
+ * The agent skill's copies against this build. Upgrading houston leaves the copies `skill
+ * install` wrote as they were, and Claude Code reads a user copy ahead of a project one, so a
+ * stale copy goes on teaching an agent another build's flags with nothing to say so.
+ */
+function skillCopies(line: Report['line']): void {
+  const version = getHoustonVersion();
+  const copies = Object.values(skill.state().hosts).filter((copy) => copy.status !== 'absent');
+  const odd = copies.filter((copy) => copy.status !== 'current');
+  for (const copy of odd) {
+    if (copy.status === 'modified') {
+      line(
+        'agent-skill',
+        'ok',
+        `the agent skill at ${copy.path} was edited locally, so \`houston skill install\` ` +
+          'leaves it alone (`--force` replaces it)',
+      );
+    } else if (copy.status === 'stale' && copy.scope === 'user') {
+      // The sidecar's version is the build that installed it; the same number means the
+      // text moved on without a version bump, which a checkout does between releases.
+      const from =
+        copy.version !== '' && copy.version !== version ? ` (installed by ${copy.version})` : '';
+      line(
+        'agent-skill',
+        'warn',
+        `${copy.path} is not the agent skill houston ${version} ships${from} — an agent ` +
+          'reading it may use flags this build does not have; `houston skill install` updates it',
+      );
+    } else if (copy.status === 'stale') {
+      line(
+        'agent-skill',
+        'warn',
+        `${copy.path} does not match houston ${version} — copy ${skill.packaged()} over it, ` +
+          'or delete it',
+      );
+    } else {
+      line(
+        'agent-skill',
+        'warn',
+        'could not read an installed agent skill — `houston skill status` shows which',
+      );
+    }
+  }
+  if (copies.length === 0) {
+    line(
+      'agent-skill',
+      'ok',
+      'no agent skill installed — `houston skill install` lets Claude Code and other agents ' +
+        'drive houston',
+    );
+  } else if (odd.length === 0) {
+    line(
+      'agent-skill',
+      'ok',
+      `agent skill matches houston ${version}: ${copies.map((copy) => copy.path).join(', ')}`,
+    );
+  }
 }
 
 /** A pre-rename edge still holding :80/:443, which stops the new one starting. */

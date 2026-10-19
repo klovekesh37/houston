@@ -341,12 +341,15 @@ export async function projectName(name: string): Promise<string> {
  * occupying its name. Record-first leaves the half that is fully visible and whose
  * compose file `up` regenerates anyway, which is already this tool's contract for that
  * document.
+ *
+ * A file in `keep` is written only when absent (`Preset.keepFiles`): a person edits it.
  */
 export async function write(
   name: string,
   composeYaml: string,
   meta: Metadata,
   files: readonly (readonly [string, string])[] = [],
+  keep: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const ws = paths.workspace(name);
   await fs.mkdir(ws, { recursive: true });
@@ -360,6 +363,13 @@ export async function write(
 
   for (const [relative, content] of files) {
     const target = joinPath(ws, relative);
+    if (keep.has(relative)) {
+      const found = await fs.stat(target).catch(() => null);
+      if (found?.isFile() === true) continue; // a kept file someone may have edited
+      // The empty folder Docker creates at a bind mount whose file was deleted: not an edit.
+      // A folder with something in it is someone's, and rmdir refuses it, loudly.
+      if (found?.isDirectory() === true) await fs.rmdir(target);
+    }
     await fs.mkdir(path.dirname(target), { recursive: true });
     // The ADVERTISED url, falling back to the loopback one. A generated file carrying
     // this placeholder is read by a BROWSER, and `meta.rootUrl` is the address houston

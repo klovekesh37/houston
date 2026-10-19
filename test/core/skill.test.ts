@@ -313,8 +313,8 @@ describe('the copy an agent actually reads', () => {
   });
 
   it('is the checkout copy when there is one, and a stale one makes the state stale', () => {
-    // An agent reads `.claude/skills/` relative to the PROJECT before a home directory, so
-    // reporting only the home copy told a developer `current: false` about a current skill.
+    // With no copy in the home, an agent reads the PROJECT's `.claude/skills/`, so reporting
+    // only the home copies told a developer `current: false` about the skill they were reading.
     const project = path.join(skillHome, 'checkout');
     const dir = path.join(project, '.claude', 'skills', SKILL_DIR);
     fs.mkdirSync(dir, { recursive: true });
@@ -329,6 +329,19 @@ describe('the copy an agent actually reads', () => {
     expect(seen.current).toBe(true);
     fs.writeFileSync(local, 'what an older branch shipped\n', 'utf8');
     expect(state().current).toBe(false);
+  });
+
+  it('is never the home copy, reached by walking up from a directory under the home', () => {
+    // From anywhere under the home, the walk reached the home's own copy and reported it a
+    // second time, as a project copy that is always stale because it has no sidecar.
+    install('claude');
+    const under = path.join(skillHome, 'work');
+    fs.mkdirSync(under, { recursive: true });
+    process.chdir(under);
+    expect(projectCopy()).toBeNull();
+    const seen = state();
+    expect(seen.hosts.project).toBeUndefined();
+    expect(seen.hosts.claude?.status).toBe('current');
   });
 
   it('is nowhere at all, which is not current', () => {

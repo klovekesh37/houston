@@ -305,6 +305,8 @@ const CASES: readonly BrowserCase[] = [
   ['surfaces dialogs', 'the create dialog follows the box policy not the role'],
   ['surfaces dialogs', 'https is in section two and is still not a second twisty'],
   ['surfaces dialogs', 'presets are ticked from a list and sent with each ones settings'],
+  ['surfaces dialogs', 'voice with the phone system combines with email as the cli does'],
+  ['surfaces dialogs', 'the voice panel opens each phone option once the one it needs is on'],
   ['surfaces dialogs', 'the e2ee options send the policy and switches as its settings'],
   ['surfaces dialogs', 'saml and oidc rule each other out and ldap follows the one ticked'],
   ['surfaces dialogs', 'ldap asks for a one time code only with its own single sign on'],
@@ -339,6 +341,7 @@ const CASES: readonly BrowserCase[] = [
   ['kubernetes dialogs', 'the create dialog says what it builds and what the box has left'],
   ['kubernetes dialogs', 'a kubernetes card names the cluster it will use'],
   ['kubernetes dialogs', 'the arrangement says what it builds'],
+  ['kubernetes dialogs', 'on kubernetes the voice panel offers no phone options and sends none'],
   ['kubernetes offstage', 'fake detail matches the real payload'],
   ['kubernetes offstage', 'the restart count on kubernetes is rocket chats own pod'],
   ['kubernetes pane', 'the action pane leads with what this state admits'],
@@ -458,14 +461,14 @@ const CASES: readonly BrowserCase[] = [
   ['surfaces rail', 'an upgraded workspace rolls back behind a red confirm and the panel follows'],
 ];
 
-// Re-recorded when "a member is offered no prepare or forget on a shared cluster" joined: a
-// cluster's prepare and forget became an admin's.
-const CASES_DIGEST = '29940291c51cc3e20e606e4b9f712d356e74f06cb2d9702221d4a598b10de2b2';
+// Re-recorded when "the voice panel opens each phone option once the one it needs is on" and
+// "on kubernetes the voice panel offers no phone options and sends none" joined: voice's designed controls.
+const CASES_DIGEST = 'e529bda9c0697433286d9cd2d8a5531385225d80568af181fbdec243be8f46db';
 const caseIds = CASES.map(([file, name]) => `${file}: ${name}`);
 const casesDigest = crypto.createHash('sha256').update(JSON.stringify(CASES)).digest('hex');
-if (CASES.length !== 185 || new Set(caseIds).size !== 185 || casesDigest !== CASES_DIGEST) {
+if (CASES.length !== 188 || new Set(caseIds).size !== 188 || casesDigest !== CASES_DIGEST) {
   throw new Error(
-    `browser behavior inventory changed: expected 185 unique cases at ${CASES_DIGEST}, ` +
+    `browser behavior inventory changed: expected 188 unique cases at ${CASES_DIGEST}, ` +
       `got ${String(CASES.length)} cases, ${String(new Set(caseIds).size)} unique, ${casesDigest}`,
   );
 }
@@ -3104,7 +3107,8 @@ function prepareKubernetesCase(name: string): void {
   }
   if (
     name === 'the arrangement says what it builds' ||
-    name === 'the create dialog says what it builds and what the box has left'
+    name === 'the create dialog says what it builds and what the box has left' ||
+    name === 'on kubernetes the voice panel offers no phone options and sends none'
   ) {
     useClusterContexts(
       [{ ...localContext('kind-support', 'local'), ours: true, is_default: true }],
@@ -3455,6 +3459,9 @@ function prepareKubernetesCase(name: string): void {
   if (
     [
       'presets are ticked from a list and sent with each ones settings',
+      'voice with the phone system combines with email as the cli does',
+      'the voice panel opens each phone option once the one it needs is on',
+      'on kubernetes the voice panel offers no phone options and sends none',
       'the e2ee options send the policy and switches as its settings',
       'ldap asks for a one time code only with its own single sign on',
       'a pasted license is masked and sent',
@@ -4513,6 +4520,36 @@ async function exerciseKubernetesDialogs(name: string, page: Page): Promise<void
       expect(await result.innerText()).toContain('support: personal stars: sign in as alice');
       expect(await result.innerText()).toContain('discussion in support');
     }
+    return;
+  }
+  if (name === 'on kubernetes the voice panel offers no phone options and sends none') {
+    // Chosen on Docker first: what was typed there must not reach a Kubernetes create,
+    // where sip=on is refused only after Create.
+    await page.locator('#btn-new').click();
+    await page.locator('#create-dialog[open]').waitFor({ state: 'visible' });
+    await pickPlace(page, 'docker');
+    await createDetails(page);
+    await page.locator('#plist input[value=voice]').check();
+    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
+    await page.locator('.ppanel input[data-p=voice][data-k=voip_domain]').fill('192.168.1.20');
+    await createWhere(page);
+    await pickPlace(page, 'k8s:kind-support');
+    await createDetails(page);
+    expect(await page.locator('#plist input[value=voice]').isChecked()).toBe(true);
+    expect(await page.locator('.ppanel [data-p=voice][data-k=sip]').count()).toBe(0);
+    expect(await page.locator('.ppanel [data-p=voice][data-k=voip_domain]').count()).toBe(0);
+    expect(await page.locator('.ppanel', { hasText: 'run on Docker only' }).count()).toBe(1);
+    expect(await page.locator('.ppanel input[data-p=voice][data-k=ice_servers]').count()).toBe(1);
+    await page.locator('#create-form [name=version]').fill('8.8.1');
+    await page.locator('#create-submit').click();
+    for (let n = 0; n < 40 && mockCreateRepro.mock.calls.length === 0; n += 1)
+      await page.waitForTimeout(100);
+    const request = mockCreateRepro.mock.calls[0]?.[0];
+    expect([request?.runtime, request?.preset, request?.params]).toEqual([
+      'kubernetes',
+      'voice',
+      {},
+    ]);
     return;
   }
   if (name === 'create sends scenario and history only with sample data enabled') {
@@ -5658,6 +5695,61 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     expect(request?.params).toEqual({ 'ldap.users': '7', 'email.verification': 'true' });
     return;
   }
+  if (name === 'voice with the phone system combines with email as the cli does') {
+    await openCreate(page);
+    await createDetails(page);
+    await page.locator('#plist input[value=voice]').check();
+    await page.locator('#plist input[value=email]').check();
+    expect(await page.locator('.ppanel-h').allInnerTexts()).toEqual(['email', 'voice']);
+    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
+    await page.locator('.ppanel input[data-p=voice][data-k=pbx]').check();
+    await submitTheCreate(page, '8.8.1');
+    // What the core receives is what `--preset email+voice --set voice.sip=on --set
+    // voice.pbx=on` gives it: one rule for both front-ends.
+    const request = mockCreateRepro.mock.calls[0]?.[0];
+    expect(request?.preset).toBe('email+voice');
+    expect(request?.params).toEqual({ 'voice.sip': 'on', 'voice.pbx': 'on' });
+    return;
+  }
+  if (name === 'the voice panel opens each phone option once the one it needs is on') {
+    await openCreate(page);
+    await createDetails(page);
+    await page.locator('#plist input[value=voice]').check();
+    // Each control once, in the order shown: a choice's buttons share their key.
+    const shown = async (): Promise<string[]> => [
+      ...new Set(
+        await page.$$eval('.ppanel [data-p=voice][data-k]', (els) =>
+          els.map((el) => (el as HTMLElement).dataset.k ?? ''),
+        ),
+      ),
+    ];
+    expect(await shown()).toEqual(['sip', 'ice_servers']);
+    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
+    expect(await shown()).toEqual(['sip', 'voip_domain', 'rtp_ports', 'pbx', 'ice_servers']);
+    await page.locator('.ppanel input[data-p=voice][data-k=pbx]').check();
+    expect(await shown()).toEqual([
+      'sip',
+      'voip_domain',
+      'rtp_ports',
+      'pbx',
+      'fs_dialplan',
+      'ice_servers',
+    ]);
+    await page.locator('.ppanel button[data-p=voice][data-k=fs_dialplan][data-v=edit]').click();
+    expect(
+      await page.locator('.ppanel', { hasText: 'kept across rebuilds and backups' }).count(),
+    ).toBe(1);
+    await page.locator('.ppanel input[data-p=voice][data-k=voip_domain]').fill('192.168.1.20');
+    // pbx off hides the dialplan choice, and a hidden choice is not sent: fs_dialplan=edit
+    // without pbx=on is a refusal.
+    await page.locator('.ppanel input[data-p=voice][data-k=pbx]').uncheck();
+    expect(await shown()).not.toContain('fs_dialplan');
+    await submitTheCreate(page, '8.8.1');
+    const request = mockCreateRepro.mock.calls[0]?.[0];
+    expect(request?.preset).toBe('voice');
+    expect(request?.params).toEqual({ sip: 'on', voip_domain: '192.168.1.20', pbx: 'off' });
+    return;
+  }
   if (name === 'the e2ee options send the policy and switches as its settings') {
     await openCreate(page);
     await createDetails(page);
@@ -6583,6 +6675,9 @@ describe('the frozen GUI against the in-process Fastify server', () => {
           name === 'create on a cluster with a dns zone asks for an email, not a domain' ||
           name === 'creating a kubernetes workspace sends the axes' ||
           name === 'presets are ticked from a list and sent with each ones settings' ||
+          name === 'voice with the phone system combines with email as the cli does' ||
+          name === 'the voice panel opens each phone option once the one it needs is on' ||
+          name === 'on kubernetes the voice panel offers no phone options and sends none' ||
           name === 'the e2ee options send the policy and switches as its settings' ||
           name === 'ldap asks for a one time code only with its own single sign on' ||
           name === 'a pasted license is masked and sent' ||

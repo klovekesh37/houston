@@ -659,6 +659,8 @@ describe('backing up and restoring a workspace', () => {
     limits: [string, string, number | undefined][];
     /** The directory each dump was written into and each load read from. */
     staged: string[];
+    /** What the next create throws, if anything. */
+    createError: Error | null;
     created: TypesNS.CreateReq[];
     waited: string[];
   }
@@ -700,6 +702,7 @@ describe('backing up and restoring a workspace', () => {
       capture: () => [0, ''],
       limits: [],
       staged: [],
+      createError: null,
       created: [],
       waited: [],
     };
@@ -810,6 +813,7 @@ describe('backing up and restoring a workspace', () => {
     jest.doMock('../../src/core/lifecycle/create-docker', () => ({
       ...jest.requireActual('../../src/core/lifecycle/create-docker'),
       createRepro: async (req: TypesNS.CreateReq) => {
+        if (world.createError !== null) throw world.createError;
         world.created.push(req);
         await writeRepro(req.name);
         return {};
@@ -1691,6 +1695,37 @@ describe('backing up and restoring a workspace', () => {
       const out = await backup.restore(bundle, { new: true });
       expect([out.created, out.name]).toEqual([true, 'rc8-5-1-restored']);
       expect([world.created[0]?.version, world.created[0]?.preset]).toEqual(['8.5.1', 'default']);
+    });
+
+    /** A voice lab whose dialplan someone edited, backed up. */
+    async function editedLabBundle(backup: typeof BackupNS): Promise<string> {
+      await writeRepro('lab', COMPOSE_ONE, {
+        preset: 'voice',
+        extra: { params: { sip: 'on', pbx: 'on' } },
+      });
+      const edited = path.join(home, 'repros', 'lab', 'voice', 'pbx', 'extensions.conf');
+      fs.mkdirSync(path.dirname(edited), { recursive: true });
+      fs.writeFileSync(edited, '; edited for the case\n');
+      return String((await backup.create('lab')).path);
+    }
+
+    it('brings back a lab file someone edited, not the one shipped', async () => {
+      // A kept file is written only when absent, so an edit survives `up --force`; restore
+      // --new rebuilt it as shipped although the bundle carried the edit, seen live.
+      const backup = load();
+      await backup.restore(await editedLabBundle(backup), { new: true });
+      const restored = path.join(home, 'repros', 'lab-restored', 'voice', 'pbx', 'extensions.conf');
+      expect(fs.readFileSync(restored, 'utf8')).toBe('; edited for the case\n');
+    });
+
+    it('leaves no edited lab file behind when the create fails', async () => {
+      // Left in a folder with no record, it would be taken up by the next workspace of that
+      // name as if someone had edited it there.
+      const backup = load();
+      const bundle = await editedLabBundle(backup);
+      world.createError = new Error('ports taken');
+      await expect(backup.restore(bundle, { new: true })).rejects.toThrow('ports taken');
+      expect(fs.existsSync(path.join(home, 'repros', 'lab-restored'))).toBe(false);
     });
 
     it('records the admin password the restored database holds, the source’s', async () => {

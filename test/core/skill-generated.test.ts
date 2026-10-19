@@ -16,9 +16,10 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const generator = require(path.join(ROOT, 'tools', 'skill-generate.js')) as {
   TARGET: string;
   TEMPLATE: string;
-  render: (manifest: unknown, template: string, version: string) => string;
+  render: (manifest: unknown, template: string, version: string, pkg?: unknown) => string;
 };
-const VERSION = (require('../../package.json') as { version: string }).version;
+const PKG = require('../../package.json') as { name: string; version: string };
+const VERSION = PKG.version;
 
 describe('the shipped skill file', () => {
   it('skill file matches capabilities', () => {
@@ -26,14 +27,35 @@ describe('the shipped skill file', () => {
       capabilities(),
       fs.readFileSync(generator.TEMPLATE, 'utf8'),
       VERSION,
+      PKG,
     );
     expect(fs.readFileSync(generator.TARGET, 'utf8')).toBe(fresh);
   });
 
-  it('names the safe cluster read, and keep and share among what to ask about first', () => {
+  it('is loaded for a support ticket and for any other use of a workspace, but not for load', () => {
+    // The owner's wording: a support ticket is one use among several, so the description names
+    // both, and an agent that only met ticket wording never reached for houston to try a PR's
+    // build. Load testing is left out of the skill for now, generated list included.
+    const shipped = fs.readFileSync(generator.TARGET, 'utf8');
+    const description = /^description: (.*)$/mu.exec(shipped)?.[1] ?? '';
+    expect(description).toContain(
+      'reproduce a support ticket or reported behaviour, check whether a bug is version-specific, or compare two versions',
+    );
+    expect(description).toContain('try a feature or setting');
+    expect(shipped).not.toMatch(/loadtest|load-test|houston capacity|`capacity`/u);
+  });
+
+  it('names the package to install, as package.json names it', () => {
+    // An agent on a machine without houston had no install line and would not guess one;
+    // rendered, so a rename of the package cannot leave the skill naming the old one.
+    expect(fs.readFileSync(generator.TARGET, 'utf8')).toContain(`npm install -g ${PKG.name}`);
+  });
+
+  it("names the safe cluster read, and keep, share and a person's workspace among what to ask about first", () => {
     // An agent was told to ask before `cluster create` and `cluster delete`, but not before
     // `keep` (it moves a cluster's deletion date) or `share` (it grants AWS access), and
-    // was never told which cluster command only reads.
+    // was never told which cluster command only reads. Driven live, an agent also removed the
+    // workspace a person had asked for to free a preset's port, because nothing said to ask.
     const shipped = fs.readFileSync(generator.TARGET, 'utf8');
     expect(shipped).toContain('`houston cluster overview --json` | the safe read');
     const ask = shipped.slice(
@@ -43,9 +65,11 @@ describe('the shipped skill file', () => {
     expect({
       keep: ask.includes('`cluster keep`'),
       share: ask.includes('`cluster share`'),
+      person: ask.includes('removing a workspace the person asked for'),
     }).toEqual({
       keep: true,
       share: true,
+      person: true,
     });
   });
 
@@ -55,7 +79,7 @@ describe('the shipped skill file', () => {
     // loopback. The skill called that whole record "the record to attach".
     const shipped = fs.readFileSync(generator.TARGET, 'utf8');
     const collect = shipped.slice(
-      shipped.indexOf('### Collect what a case needs'),
+      shipped.indexOf('### The record to share'),
       shipped.indexOf('### Tear it down'),
     );
     expect(collect).toContain('the record to attach');

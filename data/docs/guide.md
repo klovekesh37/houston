@@ -100,6 +100,7 @@ houston up --version 8.5.1 --name ticket-1234 --preset ldap --wait
 | `s3_minio` | MinIO as the file-upload store | uploads, previews, presigned URLs |
 | `livechat` | Omnichannel, an agent and a demo page with the widget | the widget, CORS, routing |
 | `e2ee` | end-to-end encryption switched on, and three test users | encrypted DMs, rooms and files ([guide](e2ee.md)) |
+| `voice` | two test users for Voice calls; `sip=on` adds Drachtio and FreeSWITCH; `pbx=on` a lab phone system | calls between users, the SIP integration, PBX calls ([guide](voice.md)) |
 
 For `ldap`, `saml` and `oidc`, sign in as **`user1` / `user1`**. `houston info` lists
 each preset's consoles and logins.

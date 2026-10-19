@@ -45,6 +45,13 @@ export interface Preset {
    * composed. Absent means every key is hard, as it is for every user YAML preset.
    */
   softEnv?: string[];
+  /**
+   * Paths in `files` written only when absent, so a person's edit to one (a lab dialplan)
+   * survives `up --force`, stop/start and upgrade; deleting it and running `up --force`
+   * restores the default. A kept file must not depend on params: a later `--set` would never
+   * reach it. Absent means every file is rewritten on create, as it always was.
+   */
+  keepFiles?: string[];
 }
 
 /** The established defaults, in the established order. */

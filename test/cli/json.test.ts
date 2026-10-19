@@ -367,6 +367,7 @@ describe('the capabilities document', () => {
       'oidc',
       's3_minio',
       'saml',
+      'voice',
       'Ａ-fullwidth',
       '😀-emoji',
     ];

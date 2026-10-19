@@ -45,6 +45,7 @@ import {
 } from '../../lib/versions';
 import { actor as auditActor, record as auditRecord } from '../audit';
 import { refuseEnforcedBefore880 } from '../../lib/presets/e2ee';
+import { refuseVoiceBefore800 } from '../../lib/presets/voice';
 import { diagnoseFailure } from '../diagnose';
 import { attach, backendContainer } from '../edge/networks';
 import { hasAcme, issueLocalCert } from '../edge/acme';
@@ -593,6 +594,7 @@ export function loadPreset(plan: CreatePlan): void {
     plan.presetParams = byPreset;
     plan.pre = presets.loadMany(names, byPreset, 'docker', new Set(Object.keys(plan.req.env)));
     refuseEnforcedBefore880(plan.pre, plan.resolved?.rcVersion ?? '');
+    refuseVoiceBefore800(plan.pre, plan.resolved?.rcVersion ?? '');
     plan.wait = plan.req.wait || plan.pre.postReady.length > 0 || plan.req.seed;
     return;
   }
@@ -603,6 +605,7 @@ export function loadPreset(plan: CreatePlan): void {
   }
   request.refuseUnknownParams(plan.req.params, plan.pre, plan.req.preset);
   refuseEnforcedBefore880(plan.pre, plan.resolved?.rcVersion ?? '');
+  refuseVoiceBefore800(plan.pre, plan.resolved?.rcVersion ?? '');
 
   plan.wait = plan.req.wait || plan.pre.postReady.length > 0 || plan.req.seed;
 }
@@ -769,6 +772,13 @@ export function warnAboutTheBind(plan: CreatePlan): void {
     if (sideText) weak.push(`the ${plan.req.preset} UI on ${sideText}`);
     if (plan.req.monitor) weak.push('Grafana on admin/admin');
     if (plan.req.seed) weak.push('seeded users, whose password is their username');
+    // The voice preset's PBX lab, alone or composed: read from what the create builds.
+    if (plan.pre?.services.pbx !== undefined) {
+      weak.push(
+        "the PBX lab's softphone accounts, whose password is their number, and FreeSWITCH's " +
+          'external SIP port 5080, which asks none',
+      );
+    }
     warn(
       plan.emit,
       `--bind ${plan.bindHost} publishes this workspace ` +
@@ -959,6 +969,12 @@ export async function buildDocument(plan: CreatePlan): Promise<void> {
     plan.token,
   );
   if (premium !== '') warn(plan.emit, premium, { phase: 'create' });
+  const voice = request.voiceLicenceWarning(
+    [(plan.pre as Preset).name],
+    plan.spec.licensed,
+    plan.token,
+  );
+  if (voice !== '') warn(plan.emit, voice, { phase: 'create' });
   const samlEmail = request.samlEmailWarning(
     plan.pre as Preset,
     resolved.rcVersion,
@@ -1163,6 +1179,7 @@ export async function writeTheWorkspace(plan: CreatePlan): Promise<void> {
     compose.toYaml(compose.forEngine(plan.doc as compose.ComposeDoc, await hostEngine())),
     meta,
     plan.files,
+    new Set((plan.pre as Preset).keepFiles ?? []),
   );
   await writeLicense(plan);
 }

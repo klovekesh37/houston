@@ -101,6 +101,25 @@ export function requireLicense(text: string): string {
   return trimmed;
 }
 
+/**
+ * Warn when a voice workspace has no licence, or ''. Rocket.Chat 8 has no setting that switches
+ * Voice on: a licence carrying the Voice add-on does. Not a refusal -- one can be applied to the
+ * running workspace later -- but without it there is nothing to try.
+ */
+export function voiceLicenceWarning(
+  presetNames: readonly string[],
+  licensed: boolean,
+  regToken: string,
+): string {
+  if (licensed || regToken !== '') return '';
+  if (!presetNames.flatMap((name) => namesOf(name)).includes('voice')) return '';
+  return (
+    'the voice preset needs a licence with the Voice add-on (teams-voip), and this workspace ' +
+    'has neither --license nor --reg-token: it boots, but Rocket.Chat shows no call button ' +
+    'until one is applied in Administration → Subscription.'
+  );
+}
+
 /** Presets whose login Rocket.Chat has announced will need a Premium plan from 9.0.0. */
 const PREMIUM_AUTH_PRESETS: Readonly<Record<string, string>> = {
   ldap: 'LDAP',

@@ -52,6 +52,19 @@ export function ldapParamsMb(params: Record<string, unknown>): number {
   return need;
 }
 
+/**
+ * What the voice preset's `sip=on` adds: Drachtio and FreeSWITCH, measured idle at 7 and 27 MiB
+ * on 8.7.0, with room for calls; `pbx=on` adds the lab's Asterisk, idle at 48.5 MiB
+ * (2026-10-16). A composed workspace names the params `voice.sip` and `voice.pbx`.
+ */
+export function voiceParamsMb(params: Record<string, unknown>): number {
+  const on = (key: string): boolean =>
+    String(params[`voice.${key}`] ?? params[key] ?? '')
+      .trim()
+      .toLowerCase() === 'on';
+  return (on('sip') ? 60 : 0) + (on('pbx') ? 80 : 0);
+}
+
 /** Prometheus + Grafana + Loki + the OTel collector + two exporters. */
 export const MONITORING_MB = 280;
 
@@ -336,6 +349,7 @@ export function neededMb(presetName: string, provisioning: boolean, req: CreateR
   let need = WORKSPACE_MB;
   for (const name of namesOf(presetName)) need += PRESET_MB[name] ?? 0;
   if (namesOf(presetName).includes('ldap')) need += ldapParamsMb(req.params);
+  if (namesOf(presetName).includes('voice')) need += voiceParamsMb(req.params);
   if (req.monitor) need += MONITORING_MB;
   need += kubeOverheadMb(req, provisioning);
   return need;

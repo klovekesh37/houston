@@ -601,6 +601,9 @@ export function bindPorts(doc: ComposeDoc, bind: string): void {
         continue;
       }
       const str = String(p);
+      // The shape is read without a protocol suffix ("20000-20019/udp" is a range, "3478/udp"
+      // a bare port); the entry keeps it.
+      const shape = str.replace(/\/(tcp|udp)$/u, '');
       const colons = str.split(':').length - 1;
       const head = str.split(':')[0] ?? '';
       if (colons >= 2) {
@@ -609,12 +612,12 @@ export function bindPorts(doc: ComposeDoc, bind: string): void {
         out.push(str);
       } else if (colons === 1 && head !== '' && /^[0-9]+$/.test(head)) {
         out.push(`${bind}:${str}`); // "8025:8025"
-      } else if (str !== '' && /^[0-9]+$/.test(str)) {
+      } else if (shape !== '' && /^[0-9]+$/.test(shape)) {
         // A BARE container port. "127.0.0.1:8025" would be parsed as host:container with
         // an invalid host port, so use compose's IP::CONTAINER form: an ephemeral host
         // port, still bound to `bind` rather than every interface.
         out.push(`${bind}::${str}`);
-      } else if (RANGE_RE.test(str)) {
+      } else if (RANGE_RE.test(shape)) {
         // A PORT RANGE ("8000-8005:8000-8005"). This fell through to the `else` below
         // and was appended UNCHANGED, so it published on every interface while `info`
         // and the detail panel both reported the workspace as loopback-bound: a silent

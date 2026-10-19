@@ -248,6 +248,9 @@ export function composePresets(
       claim(files, file, owner, 'the file');
       out.files.push([file, body]);
     }
+    if (preset.keepFiles !== undefined) {
+      out.keepFiles = [...(out.keepFiles ?? []), ...preset.keepFiles];
+    }
     for (const [name, volume] of Object.entries(preset.volumes)) {
       const owned = volumes.get(name);
       if (owned !== undefined && !same(out.volumes[name], volume)) {

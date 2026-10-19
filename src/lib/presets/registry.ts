@@ -42,6 +42,7 @@ export const DYNAMIC_PRESETS: readonly string[] = Object.freeze([
   'oidc',
   's3_minio',
   'saml',
+  'voice',
 ]);
 
 /** Register the builder owned by a dynamic preset module. */

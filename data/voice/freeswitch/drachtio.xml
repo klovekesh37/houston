@@ -1,0 +1,52 @@
+<!-- http://wiki.freeswitch.org/wiki/Dialplan_XML -->
+<include>
+  <context name="drachtio">
+
+    <extension name="unloop">
+      <condition field="${unroll_loops}" expression="^true$"/>
+      <condition field="${sip_looped_call}" expression="^true$">
+        <action application="deflect" data="${destination_number}"/>
+      </condition>
+    </extension>
+
+    <extension name="call_debug" continue="true">
+      <condition field="${call_debug}" expression="^true$" break="never">
+        <action application="info"/>
+      </condition>
+    </extension>
+
+    <extension name="internal_extensions">
+      <condition field="destination_number" expression="${internal_number_expression}">
+        <action application="set" data="dialed_extension=$1"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=false"/>
+        <action application="export" data="media_webrtc=true"/>
+
+        <action application="bridge" data="sofia/internal/${dialed_extension}@${domain_name}"/>
+        <action application="answer"/>
+      </condition>
+    </extension>
+
+    <!-- The rules below will be uncommented automatically when external calls are enabled -->
+    <!-- -->
+    <extension name="External_Numbers">
+      <condition field="destination_number" expression="${external_number_expression}">
+        <action application="set" data="dialed_extension=$1"/>
+        <action application="set" data="call_timeout=30"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=false"/>
+        <action application="set" data="effective_caller_id_number=${sip_external_outgoing_caller_id_number}"/>
+        <action application="bridge" data="sofia/external/${dialed_extension}@${external_calls_domain}"/>
+        <action application="answer"/>
+      </condition>
+    </extension>
+    <!-- -->
+
+    <extension name="echo">
+      <condition field="destination_number" expression="^(123|echo)$">
+        <action application="answer"/>
+        <action application="echo" data=""/>
+      </condition>
+    </extension>
+  </context>
+</include>

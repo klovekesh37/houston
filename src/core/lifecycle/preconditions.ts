@@ -22,6 +22,7 @@ import { MODE_ACME } from '../tls';
 
 import * as naming from './naming';
 import * as ownership from './ownership';
+import { paramsByPreset } from './request';
 import { KUBERNETES_UNSUPPORTED, LOOPBACK_BINDS, STATE_ACTIONS, type CreateReq } from './types';
 
 function isTruthy(value: unknown): boolean {
@@ -286,9 +287,12 @@ export function refuseUnsupportedOnKubernetes(req: CreateReq): void {
   // still refused, because being recorded and not applied is what this guard exists to
   // prevent; but the refusal is now per preset rather than a blanket "not supported", and
   // it names the ones that DO work so the answer is actionable.
-  // Each preset of a composed workspace on its own: one without an adapter is named.
-  for (const name of namesOf(req.preset).filter((one) => one !== 'default')) {
-    refuseOneOnKubernetes(name, namesOf(req.preset).length > 1 ? {} : req.params);
+  // Each preset of a composed workspace on its own, with its own `--set` (`voice.sip=on`):
+  // one without an adapter, or set the way Kubernetes cannot run it, is named.
+  const names = namesOf(req.preset);
+  const byPreset = names.length > 1 ? paramsByPreset(names, req.params) : null;
+  for (const name of names.filter((one) => one !== 'default')) {
+    refuseOneOnKubernetes(name, byPreset?.[name] ?? req.params);
   }
 }
 

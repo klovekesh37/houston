@@ -13,6 +13,7 @@
  */
 import { namesOf } from '../lib/presets/composite';
 import { E2EE_TEST_USERS } from '../lib/presets/e2ee';
+import { VOICE_TEST_USERS } from '../lib/presets/voice';
 import * as config from '../lib/config';
 import { quotedText } from '../lib/format';
 import { type Emit, info, warn } from '../lib/events';
@@ -592,6 +593,33 @@ async function prLivechatSetup(
 }
 
 /**
+ * Create test users, each with its username as its password; a user an earlier `ready` made
+ * (users.create refuses it) counts. False, with a warning naming who is missing, otherwise.
+ */
+async function ensureTestUsers(
+  meta: Metadata,
+  auth: rcapi.Auth,
+  emit: Emit,
+  label: string,
+  usernames: readonly string[],
+): Promise<boolean> {
+  const url = meta.rootUrl;
+  const pw = adminPass(meta);
+  const missing: string[] = [];
+  for (const username of usernames) {
+    if (await rcapi.createUser(url, auth, pw, username)) continue;
+    if (!truthy(await rcapi.getUserId(url, auth, username))) missing.push(username);
+  }
+  if (missing.length > 0) {
+    warn(emit, `could not create the ${label} test users ${missing.join(', ')}`, {
+      phase: 'post_ready',
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
  * The `e2ee` preset's test users. Nothing about encryption is done here: each user's keys are
  * made in their browser the first time they sign in. Re-run by `ready`, so an existing user
  * is kept, not an error.
@@ -603,22 +631,54 @@ async function prE2eeUsers(
   emit: Emit,
   _sleep: Sleep,
 ): Promise<boolean> {
-  const url = meta.rootUrl;
-  const pw = adminPass(meta);
-  const missing: string[] = [];
-  for (const username of E2EE_TEST_USERS) {
-    if (await rcapi.createUser(url, auth, pw, username)) continue;
-    if (!truthy(await rcapi.getUserId(url, auth, username))) missing.push(username);
-  }
-  if (missing.length > 0) {
-    warn(emit, `could not create the E2EE test users ${missing.join(', ')}`, {
-      phase: 'post_ready',
-    });
-    return false;
-  }
+  if (!(await ensureTestUsers(meta, auth, emit, 'E2EE', E2EE_TEST_USERS))) return false;
   info(emit, `E2EE test users ready: ${E2EE_TEST_USERS.join(', ')} (password = username)`, {
     phase: 'post_ready',
   });
+  return true;
+}
+
+/**
+ * The Voice test users and, with SIP, their extensions. Rocket.Chat lets an extension be set
+ * only while SIP integration is on, which needs a licence with the Voice add-on: a refusal is
+ * that missing licence, so it is a warning saying where to set them later, not a failure.
+ */
+async function prVoiceUsers(
+  meta: Metadata,
+  auth: rcapi.Auth,
+  action: Action,
+  emit: Emit,
+  _sleep: Sleep,
+): Promise<boolean> {
+  const users = Object.keys(VOICE_TEST_USERS);
+  if (!(await ensureTestUsers(meta, auth, emit, 'Voice', users))) return false;
+  info(emit, `Voice test users ready: ${users.join(', ')} (password = username)`, {
+    phase: 'post_ready',
+  });
+  if (!truthy(action.extensions)) return true;
+  const url = meta.rootUrl;
+  const pw = adminPass(meta);
+  const refused: string[] = [];
+  for (const [username, extension] of Object.entries(VOICE_TEST_USERS)) {
+    const id = await rcapi.getUserId(url, auth, username);
+    if (id === null || !(await rcapi.setVoiceExtension(url, auth, pw, id, extension))) {
+      refused.push(username);
+    }
+  }
+  if (refused.length > 0) {
+    warn(
+      emit,
+      `could not give ${refused.join(', ')} their extensions: Rocket.Chat sets one only while ` +
+        'Voice is licensed. Apply the licence in Administration → Subscription, then run ' +
+        `houston ready --name ${meta.name}.`,
+      { phase: 'post_ready' },
+    );
+    return true;
+  }
+  const given = Object.entries(VOICE_TEST_USERS).map(([username, ext], i) =>
+    i === 0 ? `${username} has extension ${ext}` : `${username} ${ext}`,
+  );
+  info(emit, `SIP: ${given.join(', ')}`, { phase: 'post_ready' });
   return true;
 }
 
@@ -643,6 +703,7 @@ export const POST_READY_ACTIONS: Record<string, Handler> = {
   create_oauth_provider: prCreateOauthProvider,
   livechat_setup: prLivechatSetup,
   e2ee_users: prE2eeUsers,
+  voice_users: prVoiceUsers,
 };
 
 const BUILTIN_ACTIONS: Readonly<Record<string, Handler>> = Object.freeze({

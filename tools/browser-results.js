@@ -1,5 +1,8 @@
 'use strict';
 
+// Voice's designed controls -- each phone option opening once the one it needs is on, and none
+// on Kubernetes -- extend 220.
+// The create dialog sending voice with the phone system and email as one composed request extends 219.
 // A member offered no prepare or forget on a cluster -- an admin's now -- extends 218.
 // A member's view of a colleague's workspace -- looked at, never changed -- and a box without
 // accounts still offered every control extend 216.
@@ -9,7 +12,7 @@
 // e2ee preset's options sent as its settings.
 // Five retained-job History behaviors extend the 205 baseline.
 // Five seed GUI behaviors and twenty-two re-verification regressions extend the 178 baseline.
-const EXPECTED = 219;
+const EXPECTED = 222;
 
 module.exports = (results) => {
   const wanted = process.env.BROWSER_GATE_PROBE === 'count' ? EXPECTED + 1 : EXPECTED;

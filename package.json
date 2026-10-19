@@ -1,6 +1,6 @@
 {
   "name": "@klovekesh37/houston",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Reproduce a customer's Rocket.Chat issue on their exact version, in minutes.",
   "license": "MIT",
   "repository": {
@@ -50,7 +50,8 @@
     "depcruise:selftest": "node tools/depcruise-selftest.js",
     "test:zero-skips:selftest": "node tools/zero-skips-selftest.js",
     "skill:generate": "node tools/skill-generate.js",
-    "skill:check": "node tools/skill-generate.js --check"
+    "skill:check": "node tools/skill-generate.js --check",
+    "skill:eval": "node tools/skill-eval.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

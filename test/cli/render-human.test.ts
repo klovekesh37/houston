@@ -964,7 +964,7 @@ describe('presets', () => {
     // Unset needs a host with no terminal, which the real process may not be.
     expect(
       ours(
-        listPresets().filter((preset) => preset.name !== 'e2ee'),
+        listPresets().filter((preset) => !['e2ee', 'voice'].includes(preset.name)),
         null,
       ),
     ).toEqual(recorded[0]);
@@ -973,7 +973,7 @@ describe('presets', () => {
       for (const [at, columns] of widths.entries()) {
         process.env.COLUMNS = columns;
         const shown = await render('presets', {
-          presets: listPresets().filter((preset) => preset.name !== 'e2ee'),
+          presets: listPresets().filter((preset) => !['e2ee', 'voice'].includes(preset.name)),
         });
         expect([columns, { out: shown.out, error: null }]).toEqual([columns, recorded[at + 1]]);
         expect(shown.err).toBe('');
@@ -1006,7 +1006,7 @@ describe('presets', () => {
       const recorded = RECORDED.presets.userFiles;
       expect(
         ours(
-          listPresets().filter((preset) => preset.name !== 'e2ee'),
+          listPresets().filter((preset) => !['e2ee', 'voice'].includes(preset.name)),
           null,
         ),
       ).toEqual(recorded);

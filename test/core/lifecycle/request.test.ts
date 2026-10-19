@@ -13,6 +13,7 @@ import {
   sayWhereThisIsGoing,
   unknownParams,
   defaultDomainFromZone,
+  voiceLicenceWarning,
 } from '../../../src/core/lifecycle/request';
 
 import type * as ConfigNS from '../../../src/lib/config';
@@ -345,6 +346,25 @@ describe('which image a create runs', () => {
     const build = resolved('ghcr.io/rocketchat/rocket.chat:develop', 'ci build');
     chooseImage(build, '', 'mirror.example/rc');
     expect(build.rcImage).toBe('ghcr.io/rocketchat/rocket.chat:develop');
+  });
+});
+
+describe('the voice licence warning', () => {
+  it('says a voice workspace with no licence boots without a call button, and how to add one', () => {
+    const said = voiceLicenceWarning(['voice'], false, '');
+    expect(said).toContain('Voice add-on (teams-voip)');
+    expect(said).toContain('no call button');
+    expect(said).toContain('Administration → Subscription');
+    // Compose passes a combination as the one name it built.
+    expect(voiceLicenceWarning(['email+voice'], false, '')).toBe(said);
+  });
+
+  it('stays quiet with a licence or a token, and for other presets', () => {
+    expect([
+      voiceLicenceWarning(['voice'], true, ''),
+      voiceLicenceWarning(['voice'], false, 'tok'),
+      voiceLicenceWarning(['email'], false, ''),
+    ]).toEqual(['', '', '']);
   });
 });
 

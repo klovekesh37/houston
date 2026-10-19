@@ -19,6 +19,7 @@ const RECORDED_BUILDERS = [
   'oidc',
   's3_minio',
   'saml',
+  'voice',
 ];
 
 describe('the leaf registry', () => {
@@ -72,9 +73,9 @@ describe('the leaf registry', () => {
     expect(Object.keys(scenarios())).toContain('ldap');
   });
 
-  it('registers the LDAP and E2EE runtime scenarios', () => {
+  it('registers the LDAP, E2EE and voice runtime scenarios', () => {
     require('../../../src/lib/presets/index');
-    expect(Object.keys(scenarios()).sort()).toEqual(['e2ee', 'ldap']);
+    expect(Object.keys(scenarios()).sort()).toEqual(['e2ee', 'ldap', 'voice']);
   });
 
   // `register` is exercised by every builder module at import; naming it here keeps the

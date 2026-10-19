@@ -44,8 +44,8 @@ function doctorSource() {
 }
 
 describe('the doctor check vocabulary', () => {
-  it('is the published 45, in report order, with the fallback first', () => {
-    expect(CHECKS).toHaveLength(45);
+  it('is the published 46, in report order, with the fallback first', () => {
+    expect(CHECKS).toHaveLength(46);
     expect(CHECKS[0]).toBe('preflight');
     expect(new Set(CHECKS).size).toBe(CHECKS.length);
     expect(Object.isFrozen(CHECKS)).toBe(true);

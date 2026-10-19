@@ -108,6 +108,24 @@ describe('the preconditions that refuse', () => {
     expect(() => refuseUnsupportedOnKubernetes(createReq({ version: '8.5.1' }))).not.toThrow();
   });
 
+  it('refuses a combined preset’s Docker-only setting as early, and as fully, as one alone', () => {
+    // Each preset of a set was checked with no params, so `voice.sip=on` passed here and was
+    // refused only after the release lookup, without the way out this refusal names.
+    const alone = createReq({ version: '8.8.1', preset: 'voice', params: { sip: 'on' } });
+    const combined = createReq({
+      version: '8.8.1',
+      preset: 'email+voice',
+      params: { 'voice.sip': 'on' },
+    });
+    for (const req of [alone, combined]) {
+      expect(() => refuseUnsupportedOnKubernetes(req)).toThrow(
+        /voice sip=on runs on Docker only.*Or use --runtime docker/u,
+      );
+    }
+    const usersOnly = createReq({ version: '8.8.1', preset: 'email+voice', params: {} });
+    expect(() => refuseUnsupportedOnKubernetes(usersOnly)).not.toThrow();
+  });
+
   it('refuses an unconfirmed volume teardown before it is queued', async () => {
     await writeRecord('w', metadata({ name: 'w', project: 'houston-w' }));
     // The refusal earlier releases raised for the same request, recorded.

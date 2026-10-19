@@ -81,6 +81,33 @@ describe('redactEnv', () => {
     );
   });
 
+  it("masks a TURN password in Rocket.Chat's Ice Servers form, and nothing else there", () => {
+    // `user:password@turn:host:port` has no `://`, so the URL rule passed it through: the voice
+    // preset's ice_servers reached the env panel, the detail payload and the logs in the clear.
+    expect(
+      redactEnv(
+        'OVERWRITE_SETTING_VoIP_TeamCollab_Ice_Servers',
+        'stun:stun.example.com:3478,team%40x:s3cret@turn:turn.example.com:3478,u:p@turns:t.example.com:443',
+      ),
+    ).toBe(
+      `stun:stun.example.com:3478,team%40x:${REDACTED}@turn:turn.example.com:3478,u:${REDACTED}@turns:t.example.com:443`,
+    );
+    expect(redactArgv(['up', '--set', 'ice_servers=u:s3cret@turn:t.example.com:3478'])).toEqual([
+      'up',
+      '--set',
+      `ice_servers=u:${REDACTED}@turn:t.example.com:3478`,
+    ]);
+  });
+
+  it('masks a TURN password after a comma and a space too, as the voice preset accepts it', () => {
+    // The preset trims each entry, so `a, b` is accepted and stored as typed.
+    const typed = 'stun:stun.example.com:3478, alice:s3cr3t@turn:turn.example.com:3478';
+    expect(redactEnv('OVERWRITE_SETTING_VoIP_TeamCollab_Ice_Servers', typed)).toBe(
+      `stun:stun.example.com:3478, alice:${REDACTED}@turn:turn.example.com:3478`,
+    );
+    expect(redactArgv(['up', '--set', `ice_servers=${typed}`]).join(' ')).not.toContain('s3cr3t');
+  });
+
   it('does not mask an empty value even when the key names a credential', () => {
     // Only a non-empty value is ever masked: an empty string stays empty rather than
     // becoming a mask that implies a secret is set.

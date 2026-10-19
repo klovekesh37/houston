@@ -22,6 +22,7 @@ const BUILT_IN = [
   'oidc',
   's3_minio',
   'saml',
+  'voice',
 ];
 
 function refusal(fn: () => unknown): string {
@@ -39,6 +40,24 @@ function preset(name: string, over: Partial<Preset>): Preset {
 }
 
 describe('the conflict matrix of the built-in presets', () => {
+  it('composes the voice PBX lab with every other built-in preset on Docker', () => {
+    // Its services, files and ports (drachtio, freeswitch, pbx; 5060, 5080, 20000-20046,
+    // 30000-30019) collide with no other preset's.
+    const lab = { voice: { sip: 'on', pbx: 'on', fs_dialplan: 'edit' } };
+    // Every preset the catalogue has, not a list kept by hand: e2ee was missing from one.
+    const others = [...scenarioNames()].filter((n) => !['voice', 'default'].includes(n));
+    expect(others).toEqual(expect.arrayContaining(['airgapped', 'e2ee', 'email', 'ldap']));
+    const refused = others.filter(
+      (other) => refusal(() => loadMany(['voice', other], lab, 'docker')) !== 'composed',
+    );
+    expect(refused).toEqual([]);
+    const composed = loadMany(['email', 'voice'], lab, 'docker');
+    expect(Object.keys(composed.services).sort()).toEqual(
+      expect.arrayContaining(['drachtio', 'freeswitch', 'pbx']),
+    );
+    expect(composed.keepFiles).toHaveLength(5);
+  });
+
   it('composes every pair on both runtimes except saml + oidc, the same in either order', () => {
     expect([...scenarioNames()].sort()).toEqual(
       expect.arrayContaining(BUILT_IN.filter((n) => n !== 'multi-instance')),
@@ -118,6 +137,12 @@ describe('the unions', () => {
     expect(refusal(() => composePresets([kube('alpha'), kube('beta')]))).toContain(
       '"Service/shared"',
     );
+  });
+
+  it('keeps the kept files of every member', () => {
+    const a = preset('alpha', { files: [['a/x', '1']], keepFiles: ['a/x'] });
+    const b = preset('beta', { files: [['b/y', '2']], keepFiles: ['b/y'] });
+    expect(composePresets([a, b]).keepFiles).toEqual(['a/x', 'b/y']);
   });
 
   it('refuses a Rocket.Chat patch both set differently, and deep-merges the rest', () => {

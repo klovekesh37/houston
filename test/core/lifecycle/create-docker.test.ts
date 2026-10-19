@@ -262,11 +262,11 @@ describe('the create path end to end, stopped at the write seam', () => {
 
   /** The Compose create with the engine stated, capturing the record and the document. */
   function capture(): {
-    seen: { meta?: Metadata; yaml?: string };
+    seen: { meta?: Metadata; yaml?: string; keep?: ReadonlySet<string> };
     createDocker: typeof CreateDockerNS;
   } {
     jest.resetModules();
-    const seen: { meta?: Metadata; yaml?: string } = {};
+    const seen: { meta?: Metadata; yaml?: string; keep?: ReadonlySet<string> } = {};
     jest.doMock('../../../src/core/runner/host', () => ({
       ...(require('../../testsetup-policy') as typeof PolicyNS).healthyHost(),
       dockerKernelVersion: async () => '6.1.0',
@@ -298,9 +298,16 @@ describe('the create path end to end, stopped at the write seam', () => {
     });
     jest.doMock('../../../src/core/runner/record', () => ({
       ...jest.requireActual('../../../src/core/runner/record'),
-      write: async (_name: string, yaml: string, meta: Metadata) => {
+      write: async (
+        _name: string,
+        yaml: string,
+        meta: Metadata,
+        _files: unknown,
+        keep: ReadonlySet<string>,
+      ) => {
         seen.meta = meta;
         seen.yaml = yaml;
+        seen.keep = keep;
         throw new Error('stopped at the write seam');
       },
     }));
@@ -371,6 +378,70 @@ describe('the create path end to end, stopped at the write seam', () => {
       ),
     ).rejects.toThrow('stopped at the write seam');
     expect(said.filter((line) => line.includes('Premium plan for LDAP login'))).toHaveLength(1);
+  });
+
+  it('warns that an unlicensed voice workspace boots without a call button', async () => {
+    config.updateConfig((cfg) => {
+      delete cfg.reg_token;
+    });
+    const { createDocker } = capture();
+    const said: string[] = [];
+    await expect(
+      createDocker.createRepro(
+        createReq({
+          version: '8.7.0',
+          name: 'voice-nolic',
+          preset: 'voice',
+          wait: false,
+          offline: true,
+        }),
+        (event) => said.push(event.message),
+      ),
+    ).rejects.toThrow('stopped at the write seam');
+    expect(said.filter((line) => line.includes('Voice add-on (teams-voip)'))).toHaveLength(1);
+  });
+
+  it('hands the record writer the files a preset keeps', async () => {
+    // The PBX lab's dialplans are written once, so an edit survives `up --force`.
+    const { seen, createDocker } = capture();
+    await expect(
+      createDocker.createRepro(
+        createReq({
+          version: '8.8.1',
+          name: 'kept',
+          preset: 'voice',
+          params: { sip: 'on', pbx: 'on' },
+          wait: false,
+          offline: true,
+        }),
+      ),
+    ).rejects.toThrow('stopped at the write seam');
+    expect([...(seen.keep ?? [])].sort()).toEqual([
+      'voice/pbx/extensions.conf',
+      'voice/pbx/pjsip.conf',
+      'voice/pbx/rtp.conf',
+    ]);
+  });
+
+  it('warns that a wide bind publishes the softphone accounts', async () => {
+    const { createDocker } = capture();
+    const said: string[] = [];
+    await expect(
+      createDocker.createRepro(
+        createReq({
+          version: '8.8.1',
+          name: 'wide-lab',
+          preset: 'voice',
+          params: { sip: 'on', pbx: 'on' },
+          bind: '0.0.0.0',
+          wait: false,
+          offline: true,
+        }),
+        (event) => said.push(event.message),
+      ),
+    ).rejects.toThrow('stopped at the write seam');
+    const softphones = "the PBX lab's softphone accounts, whose password is their number";
+    expect(said.filter((line) => line.includes(softphones))).toHaveLength(1);
   });
 
   it('builds several presets as one workspace, recorded under the canonical name', async () => {
@@ -522,6 +593,33 @@ describe('the create path end to end, stopped at the write seam', () => {
         'e2ee policy=enforced needs Rocket.Chat 8.8.0 or later; 8.5.1 would not enforce it.',
       );
       // A usage error: exit 2, before the cluster, the edge or the record is touched.
+      await expect(refused).rejects.toHaveProperty('exitCode', 2);
+      expect(seen.meta).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['voice', {}],
+    ['voice', { sip: 'on' }],
+    ['voice+email', {}],
+  ])(
+    'refuses %s %j on a Rocket.Chat before 8.0.0, before anything is written',
+    async (preset, params) => {
+      // 7.x has the older Team Voice Calls: other settings, no Drachtio.
+      const { seen, createDocker } = capture();
+      const refused = createDocker.createRepro(
+        createReq({
+          version: '7.13.0',
+          name: 'old-voice',
+          preset,
+          params,
+          wait: false,
+          offline: true,
+        }),
+      );
+      await expect(refused).rejects.toThrow(
+        'the voice preset needs Rocket.Chat 8.0.0 or later; 7.13.0 has the older Team Voice Calls.',
+      );
       await expect(refused).rejects.toHaveProperty('exitCode', 2);
       expect(seen.meta).toBeUndefined();
     },
