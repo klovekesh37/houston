@@ -34,47 +34,50 @@ describes.
 
 The steps below use the last row; leave out what you do not need. The workspace is called
 `voice-lab` on port `4460`, and `voice.lic` is the file with your licence text. The first row
-also works on Kubernetes; the other two run on Docker only.
-
-**With other presets**, join the names with `+` and put `voice.` in front of its options:
-
-```bash
-houston up --version 8.8.1 --name voice-lab --preset email+voice --set voice.sip_integration=on --set voice.pbx=on \
-  --license voice.lic --port 4460 --wait
-```
-
-With `email`, the test users are asked for a sign-in code: it is in Mailpit at
-`http://localhost:8025`. Only one workspace with the PBX can run on a machine at a time.
+also works on Kubernetes; the other two run on Docker only. To combine with other presets,
+join the names with `+` and prefix the voice options: `--preset email+voice --set voice.sip_integration=on`.
 
 ## Step 2: Create the workspace
 
-**A. Linux, with the browser on the same machine:**
+**On your own machine** (Linux or Mac), with the browser or phone on the same network:
 
 ```bash
 houston up --version 8.8.1 --name voice-lab --preset voice --set sip_integration=on --set pbx=on \
-  --license voice.lic --port 4460 --wait
+  --set voip_domain=<this machine's IP> --license voice.lic --port 4460 --wait
 ```
 
-**B. A Mac, or a browser or phone on another device.** The audio needs this machine's network
-address, and the ports opened on it:
+`<this machine's IP>` is its address on your network, for example `192.168.1.20` (`ipconfig
+getifaddr en0` on a Mac, `hostname -I` on Linux). The call audio goes to that address, and
+houston opens the call ports on every address of the machine for it; Rocket.Chat's own port
+stays on `localhost`. Without it only a browser on the same Linux machine hears anything.
+
+**On a cloud machine** (EC2 or similar), with browsers and phones anywhere:
 
 ```bash
 houston up --version 8.8.1 --name voice-lab --preset voice --set sip_integration=on --set pbx=on \
-  --set voip_domain=$(ipconfig getifaddr en0) --bind 0.0.0.0 --license voice.lic --port 4460 --wait
+  --set voip_domain=<public IP> --domain <name pointing at it> --email <you@example.com> \
+  --license voice.lic --wait
 ```
 
-- On Linux, use `$(hostname -I | awk '{print $1}')` for the address. On a Mac,
-  `ipconfig getifaddr en0` should print something like `192.168.1.20`; if it prints nothing
-  (a cabled Mac), copy the address from System Settings → Network.
-- On a Mac with Apple Silicon, first tick **Use Rosetta for x86_64/amd64 emulation** in Docker
-  Desktop → **Settings → General**: Drachtio and FreeSWITCH exist only for Intel chips.
+Allow these inbound in the security group. TCP 80 and 443 must be open to everyone: Let's
+Encrypt proves the name on port 80. The rest can be limited to the addresses you test from:
+
+| For | Protocol and ports |
+|---|---|
+| the browser, and the certificate | TCP 80 and 443 |
+| browser audio to FreeSWITCH | UDP 20000 to 20046 (the `rtp_ports` range) |
+| a phone to the PBX | UDP and TCP 5060, and UDP 30000 to 30019 |
+
+In the steps below open `https://<name>` where they say `http://localhost:4460`, and take the
+lab down when you are done: the phone accounts' passwords are their numbers.
 
 If your licence is tied to a server address, add `--root-url https://<that address>` and still
 open `http://localhost:4460`: Rocket.Chat checks the licence against the root address.
 
 **In the GUI:** **Create a workspace** → **Docker** → tick **voice**, then **SIP integration**
-and **PBX**, and add the licence under **Enterprise license**. For B, fill **VoIP domain** with
-this machine's address and set **Bind host** to `0.0.0.0` under **More options**.
+and **PBX**; fill **VoIP domain** with the address and add the licence under **Enterprise
+license**. On a cloud machine also pick **HTTPS → Let's Encrypt** with the domain and your
+email.
 
 **What you should see**, just before the notes:
 
@@ -87,18 +90,7 @@ this machine's address and set **Bind host** to `0.0.0.0` under **More options**
 If it says `could not give voice-alice, voice-bob their extensions`, the licence is not active
 yet: apply it under **Administration → Subscription**, then run `houston ready --name voice-lab`.
 
-## Step 3: Check that everything is up
-
-| Check | Command | You should see |
-|---|---|---|
-| all five services run | `docker ps --format '{{.Names}}  {{.Status}}' \| grep voice-lab` | `rocketchat`, `mongodb`, `drachtio`, `freeswitch`, `pbx`, all `Up` |
-| Rocket.Chat is connected to Drachtio | `docker logs houston-voice-lab-drachtio-1 2>&1 \| grep "Added client"` | at least one line once the licence is active; none with it active: `houston restart --name voice-lab` |
-| the PBX knows FreeSWITCH | `docker exec houston-voice-lab-pbx-1 asterisk -rx "pjsip show identifies"` | `rocketchat/rocketchat` and a `Match:` line |
-
-After any restart (`houston restart`, Docker Desktop, a reboot), give it about 15 seconds: the
-PBX picks up FreeSWITCH's new address on its own.
-
-## Step 4: Open Rocket.Chat and sign in
+## Step 3: Open Rocket.Chat and sign in
 
 Open **`http://localhost:4460`**: the browser allows the microphone only on `localhost` or
 HTTPS, and on any other plain `http://` address Rocket.Chat shows "Application Error". Sign in
@@ -111,7 +103,7 @@ as both test users in two browser profiles (a normal and a private window), with
 
 The admin account is in `houston info --name voice-lab`.
 
-## Step 5: Make the test calls
+## Step 4: Make the test calls
 
 In order; each adds one piece.
 
@@ -130,10 +122,14 @@ If all eight work, Voice, the SIP integration and the PBX are working. Without t
 (`sip_integration=on` alone), FreeSWITCH can ring a user itself:
 `docker exec houston-voice-lab-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'`.
 
-## Step 6 (optional): Connect a real phone
+After a restart, give the PBX about 15 seconds. If dialling does nothing at all,
+`houston restart --name voice-lab` reconnects Rocket.Chat to Drachtio.
 
-Needs B in Step 2 and the phone on the same network. Install a softphone (Linphone is free on
-iOS, Android, macOS and Windows) and add a SIP account:
+## Step 5 (optional): Connect a real phone
+
+The phone is on the same network as your machine, or anywhere if houston runs on a cloud
+machine. Install a softphone (Linphone is free on iOS, Android, macOS and Windows) and add a
+SIP account:
 
 | Setting | Value |
 |---|---|
@@ -143,93 +139,60 @@ iOS, Android, macOS and Windows) and add a SIP account:
 | Publish presence | off |
 | Local SIP port, if the app runs on this machine | random, not 5060 |
 
-On the phone, dial `1002` (just the number): bob rings in Rocket.Chat. In Rocket.Chat, have
-alice dial `22001`: the phone rings, and you hear each other both ways.
+The account must show **Registered**; if it does not, UDP 5060 is closed from the phone's
+network. On the phone, dial `1002` (just the number): bob rings in Rocket.Chat. In Rocket.Chat,
+have alice dial `22001`: the phone rings, and you hear each other both ways. Then try `22101`
+(rings 10 seconds, answers with an echo) and `23000` (the ring group).
 
-## Step 7 (optional): Reproduce a PBX problem
+## Step 6 (optional): Look inside
 
-To see what a customer sees, for example desk phones that stop ringing too early:
-
-1. Rebuild the workspace so FreeSWITCH's dialplans become files you can edit. Repeat every
-   `--set` you used (one `--set` replaces all the recorded ones); the data is kept.
-
-   ```bash
-   houston up --version 8.8.1 --name voice-lab --preset voice --set sip_integration=on --set pbx=on \
-     --set freeswitch_dialplans=edit --license voice.lic --port 4460 --force --wait
-   ```
-
-2. In `~/.houston/repros/voice-lab/voice/freeswitch/public.xml`, add the line from the table
-   just before the line containing `bridge` in the `Local_Extension` block.
-3. Apply it: `docker exec houston-voice-lab-freeswitch-1 fs_cli -x reloadxml`. If your editor
-   replaces the file (vim, `sed -i`), use `docker restart houston-voice-lab-freeswitch-1` instead.
-4. Make the test call from the table. To undo, delete the file and run the same `up --force`.
-
-| Problem | Line to add before `bridge` | Then make | You should see |
-|---|---|---|---|
-| desk phones in a ring group stop ringing as soon as the call reaches Rocket.Chat | `<action application="answer"/>` | test 5 | the desk phone stops at once while bob still rings |
-| the caller hears no ringing tone | none: watch the call flow (Step 8) | test 3 | no `180 Ringing` before bob accepts |
-| the same, fixed by FreeSWITCH sending the tone | `<action application="ring_ready"/>` | test 3 | `180 Ringing` at once |
-
-## Step 8 (optional): Watch the call flow
-
-Every SIP message Drachtio, FreeSWITCH and the PBX exchange, as a ladder. Start this in a
-second terminal, make a call, select it and press Enter:
+**Watch the calls.** This shows every SIP message between Drachtio, FreeSWITCH and the PBX as a
+ladder. Start it in a second terminal, make a call, select it and press Enter:
 
 ```bash
 docker run --rm -it --net=container:houston-voice-lab-freeswitch-1 --cap-add NET_RAW --cap-add NET_ADMIN \
   docker.io/library/alpine:3.24.2 sh -c 'apk add -q --no-cache sngrep && sngrep port 5060 or port 5080'
 ```
 
-| Message | Meaning |
-|---|---|
-| `INVITE` / `100 Trying` | a call is being set up / received |
-| `180 Ringing` / `183` | the far side is ringing (Rocket.Chat 8.8.1 never sends one) |
-| `200 OK`, then `ACK` | answered |
-| `486 Busy Here` / `603 Decline` | busy / the user pressed Reject |
-| `480 Temporarily Unavailable` | nobody to ring: usually a user without an extension |
-| `BYE` | hung up |
+`INVITE` starts a call, `180 Ringing` means the far side rings, `200 OK` answered, `BYE` hung
+up, `486` busy, `603` declined, `480` nobody to ring (usually a user without an extension). To
+keep a capture, add `-v ~/.houston/repros/voice-lab/voice/captures:/work` to the command and run
+`sngrep -N -O /work/call.pcap port 5060 or port 5080` instead; open it with `sngrep -I call.pcap`
+or Wireshark.
 
-- **Text traces instead:** `docker exec houston-voice-lab-pbx-1 asterisk -rx "pjsip set logger on"`
-  (then `docker logs houston-voice-lab-pbx-1`), and
-  `docker exec houston-voice-lab-freeswitch-1 fs_cli -x "sofia profile external siptrace on"`.
-- **Saving a capture for a ticket:** add `-v ~/.houston/repros/voice-lab/voice/captures:/work`
-  to the command and run `sngrep -N -O /work/call.pcap port 5060 or port 5080` instead (Ctrl-C
-  stops it). Open it with `sngrep -I call.pcap` or Wireshark → Telephony → VoIP Calls.
+**Change what the phone system does.** The PBX's numbers, phone accounts and ring groups are
+plain files under `~/.houston/repros/voice-lab/voice/pbx/`: edit one and apply it with the
+command in [Files you can edit](#files-you-can-edit). FreeSWITCH's own dialplans become files
+too when you rebuild with `freeswitch_dialplans=edit` (repeat every other `--set`; the data is kept):
 
-## Step 9: Clean up
+```bash
+houston up --version 8.8.1 --name voice-lab --preset voice --set sip_integration=on --set pbx=on \
+  --set freeswitch_dialplans=edit --license voice.lic --port 4460 --force --wait
+```
+
+For example, add `<action application="ring_ready"/>` just before the `bridge` line of the
+`Local_Extension` block in `voice/freeswitch/public.xml`, then
+`docker exec houston-voice-lab-freeswitch-1 fs_cli -x reloadxml` (if your editor replaces the
+file, `docker restart houston-voice-lab-freeswitch-1` instead): callers now hear ringing at
+once, and the ladder shows `180 Ringing`. Delete the file and run the same `up --force` to undo.
+
+## Step 7: Clean up
 
 ```bash
 houston down --name voice-lab --volumes --yes
 ```
-
-## If something does not work
-
-| You see | Why, and what to do |
-|---|---|
-| no phone icon, no call button | the licence is missing, has no Voice add-on, or is tied to another address: check **Administration → Subscription**, use `--root-url` with the licensed address |
-| "Application Error — The application GUI just crashed" | the page is on plain `http://` away from localhost: open `http://localhost:4460` |
-| the test users cannot sign in ("TOTP required") | email two-factor is on: add `--preset email` and read the code in Mailpit, or turn it off |
-| tests 3–5, or calls from a real phone, fail at once | the test users have no extensions: `houston ready --name voice-lab` must print `SIP: voice-alice has extension 1001…` |
-| alice's calls to the PBX end after a second, just after a restart | the PBX has not picked up FreeSWITCH's new address: wait 15 seconds; if it persists, `docker exec houston-voice-lab-pbx-1 asterisk -rx "pjsip reload"` |
-| test 2 is answered but keeps "ringing", then ends after about 10 seconds | the audio cannot reach the browser: use B in Step 2. Through a tunnel or web proxy, calls ring but carry no audio |
-| calls to and from the PBX connect but are silent | `voip_domain` is set but the ports are open only on this machine: add `--bind 0.0.0.0` |
-| the phone app says "wrong username or password" although it registered | the call failed further on, usually missing extensions: fix them, and turn **Publish presence** off |
-| test 2 does nothing, and Step 3 shows no `Added client` | Rocket.Chat connects to Drachtio only when it starts, and lost it (Drachtio restarted, or SIP integration was switched off and on): `houston restart --name voice-lab` |
-| `preset 'voice' publishes port(s) …, already claimed by repro '…'` | another SIP workspace uses the ports: add `--set rtp_ports=21000-21046`. Only one PBX lab runs per machine |
-| `houston` says the preset or an option is unknown | an older houston: 2.1.4 or later has these names (2.1.3 has the preset, under `sip` and `fs_dialplan`); update it as the [README](../../README.md) says |
 
 ## Reference
 
 ### Options
 
 The same names in the GUI and on the command line, taken from Rocket.Chat's settings and
-rocketchat-compose. houston 2.1.3 spelled two of them `sip` and `fs_dialplan`; those still work
-in commands, workspace records and backups.
+rocketchat-compose.
 
 | `--set` | In the GUI | What it does | Default |
 |---|---|---|---|
 | `sip_integration=off\|on` | **SIP integration** | adds Drachtio and FreeSWITCH as rocketchat-compose runs them, turns on Rocket.Chat's **SIP integration enabled** setting, gives the test users extensions `1001` and `1002`. Docker only | `off` |
-| `voip_domain=<address>` | **VoIP domain** | `VOIP_DOMAIN`: the address browsers and phones send RTP audio to, this machine's IP or a name that points straight at it (not a tunnel). Use with `--bind 0.0.0.0` | `freeswitch` (a browser on the same Linux machine only) |
+| `voip_domain=<address>` | **VoIP domain** | `VOIP_DOMAIN`: the address browsers and phones send RTP audio to, this machine's IP or a name that points straight at it (not a tunnel). Any address but `localhost` opens the call ports on every address of the machine | `freeswitch` (a browser on the same Linux machine only) |
 | `rtp_ports=<start>-<end>` | **RTP ports** | the UDP ports for RTP audio (`VOIP_RTP_START_PORT` to `VOIP_RTP_END_PORT`), at most 200; a second SIP workspace needs its own range | `20000-20046` |
 | `ice_servers=<list>` | **ICE servers** | Rocket.Chat's **ICE servers** setting: comma-separated `[user:password@]stun:host:port`, `turn:` or `turns:`. houston runs no TURN server | Rocket.Chat's own (Google STUN) |
 | `pbx=off\|on` | **PBX** | adds the lab PBX (Asterisk), connected the way `compose.freeswitch.external.yml` connects external calls. Needs `sip_integration=on` | `off` |
@@ -258,8 +221,7 @@ not test 1, is the SIP path towards a user).
 In the workspace folder, `~/.houston/repros/<name>/` (or under `HOUSTON_HOME`). Edits are kept
 across `up --force`, stop/start, upgrade and backups (`restore --new` brings them back);
 `houston info` lists the files you changed; delete a file and run `up --force` for the original.
-To replay a customer's setup, paste their dialplan into the matching file, apply it, make the
-same call, and compare the call flow.
+To try a customer's setup, paste their dialplan into the matching file and apply it.
 
 | File | What it holds | Apply a change with |
 |---|---|---|
@@ -284,10 +246,8 @@ real phones ─SIP :5060─► pbx (Asterisk) ─┬─ desk phones 22101-22104
 
 - The ringing travels as SIP messages; the audio goes straight between the browser (or phone)
   and FreeSWITCH or the PBX, over UDP, to the address in `voip_domain`. A tunnel or web proxy
-  carries the ringing, never the audio. Calls between users go browser to browser and need none
-  of this.
-- By default everything is published on this machine only (`127.0.0.1`): the RTP ports, the
-  PBX's 5060 and 30000–30019, FreeSWITCH's 5080. `--bind 0.0.0.0` opens them on your network,
-  weak phone accounts included, and `up` warns you. On Docker Desktop (a Mac) the services'
-  own addresses cannot be reached from the Mac, hence B in Step 2 even for a browser on the Mac.
-- Limits: Docker only; one PBX lab per machine; on Apple Silicon two services run emulated.
+  carries the ringing, never the audio. Calls between users go browser to browser.
+- With `voip_domain` set, houston opens only the call ports on every address of the machine:
+  the RTP range, the PBX's 5060 and 30000–30019, weak phone accounts included. Rocket.Chat's
+  own port and FreeSWITCH's 5080 stay on `localhost` unless you pass `--bind`. Docker only;
+  one PBX lab per machine.

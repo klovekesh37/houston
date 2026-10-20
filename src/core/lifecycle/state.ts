@@ -193,6 +193,7 @@ export async function setState(
   name: string,
   action: unknown,
   emit: Emit = nullEmit,
+  { streamOutput = false } = {},
 ): Promise<Record<string, unknown>> {
   const target = await naming.resolveName(name);
   // Guarded here rather than in each front-end: the CLI's `stop`/`start`/`restart` and
@@ -211,6 +212,18 @@ export async function setState(
   if (!STATE_ACTIONS.includes(action)) {
     throw new ValidationError(`unknown action '${action}' (want start|stop|restart)`);
   }
+  // SAID BEFORE THE WAIT, on both runtimes: every service (or pod) closes cleanly first, and
+  // nothing was said until it had, so the GUI's job dialog sat empty and read as hung, on any
+  // workspace (12 s on a voice lab, FreeSWITCH 9 of them). On Docker a GUI job also gets
+  // docker's own lines below; the terminal keeps docker's output.
+  const phase = action === 'stop' ? 'teardown' : 'boot';
+  info(
+    emit,
+    action === 'stop'
+      ? `stopping '${target}': each service closes cleanly first, which can take several seconds`
+      : `${action === 'start' ? 'starting' : 'restarting'} '${target}'`,
+    { phase },
+  );
   if ((await topology.ofRepro(target)) === topology.KUBERNETES) {
     await setStateKubernetes(target, action, emit);
     return {
@@ -226,6 +239,9 @@ export async function setState(
     throw new DockerError(`\`docker compose restart\` failed for '${target}'${downedHint(target)}`);
   }
   const fn = action === 'start' ? engine.start : action === 'stop' ? engine.stop : engine.restart;
+  const echo = streamOutput
+    ? [(line: string): void => info(emit, line, { phase, data: { echo: 'docker' } })]
+    : [];
   // Locked like every other mutator. Stop/Restart are always-enabled GUI buttons, so they
   // were clickable straight through a create, backup or upgrade running on the same repro
   // -- and the GUI's pending map only blocks within ONE tab. The network repair is held
@@ -233,7 +249,7 @@ export async function setState(
   const rc = await reproLock(
     target,
     async () => {
-      const code = await fn(target);
+      const code = await fn(target, ...echo);
       if (code === 0) await reattachTheNetworkless(target, action, emit);
       return code;
     },

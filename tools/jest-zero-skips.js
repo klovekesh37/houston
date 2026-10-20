@@ -141,7 +141,8 @@ const ROOT = path.resolve(__dirname, '..');
 // The scenario card's guides: one per guided preset with its parameters, the composite order and
 // the combined note, the public-URL stripping, the scenario group's all-or-nothing rule, and the
 // blank lines a conditional part leaves dropped.
-const FLOOR = 4689;
+// The voice preset links its guide online.
+const FLOOR = 4701;
 
 /** Every authored construct that removes a test from a run or inverts what it asserts. */
 const SKIP_CONSTRUCTS = [

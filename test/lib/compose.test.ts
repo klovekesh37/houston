@@ -316,6 +316,16 @@ describe('binding', () => {
     expect(bound(['8000-8005'])).toEqual(['127.0.0.1::8000-8005']);
   });
 
+  it('keeps a port a preset opened to every address, unless a narrower bind was chosen', () => {
+    // Voice opens its call ports with an explicit 0.0.0.0 once voip_domain names an address.
+    // A loopback or wildcard bind leaves them open; `--bind 10.0.0.5` keeps them on 10.0.0.5.
+    const opened = ['0.0.0.0:20000-20046:20000-20046/udp'];
+    expect(bound(opened)).toEqual(opened);
+    expect(bound(opened, '0.0.0.0')).toEqual(opened);
+    expect(bound(opened, '10.0.0.5')).toEqual(['10.0.0.5:20000-20046:20000-20046/udp']);
+    expect(bound(['192.168.1.9:8025:8025'], '10.0.0.5')).toEqual(['192.168.1.9:8025:8025']);
+  });
+
   it('binds a UDP range, and a bare UDP port, rather than refusing them', () => {
     // A protocol suffix fell outside every recognised shape and was refused, so the voice
     // preset could not publish FreeSWITCH's RTP range the way Rocket.Chat's compose file does.

@@ -222,9 +222,10 @@ Rocket.Chat Voice calls. It needs Rocket.Chat 8.0.0 or later and a licence with 
 add-on: without `--license` the workspace boots with a warning and no call button.
 `--set sip_integration=on` (Docker only) adds Drachtio and FreeSWITCH wired to Rocket.Chat
 and gives the users Voice call extensions 1001 and 1002; dialling 123 reaches FreeSWITCH's echo
-test. For browsers on other machines add `--set voip_domain=<this machine's host or IP>
---bind 0.0.0.0` (they need UDP to it; through a tunnel a SIP call is answered but keeps ringing,
-with no audio). `--set pbx=on` (it needs `sip_integration=on`) adds a lab PBX (Asterisk) on
+test. For browsers on other machines add `--set voip_domain=<this machine's host or IP>`:
+houston then opens the call ports on every address (browsers need UDP to it; through a tunnel a
+SIP call is answered but keeps ringing, with no audio). `--set pbx=on` (it needs
+`sip_integration=on`) adds a lab PBX (Asterisk) on
 FreeSWITCH's external profile, with desk phones, ring groups and editable dialplans
 (`--set freeswitch_dialplans=edit`), for testing PBX integrations. The option names are the
 words Rocket.Chat's settings and rocketchat-compose use, and the GUI labels them the same;

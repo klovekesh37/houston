@@ -348,6 +348,23 @@
     </form>
   </dialog>
 
+  <!-- Take down or Delete, from the pane's two buttons: DELETE /api/repros/{name}. One dialog
+       replacing two browser confirm boxes whose second read Cancel as "keep the data". Delete
+       is enabled once the name is typed. -->
+  <dialog id="down-dialog">
+    <form id="down-form" method="dialog">
+      <h2 id="down-title">Take it down?</h2>
+      <p class="hint" id="down-what"></p>
+      <p class="hint" id="down-whose" hidden></p>
+      <label id="down-typed" hidden>Type <b id="down-name"></b> to delete it
+        <input id="down-input" autocomplete="off" spellcheck="false"></label>
+      <menu>
+        <button type="button" id="down-cancel" class="btn">Cancel</button>
+        <button type="button" id="down-go" class="btn">Take down</button>
+      </menu>
+    </form>
+  </dialog>
+
   <!-- Hand a workspace over: POST /api/repros/{name}/owner. Offered to whoever the server's
        ownership gate lets (the owner, an admin, or anyone under `gui.destroy_policy
        anyone`); its refusal is shown here rather than in a toast behind the dialog. An

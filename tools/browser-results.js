@@ -15,7 +15,7 @@
 // Re-recorded for a directory workspace's notes reading as points (the presets write one
 // string per point now), for a rail card whose long name and preset list stay inside it, and
 // for the scenario card reading each preset's guide behind tabs.
-const EXPECTED = 225;
+const EXPECTED = 226;
 
 module.exports = (results) => {
   const wanted = process.env.BROWSER_GATE_PROBE === 'count' ? EXPECTED + 1 : EXPECTED;

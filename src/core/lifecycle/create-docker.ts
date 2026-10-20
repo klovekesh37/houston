@@ -789,6 +789,29 @@ export function warnAboutTheBind(plan: CreatePlan): void {
         '. Only do this on a trusted network.',
       { phase: 'create' },
     );
+  } else {
+    // A PRESET'S OWN OPENING, on a loopback bind: voice publishes its call ports on every
+    // address once voip_domain names one, so phones and browsers elsewhere reach them. Said as
+    // a wide bind is, since nothing else at create said those ports left this machine.
+    const opened = Object.values(plan.pre?.services ?? {})
+      .flatMap((svc) => (Array.isArray(svc.ports) ? svc.ports.map(String) : []))
+      .filter((port) => port.startsWith('0.0.0.0:'))
+      .map((port) => {
+        const rest = port.slice('0.0.0.0:'.length);
+        const proto = rest.includes('/') ? rest.slice(rest.lastIndexOf('/')) : '';
+        return `${rest.split(':')[0] ?? ''}${proto}`;
+      });
+    if (opened.length > 0) {
+      warn(
+        plan.emit,
+        `voip_domain opens the call ports ${opened.join(', ')} on every interface` +
+          (plan.pre?.services.pbx !== undefined
+            ? " — and the PBX lab's softphone accounts, whose password is their number"
+            : '') +
+          `. Rocket.Chat itself stays on ${plan.bindHost}. Only do this on a trusted network.`,
+        { phase: 'create' },
+      );
+    }
   }
   // RC advertises the https URL (links, OAuth callbacks, CORS all derive from ROOT_URL);
   // `root` stays http so houston's own API calls need no CA.

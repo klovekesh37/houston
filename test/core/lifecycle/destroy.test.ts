@@ -250,6 +250,8 @@ describe('tearing a workspace down when its record will not go', () => {
 
     expect(await paths.exists('kub')).toBe(true);
     expect(seen.some((event) => event.message.includes('could not be removed'))).toBe(true);
+    // Said before the cluster is asked anything: the teardown takes up to a minute.
+    expect(seen[0]?.message).toBe("removing 'kub' from its cluster, which can take a minute");
     expect(config.loadConfig().default_repro).toBeUndefined();
     const routes = require('../../../src/core/edge/routes') as unknown as { deregister: jest.Mock };
     expect(routes.deregister).toHaveBeenCalledWith('kub');
@@ -576,6 +578,58 @@ describe('closing pooled edge connections before a Compose teardown', () => {
       expect(await paths.exists('bystander')).toBe(true);
     },
   );
+
+  it('says what it is doing before each slow step, so neither front-end reads as hung', async () => {
+    // A `down` emitted nothing until its final line: the GUI's job dialog stayed empty and the
+    // terminal silent through the whole stop and removal, which the owner read as a hang.
+    const { stop, down, destroy } = load();
+    await writeRecord('warmed', metadata({ name: 'warmed', project: 'houston-warmed' }));
+    const said: string[] = [];
+    stop.mockImplementationOnce(async () => {
+      said.push('<compose stop>');
+      return 0;
+    });
+    down.mockImplementationOnce(async () => {
+      said.push('<compose down>');
+      return 0;
+    });
+    await destroy.teardownCompose('warmed', true, (event) => void said.push(event.message));
+    expect(said).toEqual([
+      "stopping 'warmed': each service closes cleanly first, which can take several seconds",
+      '<compose stop>',
+      "removing 'warmed's containers and network, data volume and record",
+      '<compose down>',
+    ]);
+  });
+
+  it("streams docker's own lines into a GUI job, and leaves the terminal's calls as they were", async () => {
+    // The GUI shows only emitted events; docker's lines went to the server's stdout, so a voice
+    // lab's 9 s FreeSWITCH shutdown was one silent wait in the job dialog.
+    const { stop, down, destroy } = load();
+    await writeRecord('warmed', metadata({ name: 'warmed', project: 'houston-warmed' }));
+    stop.mockImplementationOnce((async (_name: string, onLine?: (line: string) => void) => {
+      onLine?.('Container houston-warmed-freeswitch-1 Stopping');
+      return 0;
+    }) as never);
+    const seen: { message: string; echo: unknown }[] = [];
+    await destroy.teardownCompose(
+      'warmed',
+      false,
+      (event) => void seen.push({ message: event.message, echo: event.data.echo }),
+      true,
+    );
+    expect(seen).toContainEqual({
+      message: 'Container houston-warmed-freeswitch-1 Stopping',
+      echo: 'docker',
+    });
+    expect(down).toHaveBeenCalledWith('warmed', { volumes: false, onLine: expect.any(Function) });
+    // The terminal: no line callback, so docker keeps drawing its own output there.
+    stop.mockClear();
+    await writeRecord('plain', metadata({ name: 'plain', project: 'houston-plain' }));
+    await destroy.teardownCompose('plain', false);
+    expect(stop).toHaveBeenCalledWith('plain');
+    expect(down).toHaveBeenLastCalledWith('plain', { volumes: false });
+  });
 
   it('keeps the endpoint, route, data and record when the graceful stop fails', async () => {
     const { state, down, detach, deregister, destroy } = load(1);

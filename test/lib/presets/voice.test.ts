@@ -35,6 +35,15 @@ describe('the voice preset', () => {
     expect(notes).toContain('Voice add-on');
   });
 
+  it('links the shipped guide where it is read online, as a place line', () => {
+    // The CLI prints the line; the GUI's card reads "Name: url" as a link row.
+    for (const params of [{}, { sip_integration: 'on', pbx: 'on' }]) {
+      expect(load('voice', params).notes).toContain(
+        'Voice guide (the test calls, the PBX, the call flow): https://github.com/klovekesh37/houston/blob/main/data/docs/voice.md',
+      );
+    }
+  });
+
   it('says it needs a licence in the part of its description the create dialog shows', () => {
     // The GUI's create dialog shows a description's first sentence (options.js firstSentence).
     const firstSentence = (d: string): string => (/^.*?[.!?](?=\s|$)/u.exec(d) ?? [d])[0];
@@ -128,10 +137,12 @@ describe('the voice preset', () => {
       RTP_START_PORT: '21000',
       RTP_END_PORT: '21010',
     });
-    expect(fs.ports).toEqual(['21000-21010:21000-21010/udp']);
+    // On every address: a VoIP domain is where browsers elsewhere send their audio.
+    expect(fs.ports).toEqual(['0.0.0.0:21000-21010:21000-21010/udp']);
     expect(preset.ports).toEqual(Array.from({ length: 11 }, (_, i) => 21000 + i));
     expect(
-      load('voice', { sip_integration: 'on', voip_domain: '203.0.113.7' }).services.freeswitch?.environment,
+      load('voice', { sip_integration: 'on', voip_domain: '203.0.113.7' }).services.freeswitch
+        ?.environment,
     ).toMatchObject({ EXTERNAL_ADDRESS_FQDN: '203.0.113.7' });
   });
 
@@ -149,10 +160,15 @@ describe('the voice preset', () => {
 
   it('writes ice_servers into the Ice Servers setting, with or without SIP', () => {
     const servers = 'stun:stun.example.com:3478,u:p@turn:turn.example.com:3478';
-    for (const params of [{ ice_servers: servers }, { sip_integration: 'on', ice_servers: servers }]) {
+    for (const params of [
+      { ice_servers: servers },
+      { sip_integration: 'on', ice_servers: servers },
+    ]) {
       expect(voiceSettings(params)).toMatchObject({ VoIP_TeamCollab_Ice_Servers: servers });
     }
-    expect(voiceSettings({ sip_integration: 'on' })).not.toHaveProperty('VoIP_TeamCollab_Ice_Servers');
+    expect(voiceSettings({ sip_integration: 'on' })).not.toHaveProperty(
+      'VoIP_TeamCollab_Ice_Servers',
+    );
   });
 
   it('gives the users extensions with sip_integration=on, and says how to try the SIP path', () => {
@@ -217,7 +233,10 @@ describe('the voice preset', () => {
       // The refusal reaches houston.log and the GUI's Activity: it must not carry the password.
       "--set ice_servers entry 'u:********@turn:turn.example.com:3478' is not [user:password@]stun:, turn: or turns:host:port",
     ],
-    [{ voip_domain: 'voip.example.com' }, '--set voip_domain has an effect only with sip_integration=on'],
+    [
+      { voip_domain: 'voip.example.com' },
+      '--set voip_domain has an effect only with sip_integration=on',
+    ],
     [{ rtp_ports: '21000-21010' }, '--set rtp_ports has an effect only with sip_integration=on'],
     [
       { ice_servers: 'stun.example.com:3478' },

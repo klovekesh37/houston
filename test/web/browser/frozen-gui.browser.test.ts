@@ -465,6 +465,10 @@ const CASES: readonly BrowserCase[] = [
   ],
   ['surfaces rail', 'a card with a long name and a long preset list stays inside its box'],
   ['surfaces rail', "a combined workspace's scenario card is a guide per preset behind tabs"],
+  [
+    'surfaces rail',
+    'take down keeps the data, delete asks for the name, and both say what they remove',
+  ],
 ];
 
 // Re-recorded when "a directory workspace's notes read as points, with its login on the place row"
@@ -472,14 +476,16 @@ const CASES: readonly BrowserCase[] = [
 // write one string per point, and the rail card's grid track may shrink below its text.
 // Re-recorded when "a combined workspace's scenario card is a guide per preset behind tabs"
 // joined: the scenario card reads each preset's guide instead of its prose.
+// Re-recorded when "take down keeps the data, delete asks for the name, and both say what they remove" joined: the pane's foot has Take down and Delete workspace, each
+// saying what it removes, behind one dialog instead of two browser confirm boxes.
 // Re-recorded when "the voice panel opens each phone option once the one it needs is on" and
 // "on kubernetes the voice panel offers no phone options and sends none" joined: voice's designed controls.
-const CASES_DIGEST = '199a46a81b24e4c810983e340ec956468f78c7ef1ce5340957a055c6228bdcc0';
+const CASES_DIGEST = '5d16dc43a8c3e4f307862065b45fe1fdaff022e3be16c9643f2379102846615e';
 const caseIds = CASES.map(([file, name]) => `${file}: ${name}`);
 const casesDigest = crypto.createHash('sha256').update(JSON.stringify(CASES)).digest('hex');
-if (CASES.length !== 191 || new Set(caseIds).size !== 191 || casesDigest !== CASES_DIGEST) {
+if (CASES.length !== 192 || new Set(caseIds).size !== 192 || casesDigest !== CASES_DIGEST) {
   throw new Error(
-    `browser behavior inventory changed: expected 191 unique cases at ${CASES_DIGEST}, ` +
+    `browser behavior inventory changed: expected 192 unique cases at ${CASES_DIGEST}, ` +
       `got ${String(CASES.length)} cases, ${String(new Set(caseIds).size)} unique, ${casesDigest}`,
   );
 }
@@ -5510,6 +5516,73 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     expect(box.meta).toBeLessThanOrEqual(box.edge);
     return;
   }
+  if (
+    name === 'take down keeps the data, delete asks for the name, and both say what they remove'
+  ) {
+    // One "Take this workspace down" behind two browser confirm boxes left stop, down and
+    // delete for the reader to tell apart, and the second box read Cancel as "keep the data".
+    // Now two buttons at the pane's foot, apart from Stop, each saying what it removes, behind
+    // one dialog; Delete is enabled once the name is typed.
+    let boxes = 0;
+    page.on('dialog', (dialog) => {
+      boxes += 1;
+      void dialog.dismiss();
+    });
+    await openWorkspace(page);
+    const foot = page.locator('#actpane .apdanger');
+    await foot.waitFor({ state: 'visible' });
+    expect(await foot.locator('button').allInnerTexts()).toEqual([
+      'Take down…',
+      'Delete workspace…',
+    ]);
+    expect(await foot.locator('p').allInnerTexts()).toEqual([
+      'Removes its containers and keeps its data. Bring up starts it again.',
+      'Deletes it with its data and record. This cannot be undone.',
+    ]);
+    expect(await page.locator('#detail .d-actions', { hasText: 'Take down' }).count()).toBe(0);
+    const finished = async (): Promise<void> => {
+      await page.waitForFunction(
+        () => document.querySelector('#job-title')?.textContent === 'Done',
+      );
+      await page.locator('#job-close').click();
+    };
+    // Take down: no name to type, and the data is kept.
+    await foot.getByRole('button', { name: 'Take down…' }).click();
+    await page.locator('#down-dialog[open]').waitFor({ state: 'visible' });
+    expect(await page.locator('#down-title').textContent()).toBe('Take t1234 down?');
+    expect(await page.locator('#down-what').textContent()).toContain(
+      'Its data and record are kept',
+    );
+    expect(await page.locator('#down-typed').isHidden()).toBe(true);
+    await page.locator('#down-go').click();
+    await finished();
+    expect(mockTeardown).toHaveBeenLastCalledWith(
+      't1234',
+      expect.objectContaining({ volumes: false, confirm: false }),
+    );
+    // Delete: refused until the name is typed exactly.
+    await foot.getByRole('button', { name: 'Delete workspace…' }).click();
+    await page.locator('#down-dialog[open]').waitFor({ state: 'visible' });
+    expect(await page.locator('#down-title').textContent()).toBe('Delete t1234?');
+    const go = page.locator('#down-go');
+    expect(await go.isDisabled()).toBe(true);
+    await page.locator('#down-input').fill('t123');
+    expect(await go.isDisabled()).toBe(true);
+    // Enter submits the form: a wrong name leaves the dialog open with nothing done, and the
+    // right one deletes, where the dialog used to close and do nothing at all.
+    await page.locator('#down-input').press('Enter');
+    expect(await page.locator('#down-dialog[open]').count()).toBe(1);
+    await page.locator('#down-input').fill('t1234');
+    expect(await go.isEnabled()).toBe(true);
+    await page.locator('#down-input').press('Enter');
+    await finished();
+    expect(mockTeardown).toHaveBeenLastCalledWith(
+      't1234',
+      expect.objectContaining({ volumes: true, confirm: true }),
+    );
+    expect(boxes).toBe(0);
+    return;
+  }
   if (name === "a combined workspace's scenario card is a guide per preset behind tabs") {
     // Seven presets' notes were one wall of paragraphs; the card now shows the places as
     // before, then one preset's guide at a time, the card's height the same for each.
@@ -6845,7 +6918,9 @@ describe('the frozen GUI against the in-process Fastify server', () => {
           name === 'a finished restore re-reads the workspace without a page error' ||
           name ===
             'every backup on the machine is listed and a deleted workspaces restores as new' ||
-          name === 'an upgraded workspace rolls back behind a red confirm and the panel follows') &&
+          name === 'an upgraded workspace rolls back behind a red confirm and the panel follows' ||
+          name ===
+            'take down keeps the data, delete asks for the name, and both say what they remove') &&
         request.method() === 'GET' &&
         new URL(request.url()).pathname.endsWith('/stream') &&
         new URL(request.url()).pathname.includes('/api/jobs/') &&

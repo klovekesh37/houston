@@ -494,36 +494,54 @@ async function doBringUp(name) {
     ctx.streamJob(job_id, `Bringing up ${name}`, ctx.renderCreateResult);
   } catch (e) { ctx.toast(e.message); }
 }
-async function doDown(name) {
-  // Two steps so Cancel can actually abort: the single confirm sent the DELETE
-  // on both branches, so a mis-click still tore the stack down.
-  if (!confirm(`Remove ${name}'s containers?\n\nOK to continue, Cancel to abort.`)) return;
-  // Everyone can act on everything -- that is deliberate, support engineers cover
-  // for each other. What they must not do is destroy a colleague's data without
-  // being told whose it is.
-  const owner = (ctx.ALL_REPROS.find((r) => r.name === name) || {}).owner
-              || (ctx.ALL_REPROS.find((r) => r.name === name) || {}).created_by || "";
-  // What follows from that is the ownership gate's, and the panel's read carries this
-  // viewer's answer. This used to send the reader to `houston chown`: a shell command a
-  // GUI user may not have, and one the gate refuses a member who is not the owner anyway.
+// Take down (`del` false: the containers go, the data stays) or Delete (`del` true: everything
+// goes), from the pane's two buttons. One dialog, replacing two browser confirm boxes whose
+// second read Cancel as "keep the data", so a reader could not tell which button kept what.
+// Delete asks for the name typed.
+function doDown(name, del = false) {
+  // Everyone can act on everything -- that is deliberate, support engineers cover for each
+  // other. What they must not do is destroy a colleague's data without being told whose it
+  // is. The pane is only drawn for a viewer the ownership gate lets change this workspace.
+  const row = ctx.ALL_REPROS.find((r) => r.name === name) || {};
+  const owner = row.owner || row.created_by || "";
   const d = ctx.dstate.detail && ctx.dstate.detail.name === name ? ctx.dstate.detail : {};
-  const whose = !owner || owner === ctx.ME ? ""
-    : d.may_destroy === false
-      ? `\n\nThis workspace belongs to ${owner}, not you, so the server will refuse to `
-        + `delete its data. ${owner} or an admin can hand it over to you with `
-        + "\"Hand over…\" in its panel."
-      : `\n\nThis workspace belongs to ${owner}, not you.`;
-  const vol = confirm(
-    `Also DELETE ${name}'s data volume and record?${whose}\n\n` +
-    `OK = delete everything (irreversible).\nCancel = keep the data.`);
-  // A job now. Measured at 48-61s on Kubernetes, where the teardown waits for the
-  // namespace and its PersistentVolumeClaims to actually go -- a wait worth watching
-  // rather than a button that looks hung for a minute.
-  try {
-    const { job_id } = await ctx.api(`/api/repros/${name}?volumes=${vol}&confirm=${vol}`,
-                                 { method: "DELETE" });
-    ctx.streamJob(job_id, `${vol ? "Destroying" : "Stopping"} ${name}`, () => ctx.loadRepros());
-  } catch (e) { ctx.toast(e.message); }
+  const kube = d.runtime === "kubernetes";
+  ctx.$("#down-title").textContent = del ? `Delete ${name}?` : `Take ${name} down?`;
+  ctx.$("#down-what").textContent = del
+    ? (d.state === "down" ? "Its data and record are deleted." : "It is deleted with its data and record.")
+      + " This cannot be undone."
+    : (kube ? "Its release is uninstalled. " : "Its containers are removed, and their logs with them. ")
+      + "Its data and record are kept, and it is listed as down: Bring up starts it again. "
+      + "To only pause it, use Stop.";
+  const whose = ctx.$("#down-whose");
+  whose.hidden = !owner || owner === ctx.ME;
+  whose.textContent = whose.hidden ? "" : `This workspace belongs to ${owner}, not you.`;
+  const typed = ctx.$("#down-typed"), input = ctx.$("#down-input"), go = ctx.$("#down-go");
+  typed.hidden = !del;
+  ctx.$("#down-name").textContent = name;
+  input.value = "";
+  go.textContent = del ? "Delete" : "Take down";
+  go.className = del ? "btn danger" : "btn";
+  go.disabled = del;
+  input.oninput = () => { go.disabled = input.value.trim() !== name; };
+  // Enter in the name submits the form, and a method=dialog form closed the dialog with nothing
+  // done: it presses Delete instead, once the name is right.
+  ctx.$("#down-form").onsubmit = (e) => { e.preventDefault(); if (!go.disabled) go.click(); };
+  ctx.$("#down-cancel").onclick = () => ctx.$("#down-dialog").close();
+  // A job now. Measured at 48-61s on Kubernetes, where the teardown waits for the namespace
+  // and its PersistentVolumeClaims to actually go -- a wait worth watching rather than a
+  // button that looks hung for a minute.
+  go.onclick = async () => {
+    if (del && input.value.trim() !== name) return;
+    ctx.$("#down-dialog").close();
+    try {
+      const { job_id } = await ctx.api(`/api/repros/${name}?volumes=${del}&confirm=${del}`,
+                                   { method: "DELETE" });
+      ctx.streamJob(job_id, `${del ? "Deleting" : "Taking down"} ${name}`, () => ctx.loadRepros());
+    } catch (e) { ctx.toast(e.message); }
+  };
+  ctx.$("#down-dialog").showModal();
+  if (del) input.focus();
 }
 // ---- seed dialog ------------------------------------------------------------
 let SEED_TARGET = null;

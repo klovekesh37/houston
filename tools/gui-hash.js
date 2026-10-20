@@ -5,7 +5,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const EXPECTED = '4fb1a05f1a715881c887fc77319d5a4b12a90908d67d2d4accce6e1edc789fda';
+const EXPECTED = '5f95af584f621dcd0473fdd3ecfab3929b6b1eccc0405f136c69cd9e790e4656';
+// Re-recorded for Enter in the Delete dialog's name field: it presses Delete once the name
+// is right, where the method=dialog form closed the dialog with nothing done.
+// Re-recorded for the pane's foot: Take down (the containers go, the data stays) and Delete
+// workspace (everything goes, once the name is typed), each saying what it removes, kept in
+// view as the pane scrolls, behind one dialog instead of two browser confirm boxes.
 // Re-recorded for the scenario card reading each preset's guide behind tabs: who to sign in
 // as, what to try, what to know, one preset at a time, the pane at the tallest guide's height.
 // Re-recorded for the rail card keeping a long name and preset list inside its box: its grid

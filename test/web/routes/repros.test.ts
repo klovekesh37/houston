@@ -574,6 +574,35 @@ describe('who may choose the image and the interface', () => {
     expect((await post('/api/repros', { version: 'pr-42617' })).statusCode).toBe(200);
   });
 
+  it('gates a VoIP domain that opens the call ports, as it gates bind', async () => {
+    // A VoIP domain opens voice's call ports on every address: where the workspace listens,
+    // the decision `bind` is gated for, so a member could open ports the bind gate closed.
+    config.updateConfig((cfg) => {
+      (cfg as Record<string, unknown>)[CREATE_POLICY_KEY] = 'admin';
+    });
+    await as('bob');
+    const voice = (voipDomain: string) => ({
+      version: '8.8.1',
+      preset: 'voice',
+      params: { sip_integration: 'on', voip_domain: voipDomain },
+    });
+    const refused = await post('/api/repros', voice('10.1.2.3'));
+    expect(refused.statusCode).toBe(400);
+    expect(String(refused.json().error)).toContain(
+      'voip_domain (it opens the call ports to the network) is limited to admins',
+    );
+    const composed = await post('/api/repros', {
+      version: '8.8.1',
+      presets: ['email', 'voice'],
+      params: { voice: { sip_integration: 'on', voip_domain: '10.1.2.3' } },
+    });
+    expect(composed.statusCode).toBe(400);
+    // A loopback VoIP domain opens nothing, and an admin may.
+    expect((await post('/api/repros', voice('127.0.0.1'))).statusCode).toBe(200);
+    cookie = await signIn('alice');
+    expect((await post('/api/repros', voice('10.1.2.3'))).statusCode).toBe(200);
+  });
+
   it('never included the host port, which guarded nothing', async () => {
     // 80 and 443 are refused for EVERYBODY by lifecycle's 1024-65535 check.
     await as('bob');

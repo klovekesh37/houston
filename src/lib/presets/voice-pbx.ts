@@ -82,11 +82,33 @@ export const PBX_KEPT: readonly string[] = [
   'voice/pbx/rtp.conf',
 ];
 
-export function pbxService(): Record<string, unknown> {
+export function pbxService(openCallPorts = false): Record<string, unknown> {
   const rtp = `${String(PBX_RTP[0])}-${String(PBX_RTP[1])}`;
-  const links = ['pjsip', 'extensions', 'rtp']
+  const links = ['extensions', 'rtp']
     .map((name) => `ln -sf /etc/asterisk/lab/${name}.conf /etc/asterisk/${name}.conf`)
     .join(' && ');
+  // Behind NAT (a cloud machine) voip_domain is an address the machine cannot reach from inside,
+  // and the transports handed it to FreeSWITCH next door: PBX calls carried no audio. local_net
+  // is the container's own subnet, read from the route table at start, so FreeSWITCH is given
+  // the container address and phones outside voip_domain. `[section](+)` appends to the
+  // transports the lab file defines; that file and pjsip.conf stay the person's to edit.
+  const subnet =
+    'python3 -c \'import socket,struct;r=[l.split() for l in open("/proc/net/route")][1:];' +
+    'print(next(socket.inet_ntoa(struct.pack("<L",int(f[1],16)))+"/"+socket.inet_ntoa(struct.pack("<L",int(f[7],16))) for f in r if f[1]!="00000000" and f[7]!="00000000"))\'';
+  // Appended only to the transports houston writes, and only while the person's pjsip.conf still
+  // has them: `[name](+)` on a section that does not exist fails the whole file, and a customer's
+  // pjsip.conf pasted in may drop the include or name its transports otherwise. Read at start, so
+  // after an edit that removes one, restart the PBX rather than `pjsip reload`.
+  const has = (t: string): string =>
+    `grep -qs '^\\[${t}\\]' /etc/asterisk/lab/pjsip.conf || ` +
+    `{ grep -qs '^#include *lab/transports.conf' /etc/asterisk/lab/pjsip.conf && ` +
+    `grep -qs '^\\[${t}\\]' /etc/asterisk/lab/transports.conf; }`;
+  const append = (t: string): string =>
+    `{ ! { ${has(t)}; } || printf '[${t}](+)\\nlocal_net=%s\\n' "$$n" >> /etc/asterisk/lab-local.conf; }`;
+  const pjsip =
+    `n=$$(${subnet}) && : > /etc/asterisk/lab-local.conf && ` +
+    `${append('transport-udp')} && ${append('transport-tcp')} && ` +
+    "printf '#include lab/pjsip.conf\\n#include lab-local.conf\\n' > /etc/asterisk/pjsip.conf";
   // The trunk identifies FreeSWITCH by the address Asterisk looks up when it loads. The wait
   // covers a daemon restart (a reboot), which starts containers without compose's order; the
   // watcher covers a restart that gives FreeSWITCH another address (measured on Docker
@@ -105,18 +127,33 @@ export function pbxService(): Record<string, unknown> {
     command: [
       'sh',
       '-c',
-      `${wait} && ${links} && { ${watch} & exec /usr/sbin/asterisk -f -vvv -n -U asterisk -p; }`,
+      `${wait} && ${links} && ${pjsip} && { ${watch} & exec /usr/sbin/asterisk -f -vvv -n -U asterisk -p; }`,
     ],
+    // On every address once voip_domain names one (`opensCallPorts`), else on the bind.
     ports: [
       `${String(PBX_SIP_PORT)}:${String(PBX_SIP_PORT)}/udp`,
       `${String(PBX_SIP_PORT)}:${String(PBX_SIP_PORT)}/tcp`,
       `${rtp}:${rtp}/udp`,
-    ],
+    ].map((port) => (openCallPorts ? `0.0.0.0:${port}` : port)),
   };
 }
 
 /** Unset `voip_domain` is FreeSWITCH's own container name, as `voice.ts` treats it. */
 const advertises = (voipDomain: string): boolean => voipDomain !== 'freeswitch';
+
+/**
+ * Whether the call ports open on every address. A VoIP domain other than the default and a
+ * loopback name is where browsers and phones elsewhere send to, and a port left on 127.0.0.1
+ * answers none of them: a phone on the same Wi-Fi could not register, and a cloud lab had no
+ * PBX audio, until someone remembered --bind 0.0.0.0. Only the call ports (the RTP range, the
+ * PBX's 5060 and its audio range): Rocket.Chat's web port and every other port stay on the bind.
+ */
+export const opensCallPorts = (voipDomain: string): boolean =>
+  advertises(voipDomain) && !LOOPBACK_NAME.test(voipDomain);
+
+/** 127.0.0.0/8 and the loopback host names: an address no other machine can send to. */
+const LOOPBACK_NAME =
+  /^(?:127\.[0-9.]*|localhost|localhost\.localdomain|ip6-localhost|ip6-loopback|.*\.localhost)$/iu;
 
 function transports(voipDomain: string): string {
   const external = advertises(voipDomain)
@@ -269,8 +306,8 @@ export function pbxNotes(voipDomain: string): string[] {
     `An outside caller (shows as ${OUTSIDE_CALLER}): docker exec houston-<name>-pbx-1 asterisk -rx "channel originate Local/23000@from-outside application Echo" (Local/1002@from-outside rings voice-bob alone).`,
     'Edit the lab in ~/.houston/repros/<name>/voice/ (under HOUSTON_HOME when set): pbx/extensions.conf, pbx/pjsip.conf and pbx/rtp.conf, kept across up --force, stop/start, upgrade and backups (restore --new brings them back; delete one and run up --force for the default); apply with docker exec houston-<name>-pbx-1 asterisk -rx "dialplan reload" (or "pjsip reload"; rtp.conf needs docker restart houston-<name>-pbx-1). With freeswitch_dialplans=edit, freeswitch/public.xml and drachtio.xml too: docker exec houston-<name>-freeswitch-1 fs_cli -x reloadxml (after an editor that replaces the file, such as vim or sed -i: docker restart houston-<name>-freeswitch-1).',
     `The call flow (ladder): docker run --rm -it --net=container:houston-<name>-freeswitch-1 --cap-add NET_RAW --cap-add NET_ADMIN docker.io/library/alpine:3.24.2 sh -c 'apk add -q --no-cache sngrep && sngrep port 5060 or port 5080'. Text traces: asterisk -rx "pjsip set logger on" in the pbx, fs_cli -x "sofia profile external siptrace on" in freeswitch.`,
-    advertises(voipDomain)
-      ? `Softphones elsewhere reach the PBX at ${voipDomain}:5060. FreeSWITCH advertises ${voipDomain} to the PBX as well, so the workspace must be bound to cover it (--bind 0.0.0.0 or that IP) or PBX calls have no audio.`
-      : 'Softphones on this machine only (127.0.0.1:5060 on a loopback bind); for softphones elsewhere set voip_domain and --bind wider.',
+    opensCallPorts(voipDomain)
+      ? `Softphones elsewhere reach the PBX at ${voipDomain}:5060 over UDP. houston opens 5060 and the PBX's audio ports 30000-30019 on every address of this machine, so the lab phone accounts (password = number) answer anyone on your network: take the lab down when you are done.`
+      : "Softphones on this machine only (5060 on this machine's own address); for softphones elsewhere set voip_domain to this machine's address.",
   ];
 }

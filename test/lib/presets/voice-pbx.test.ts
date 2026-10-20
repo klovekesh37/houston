@@ -1,3 +1,4 @@
+import { bindPorts, type ComposeDoc } from '../../../src/lib/compose';
 import { load, loadMany, resolve } from '../../../src/lib/presets/index';
 import { type Preset } from '../../../src/lib/presets/types';
 
@@ -62,7 +63,10 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
 
   it.each([
     [{ pbx: 'on' }, '--set pbx=on needs sip_integration=on'],
-    [{ sip_integration: 'on', freeswitch_dialplans: 'edit' }, '--set freeswitch_dialplans=edit needs pbx=on'],
+    [
+      { sip_integration: 'on', freeswitch_dialplans: 'edit' },
+      '--set freeswitch_dialplans=edit needs pbx=on',
+    ],
     [{ sip_integration: 'on', pbx: 'maybe' }, "--set pbx='maybe' expects one of: off, on"],
   ])('refuses %j', (params, message) => {
     expect(() => load('voice', params)).toThrow(message);
@@ -75,7 +79,11 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
   });
 
   it('routes voice.pbx in a composed workspace', () => {
-    const composed = loadMany(['email', 'voice'], { voice: { sip_integration: 'on', pbx: 'on' } }, 'docker');
+    const composed = loadMany(
+      ['email', 'voice'],
+      { voice: { sip_integration: 'on', pbx: 'on' } },
+      'docker',
+    );
     expect((composed.services.freeswitch as Service).environment.ACCEPT_EXTERNAL_CALLS).toBe(
       'true',
     );
@@ -122,6 +130,36 @@ describe('the voice PBX lab: the Asterisk phone system', () => {
     );
     // In the background, started before Asterisk takes over the container's main process.
     expect(command).toMatch(/&& \{ \(last=.*\) & exec \/usr\/sbin\/asterisk /u);
+  });
+
+  it('gives FreeSWITCH its container address: local_net from the route table, at start', () => {
+    // Measured on a lane behind NAT, as a cloud machine is: with voip_domain the public IP the
+    // transports handed that address to FreeSWITCH next door, and the machine cannot reach its
+    // own public address from inside, so PBX calls carried no audio (0 RTP packets either way;
+    // 359 each way once local_net named the container's subnet).
+    const command = String(
+      ((lab().services.pbx as Record<string, unknown>).command as string[])[2],
+    );
+    expect(command).toContain('open("/proc/net/route")');
+    // Only to the transports the person's pjsip.conf still has: `[name](+)` on a missing
+    // section fails the whole file, so a pasted customer pjsip.conf left the PBX with no SIP.
+    for (const t of ['transport-udp', 'transport-tcp']) {
+      expect(command).toContain(
+        `{ ! { grep -qs '^\\[${t}\\]' /etc/asterisk/lab/pjsip.conf || ` +
+          `{ grep -qs '^#include *lab/transports.conf' /etc/asterisk/lab/pjsip.conf && ` +
+          `grep -qs '^\\[${t}\\]' /etc/asterisk/lab/transports.conf; }; } || ` +
+          `printf '[${t}](+)\\nlocal_net=%s\\n' "$$n" >> /etc/asterisk/lab-local.conf; }`,
+      );
+    }
+    // The person's pjsip.conf is included, not replaced: edits and `pjsip reload` still apply.
+    expect(command).toContain(
+      "printf '#include lab/pjsip.conf\\n#include lab-local.conf\\n' > /etc/asterisk/pjsip.conf",
+    );
+    expect(command).not.toContain('ln -sf /etc/asterisk/lab/pjsip.conf');
+    // Before Asterisk starts, after the symlinks.
+    expect(command).toMatch(
+      /rtp\.conf && n=\$\$\(python3 .*: > \/etc\/asterisk\/lab-local\.conf && .* > \/etc\/asterisk\/pjsip\.conf && \{ /u,
+    );
   });
 
   it('claims the PBX ports beside the RTP range, so a second lab is refused', () => {
@@ -171,7 +209,61 @@ describe('the voice PBX lab: the Asterisk phone system', () => {
     expect(file(lab(), 'voice/captures/README.txt')).not.toBe('');
   });
 
-  it('notes the numbers, the outside caller, reloads, the ladder and the bind', () => {
+  it('opens only the call ports on every address once voip_domain names one', () => {
+    // A VoIP domain is where browsers and phones elsewhere send to. Left on 127.0.0.1, the call
+    // ports answered none of them: a phone on the same Wi-Fi could not register, and a cloud lab
+    // had no PBX audio, until someone remembered --bind 0.0.0.0. Rocket.Chat's own port and
+    // FreeSWITCH's 5080 stay on the bind; the PBX reaches 5080 by name.
+    const wired = (voipDomain?: string, bind = '127.0.0.1'): ComposeDoc => {
+      const pre = lab(voipDomain === undefined ? {} : { voip_domain: voipDomain });
+      const ports = (name: string): unknown[] => [
+        ...((pre.services[name] as { ports: unknown[] }).ports as unknown[]),
+      ];
+      const doc = {
+        services: {
+          rocketchat: { ports: ['4460:3000'] },
+          freeswitch: { ports: ports('freeswitch') },
+          pbx: { ports: ports('pbx') },
+        },
+      } as unknown as ComposeDoc;
+      bindPorts(doc, bind);
+      return doc;
+    };
+    expect(wired('192.168.1.20').services).toEqual({
+      rocketchat: { ports: ['127.0.0.1:4460:3000'] },
+      freeswitch: {
+        ports: ['0.0.0.0:20000-20046:20000-20046/udp', '127.0.0.1:5080:5080/udp'],
+      },
+      pbx: {
+        ports: [
+          '0.0.0.0:5060:5060/udp',
+          '0.0.0.0:5060:5060/tcp',
+          '0.0.0.0:30000-30019:30000-30019/udp',
+        ],
+      },
+    });
+    // A bind chosen on purpose wins: the call ports follow it rather than every address.
+    const narrow = wired('192.168.1.20', '10.0.0.5').services;
+    expect((narrow.pbx as { ports: string[] }).ports[0]).toBe('10.0.0.5:5060:5060/udp');
+    // The default and every loopback spelling are this machine only: everything on the bind.
+    for (const voipDomain of [
+      undefined,
+      '127.0.0.1',
+      '127.0.0.2',
+      'localhost',
+      'LOCALHOST',
+      'localhost.localdomain',
+      'ip6-localhost',
+      'lab.localhost',
+    ]) {
+      const flat = Object.values(wired(voipDomain).services).flatMap(
+        (svc) => (svc as { ports: string[] }).ports,
+      );
+      expect(flat.every((port) => port.startsWith('127.0.0.1:'))).toBe(true);
+    }
+  });
+
+  it('notes the numbers, the outside caller, reloads, the ladder and the open ports', () => {
     const notes = lab({ voip_domain: '172.16.0.2' }).notes.join('\n');
     for (const text of [
       '22101 rings 10 s',
@@ -179,7 +271,8 @@ describe('the voice PBX lab: the Asterisk phone system', () => {
       'dialplan reload',
       'alpine:3.24.2',
       'sngrep port 5060 or port 5080',
-      '--bind 0.0.0.0 or that IP',
+      'opens 5060 and the PBX',
+      'password = number',
       // The three kept files, and what brings them back: the note once named two of them.
       'pbx/extensions.conf, pbx/pjsip.conf and pbx/rtp.conf',
       'restore --new brings them back',

@@ -506,15 +506,24 @@ function renderActionPane(d, busyLabel) {
     pane.append(ctx.el("p", { class: "apnote" },
       `Most of these need the workspace running. It is ${d.state === "?" ? "unreachable" : d.state}.`));
   }
-  // Pinned to the bottom, not trailing the last group: it is not the eleventh
-  // item on a menu, it is the thing you have to travel to.
+  // Pinned to the bottom, not trailing the last group, and apart from Stop: it is not the
+  // eleventh item on a menu, it is the thing you have to travel to. TWO buttons, each saying
+  // what it removes: one "Take this workspace down" behind two confirm boxes left "stop",
+  // "down" and "delete" for the reader to tell apart. A workspace already down has only the
+  // delete left.
   const danger = ctx.el("div", { class: "apdanger" });
-  const btn = ctx.el("button", { onclick: () => ctx.doDown(d.name) }, "Take this workspace down");
-  if (busyLabel) btn.disabled = true;
-  danger.append(btn, ctx.el("p", {},
-    (kube ? "Uninstalls its release and stops the port-forward. "
-          : "Removes its containers. ")
-    + "You are asked separately before any data is deleted."));
+  if (d.state !== "down") {
+    const down = ctx.el("button", { class: "keep", onclick: () => ctx.doDown(d.name) }, "Take down…");
+    if (busyLabel) down.disabled = true;
+    danger.append(down, ctx.el("p", {},
+      (kube ? "Uninstalls its release and keeps its data. " : "Removes its containers and keeps its data. ")
+      + "Bring up starts it again."));
+  }
+  const del = ctx.el("button", { onclick: () => ctx.doDown(d.name, true) }, "Delete workspace…");
+  if (busyLabel) del.disabled = true;
+  danger.append(del, ctx.el("p", {},
+    (d.state === "down" ? "Deletes its data and record. " : "Deletes it with its data and record. ")
+    + "This cannot be undone."));
   pane.append(danger);
 }
 

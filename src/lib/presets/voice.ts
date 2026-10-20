@@ -47,6 +47,7 @@ import {
   FS_DIALPLANS,
   PBX_KEPT,
   PBX_PORTS,
+  opensCallPorts,
   externalEnv,
   fsDialplanFiles,
   pbxFiles,
@@ -65,6 +66,9 @@ export const VOICE_TEST_USERS: Readonly<Record<string, string>> = Object.freeze(
 // needs an older FreeSWITCH build.
 const DRACHTIO_IMAGE = 'docker.io/drachtio/drachtio-server:latest';
 const FREESWITCH_IMAGE = 'docker.io/rocketchat/freeswitch:latest';
+/** The shipped guide, where it is read online: the eight test calls, the PBX, the call flow. */
+export const VOICE_GUIDE_URL =
+  'https://github.com/klovekesh37/houston/blob/main/data/docs/voice.md';
 const DRACHTIO_PORT = 9022;
 const DRACHTIO_SECRET = 'houston';
 const SIP_PORT = 5060;
@@ -96,7 +100,7 @@ const PARAMS_HELP: Readonly<Record<string, string>> = Object.freeze({
   sip_integration:
     'off|on (default off); SIP integration: Drachtio and FreeSWITCH as rocketchat-compose runs them, SIP integration enabled in Rocket.Chat, Voice call extensions 1001 and 1002 for the test users. Docker only',
   voip_domain:
-    'VOIP_DOMAIN: the hostname or IPv4 address browsers and phones send RTP audio to (default freeswitch, this machine only; sip_integration=on)',
+    'VOIP_DOMAIN: the hostname or IPv4 address browsers and phones send RTP audio to; any address but loopback opens the call ports on every address of this machine (default freeswitch, this machine only; sip_integration=on)',
   rtp_ports:
     'the published UDP RTP range, start-end, at most 200 ports (VOIP_RTP_START_PORT-VOIP_RTP_END_PORT; default 20000-20046; sip_integration=on)',
   ice_servers:
@@ -193,8 +197,13 @@ function sipServices(intent: Intent): Record<string, Record<string, unknown>> {
         ...(intent.pbx ? externalEnv() : {}),
       },
       expose: [`${String(SIP_PORT)}/udp`, ...(intent.pbx ? [`${external}/udp`] : [])],
-      // Host = container: FreeSWITCH names its own ports in what it tells the browser.
-      ports: [`${range}:${range}/udp`, ...(intent.pbx ? [`${external}:${external}/udp`] : [])],
+      // Host = container: FreeSWITCH names its own ports in what it tells the browser. The RTP
+      // range on every address once voip_domain names one (`opensCallPorts`); 5080 stays on the
+      // bind, since the PBX reaches it by name.
+      ports: [
+        `${opensCallPorts(intent.voipDomain) ? '0.0.0.0:' : ''}${range}:${range}/udp`,
+        ...(intent.pbx ? [`${external}:${external}/udp`] : []),
+      ],
       ...(intent.fsDialplan === 'edit' ? { volumes: [...FS_DIALPLAN_MOUNTS] } : {}),
     },
   };
@@ -226,14 +235,16 @@ function voiceGuide(intent: Intent): PresetGuide {
       'On a plain-HTTP address other than localhost the browser withholds the microphone, and Rocket.Chat 8.8.1 shows "Application Error".',
       intent.sip
         ? intent.voipDomain === 'freeswitch'
-          ? "SIP audio reaches a browser on this machine only; for other machines set voip_domain to this machine's address and --bind 0.0.0.0."
-          : `FreeSWITCH advertises ${intent.voipDomain}; browsers must reach it and the RTP ports over UDP.`
+          ? "SIP audio reaches a browser on this machine only; for other machines set voip_domain to this machine's address."
+          : opensCallPorts(intent.voipDomain)
+            ? `FreeSWITCH advertises ${intent.voipDomain}; houston opens the RTP ports on every address of this machine, so browsers elsewhere reach it over UDP.`
+            : `FreeSWITCH advertises ${intent.voipDomain}; only a browser on this machine reaches it.`
         : '',
       intent.pbx
         ? 'PBX numbers: 22101 rings 10 s then answers, 22102 never, 22103 busy, 22104 at once; ring groups 23000 and 23001; 5550000 echo, 5550001 rings forever, 5550002 busy; softphone accounts 22001 to 22004 (password = number).'
         : '',
       intent.pbx
-        ? 'The lab files are in the workspace folder under voice/; the Voice guide has the eight test calls, the call flow and the editable dialplans.'
+        ? 'The lab files are in the workspace folder under voice/; the Voice guide, linked above, has the eight test calls, the call flow and the editable dialplans.'
         : '',
     ],
   });
@@ -267,6 +278,8 @@ function adapter(intent: Intent): Preset {
       `Voice test users: ${users}, each with its username as its password. Sign in as both in separate browser profiles, open a direct message between them, and press the call button.`,
       'Voice needs a licence with the Voice add-on (teams-voip); without one Rocket.Chat shows no call button. Pass --license when creating the workspace, or apply one later in Administration → Subscription.',
       'Open Rocket.Chat on localhost or over HTTPS (--https or --domain). On a plain-HTTP address elsewhere the browser withholds the microphone, and Rocket.Chat 8.8.1 shows "Application Error" for the whole page.',
+      // A place line: the CLI prints it, the GUI's card makes it a link row.
+      `Voice guide (the test calls, the PBX, the call flow): ${VOICE_GUIDE_URL}`,
     ],
   };
   if (!intent.sip) return preset;
@@ -281,7 +294,10 @@ function adapter(intent: Intent): Preset {
       OVERWRITE_SETTING_VoIP_TeamCollab_SIP_Server_Host: 'freeswitch',
       OVERWRITE_SETTING_VoIP_TeamCollab_SIP_Server_Port: String(SIP_PORT),
     },
-    services: { ...sipServices(intent), ...(intent.pbx ? { pbx: pbxService() } : {}) },
+    services: {
+      ...sipServices(intent),
+      ...(intent.pbx ? { pbx: pbxService(opensCallPorts(intent.voipDomain)) } : {}),
+    },
     // Rocket.Chat needs only the SIP stack; the PBX starts after FreeSWITCH (its depends_on).
     dependsOn: ['drachtio', 'freeswitch'],
     ports: [
@@ -301,8 +317,10 @@ function adapter(intent: Intent): Preset {
       'SIP: once Voice is licensed, voice-alice gets extension 1001 and voice-bob 1002 (after a licence applied later, houston ready --name <name> sets them). Dial 123 for FreeSWITCH’s echo test (you hear yourself): Rocket.Chat → Drachtio → FreeSWITCH. Dialling 1002 rings voice-bob directly, as Rocket.Chat calls its own users itself.',
       "To ring voice-bob from the SIP side, as a PBX would: docker exec houston-<name>-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'",
       intent.voipDomain === 'freeswitch'
-        ? "SIP audio reaches a browser on this machine only (FreeSWITCH advertises its container name). For browsers on other machines, as Rocket.Chat's docs set it up: --set voip_domain=<this machine's hostname or IP>, --bind 0.0.0.0 (or that IP), and the RTP range open to them over UDP."
-        : `FreeSWITCH advertises ${intent.voipDomain} and publishes UDP ${String(intent.rtp[0])}-${String(intent.rtp[1])} on the bind address: browsers must reach both (bind wider than loopback). Calls between users are not affected: their audio goes browser to browser.`,
+        ? "SIP audio reaches a browser on this machine only (FreeSWITCH advertises its container name). For browsers on other machines, as Rocket.Chat's docs set it up: --set voip_domain=<this machine's hostname or IP>; houston then opens the call ports on every address of this machine."
+        : opensCallPorts(intent.voipDomain)
+          ? `FreeSWITCH advertises ${intent.voipDomain}, and houston opens UDP ${String(intent.rtp[0])}-${String(intent.rtp[1])} on every address of this machine (only the call ports; Rocket.Chat's own port stays on the bind). Calls between users are not affected: their audio goes browser to browser.`
+          : `FreeSWITCH advertises ${intent.voipDomain}: only a browser on this machine reaches UDP ${String(intent.rtp[0])}-${String(intent.rtp[1])}. Calls between users are not affected: their audio goes browser to browser.`,
       ...(intent.pbx ? pbxNotes(intent.voipDomain) : []),
     ],
   };

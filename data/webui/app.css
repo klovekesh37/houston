@@ -178,6 +178,8 @@ input:focus, select:focus, textarea:focus {
 /* Except where the destroying IS the moment: the rollback's confirm replaces the database,
    so its button is red at rest, beside the red banner saying what is lost. */
 #rollback-dialog .btn.danger { color: var(--red); border-color: var(--red); }
+/* And Delete's, once the name is typed: red at rest, as rollback's is. */
+#down-dialog .btn.danger:not(:disabled) { color: var(--red); border-color: var(--red); }
 .btn.small { padding: .3rem .6rem; font-size: .78rem; }
 /* `docker compose stop|start|restart|down` run synchronously for seconds with no
    progress to stream, so the button itself carries the feedback: a spinner and
@@ -456,12 +458,19 @@ input:focus, select:focus, textarea:focus {
 .aplist button:disabled:hover { background: none; color: var(--dim); }
 .aplist button:disabled:hover::before { background: var(--line2); }
 .apnote { padding: .6rem .95rem 0; font-size: .7rem; line-height: 1.5; color: var(--dim); }
-.apdanger { margin-top: auto; padding: .8rem .95rem 0; border-top: 1px solid var(--line); }
+/* Kept in view while the pane scrolls on its own (wider than 900px); below that the pane
+   flows with the page and the block stays where it is, clear of the status bar. */
+.apdanger { margin-top: auto; padding: .8rem .95rem .1rem; border-top: 1px solid var(--line);
+  position: sticky; bottom: 0; background: var(--panel); }
 .apdanger button { display: flex; align-items: center; justify-content: center; width: 100%;
   height: 30px; border: 1px solid var(--line2); border-radius: var(--r-sm); background: none;
   font: inherit; font-size: .74rem; font-weight: 600; color: var(--red); cursor: pointer; }
 .apdanger button:hover { background: rgba(217,45,32,.08); border-color: var(--red); }
-.apdanger p { margin: .5rem 0 0; font-size: .66rem; line-height: 1.5; color: var(--dim); }
+.apdanger p { margin: .4rem 0 .75rem; font-size: .66rem; line-height: 1.5; color: var(--dim); }
+/* Take down keeps the data: not red, which means about to destroy something. */
+.apdanger button.keep { color: var(--ink); }
+.apdanger button.keep:hover { background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); }
 
 /* The stage is GROUND, not a surface.
    It was `--panel`, and so is every card standing on it — which made a card an
@@ -961,6 +970,7 @@ button.jobrow:hover { background: var(--panel2); }
   body.shell { height: auto; min-height: 100vh; overflow: visible; }
   .stage { overflow: visible; }
   .actpane { max-height: none; }
+  .apdanger { position: static; }
   .forks { grid-template-columns: 1fr; }
   .statusbar { flex-wrap: wrap; gap: .5rem 1rem; }
   .grafana-embed { height: 240px; }

@@ -66,9 +66,16 @@ export async function stream(
  * for two seconds after a Stop would be a cache the user can notice, which is worse
  * than the process spawns the memo saves.
  */
-async function mutating(name: string, args: readonly string[]): Promise<number | null> {
+async function mutating(
+  name: string,
+  args: readonly string[],
+  onLine?: (line: string) => void,
+): Promise<number | null> {
   try {
-    return (await compose(name, args)).exitCode;
+    // Streamed when a GUI job asks: docker's own lines are the only progress it can show.
+    return onLine === undefined
+      ? (await compose(name, args)).exitCode
+      : await stream(name, args, onLine);
   } finally {
     invalidateQueries();
   }
@@ -150,7 +157,10 @@ async function allContainerIds(name: string, services: readonly string[]): Promi
     .filter((line) => line !== '');
 }
 
-export async function down(name: string, { volumes = false } = {}): Promise<number | null> {
+export async function down(
+  name: string,
+  { volumes = false, onLine }: { volumes?: boolean; onLine?: (line: string) => void } = {},
+): Promise<number | null> {
   const args = ['down', '--remove-orphans'];
   if (volumes) args.push('-v');
   const anonymous = await anonymousVolumes(name, []);
@@ -158,10 +168,10 @@ export async function down(name: string, { volumes = false } = {}): Promise<numb
   // leaves behind; the next one gets fresh ones. `rm -v` removes only those, never the
   // named data volume, so a down that keeps the data still leaves nothing else behind.
   if (!volumes) {
-    const removed = await mutating(name, ['rm', '-s', '-f', '-v']);
+    const removed = await mutating(name, ['rm', '-s', '-f', '-v'], onLine);
     if (removed !== 0) return removed;
   }
-  const rc = await mutating(name, args);
+  const rc = await mutating(name, args, onLine);
   if (rc === 0) await removeAnonymous(anonymous);
   return rc;
 }
@@ -210,16 +220,19 @@ async function removeAnonymous(volumes: readonly string[]): Promise<void> {
   }
 }
 
-export async function start(name: string): Promise<number | null> {
-  return await recreatedIfStale(name, await mutating(name, ['start']));
+export async function start(name: string, onLine?: (line: string) => void): Promise<number | null> {
+  return await recreatedIfStale(name, await mutating(name, ['start'], onLine));
 }
 
-export async function stop(name: string): Promise<number | null> {
-  return await mutating(name, ['stop']);
+export async function stop(name: string, onLine?: (line: string) => void): Promise<number | null> {
+  return await mutating(name, ['stop'], onLine);
 }
 
-export async function restart(name: string): Promise<number | null> {
-  return await recreatedIfStale(name, await mutating(name, ['restart']));
+export async function restart(
+  name: string,
+  onLine?: (line: string) => void,
+): Promise<number | null> {
+  return await recreatedIfStale(name, await mutating(name, ['restart'], onLine));
 }
 
 export async function logs(

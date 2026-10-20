@@ -41,6 +41,7 @@ import { userPath } from '../../lib/presets';
 import { REDACTED } from '../../lib/redact';
 import { isBuildTag } from '../../lib/versions';
 import { compositeName, namesOf, qualifiedParams } from '../../lib/presets/composite';
+import { opensCallPorts } from '../../lib/presets/voice-pbx';
 import {
   actor,
   bag,
@@ -272,6 +273,13 @@ export function register(app: FastifyInstance): void {
     });
     // A CI build is unreleased code chosen by name: the decision `rc_image` is gated for.
     if (isBuildTag(req.version)) privileged.push('a CI build version');
+    // Where it listens, as `bind` is: a VoIP domain opens voice's call ports on every address.
+    const voipDomain = Object.entries(req.params).find(
+      ([key]) => key === 'voip_domain' || key.endsWith('.voip_domain'),
+    )?.[1];
+    if (typeof voipDomain === 'string' && opensCallPorts(voipDomain)) {
+      privileged.push('voip_domain (it opens the call ports to the network)');
+    }
     if (privileged.length > 0 && !maySetPrivilegedFields(actor(request))) {
       const extra = privileged.includes('bind')
         ? '  For a workspace everyone on this box should reach, `houston config set bind_host 0.0.0.0` sets it once for the box.'
@@ -342,7 +350,9 @@ export function register(app: FastifyInstance): void {
   app.post<{ Params: { name: string } }>('/api/repros/:name/state', async (request) => {
     const action = requestBody(request.body, true).action;
     const target = await checkStateRequest(request.params.name, action);
-    return submit(app, 'state', (emit) => setState(target, action, emit), { label: target });
+    return submit(app, 'state', (emit) => setState(target, action, emit, { streamOutput: true }), {
+      label: target,
+    });
   });
 
   app.post<{ Params: { name: string } }>('/api/repros/:name/up', async (request) => {
@@ -582,9 +592,14 @@ export function register(app: FastifyInstance): void {
     const confirm = queryBool(request.query.confirm, false, 'confirm');
     const target = await checkTeardownRequest(request.params.name, { volumes, confirm });
     refuseWhileBusy(app, target);
-    return submit(app, 'teardown', (emit) => teardown(target, { volumes, confirm, emit }), {
-      label: target,
-    });
+    return submit(
+      app,
+      'teardown',
+      (emit) => teardown(target, { volumes, confirm, emit, streamOutput: true }),
+      {
+        label: target,
+      },
+    );
   });
 
   app.post('/api/prune', async (request) => {

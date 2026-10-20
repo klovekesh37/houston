@@ -583,6 +583,14 @@ const RANGE_RE = /^\d+-\d+(:\d+(-\d+)?)?$/;
  * preset sidecars -- mirroring the official rocketchat-compose
  * `${BIND_IP}:${HOST_PORT}:${PORT}` pattern.
  */
+/** A bind on one address that is not this machine's loopback: narrower than every address. */
+function narrowerBind(bind: string): boolean {
+  const b = bind.trim().toLowerCase();
+  return (
+    !['', '0.0.0.0', '::', '[::]', '*', 'localhost', '::1'].includes(b) && !b.startsWith('127.')
+  );
+}
+
 export function bindPorts(doc: ComposeDoc, bind: string): void {
   if (!bind) return;
   for (const [name, svc] of Object.entries(doc.services)) {
@@ -608,8 +616,12 @@ export function bindPorts(doc: ComposeDoc, bind: string): void {
       const head = str.split(':')[0] ?? '';
       if (colons >= 2) {
         // Already IP-qualified ("127.0.0.1:8025:8025") -- prefixing again would produce
-        // a double-IP mapping.
-        out.push(str);
+        // a double-IP mapping. One a preset opened to every address (voice's call ports, once
+        // voip_domain names one) follows a bind chosen on purpose: `--bind 10.0.0.5` keeps
+        // them on 10.0.0.5 rather than on every interface.
+        out.push(
+          str.startsWith('0.0.0.0:') && narrowerBind(bind) ? `${bind}:${str.slice(8)}` : str,
+        );
       } else if (colons === 1 && head !== '' && /^[0-9]+$/.test(head)) {
         out.push(`${bind}:${str}`); // "8025:8025"
       } else if (shape !== '' && /^[0-9]+$/.test(shape)) {

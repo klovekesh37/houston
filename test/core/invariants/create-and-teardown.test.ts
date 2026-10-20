@@ -16,6 +16,7 @@ import type * as SizingNS from '../../../src/core/lifecycle/sizing';
 import type * as TlsPlanNS from '../../../src/core/lifecycle/tlsplan';
 
 import { nullEmit, type Event } from '../../../src/lib/events';
+import { load } from '../../../src/lib/presets/index';
 import { createReq } from '../../../src/core/lifecycle/types';
 
 afterEach(() => {
@@ -57,6 +58,32 @@ describe('a bind that reaches past loopback', () => {
       emit: (ev) => said.push(ev),
     });
     plan.bindHost = '127.0.0.1';
+    createDocker.warnAboutTheBind(plan);
+    expect(said.filter((ev) => ev.level === 'warn')).toEqual([]);
+  });
+
+  it('is warned about when a preset opens its own ports on a loopback bind', () => {
+    // Voice publishes its call ports on every address once voip_domain names one; the bind
+    // stays on loopback, so the warning above never fired and only a note said so.
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    const said: Event[] = [];
+    const plan = createDocker.createPlan({
+      req: createReq({ version: '8.8.1', name: 'voicew' }),
+      emit: (ev) => said.push(ev),
+    });
+    plan.bindHost = '127.0.0.1';
+    plan.pre = load('voice', { sip_integration: 'on', pbx: 'on', voip_domain: '192.168.1.20' });
+    createDocker.warnAboutTheBind(plan);
+    const text = said.find((ev) => ev.level === 'warn')?.message ?? '';
+    expect(text).toContain(
+      'voip_domain opens the call ports 20000-20046/udp, 5060/udp, 5060/tcp, 30000-30019/udp on every interface',
+    );
+    expect(text).toContain('softphone accounts, whose password is their number');
+    expect(text).toContain('Rocket.Chat itself stays on 127.0.0.1');
+    // The default stays quiet: nothing left this machine.
+    said.length = 0;
+    plan.pre = load('voice', { sip_integration: 'on', pbx: 'on' });
     createDocker.warnAboutTheBind(plan);
     expect(said.filter((ev) => ev.level === 'warn')).toEqual([]);
   });

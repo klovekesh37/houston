@@ -149,8 +149,10 @@ houston does not sign you out of Okta. Run one `serve` per houston home, and bac
 - **Its right-hand pane** has the rest: **Add sample data**, **Import settings**,
   **Send an API call**, **PAT and Token**, **Back up now**, **Upgrade version**,
   **Roll back to** the earlier version (after an upgrade that kept its backup),
-  **Attach monitoring**, **Run a load test**, **Find capacity**, **Hand over…**, and
-  **Take this workspace down**. All of it, and Stop, Restart, Logs and Env vars, is offered
+  **Attach monitoring**, **Run a load test**, **Find capacity** and **Hand over…**. At its
+  foot, apart from Stop: **Take down…** removes the containers and keeps the data (Bring up
+  starts it again), and **Delete workspace…** deletes it with its data and record, once you
+  type its name. Stop only pauses it. All of it, and Stop, Restart, Logs and Env vars, is offered
   to the workspace's owner and admins, or to anyone under `gui.destroy_policy anyone`; a
   member opening someone else's workspace sees its details and who to ask.
 

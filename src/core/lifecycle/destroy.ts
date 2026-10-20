@@ -200,6 +200,11 @@ export async function teardownKubernetes(
 ): Promise<Record<string, unknown>> {
   // Deliberately BELOW the confirmation, the ownership gate and the audit record: all
   // three are about whose data is being destroyed, which does not depend on the runtime.
+  // SAID FIRST: the namespace's identity is asked before anything is reported, and the
+  // whole teardown was measured at 48-61 s.
+  info(emit, `removing '${target}' from its cluster, which can take a minute`, {
+    phase: 'teardown',
+  });
   const meta = await readMeta(target);
   const extra = bag(meta.extra);
   const context = isTruthy(extra[config.EXTRA_CONTEXT])
@@ -234,17 +239,33 @@ export async function teardownCompose(
   target: string,
   volumes: boolean,
   emit: Emit = nullEmit,
+  streamOutput = false,
 ): Promise<void> {
+  // docker's own lines, streamed into a GUI job; the terminal keeps docker's output.
+  const echo = (line: string): void =>
+    info(emit, line, { phase: 'teardown', data: { echo: 'docker' } });
   // Stop while the edge is still attached, so its pooled upstream connections receive
   // the backend's close. Disconnecting first strands those sockets on Podman; when a
   // kept workspace gets a new network/IP, the first HTTPS request can reuse one and hang.
-  if ((await engine.stop(target)) !== 0) {
+  // Each slow step SAID before it runs: a `down` emitted nothing until its final line, so the
+  // GUI's job dialog stayed empty through the whole stop and removal (12 s on a voice lab).
+  info(
+    emit,
+    `stopping '${target}': each service closes cleanly first, which can take several seconds`,
+    { phase: 'teardown' },
+  );
+  if ((await (streamOutput ? engine.stop(target, echo) : engine.stop(target))) !== 0) {
     throw new DockerError(`\`docker compose stop\` failed for '${target}'`);
   }
   // BEFORE `down`, not after: compose cannot remove a network that still has an active
   // endpoint, and the edge attached to it is exactly that.
   await detach(target);
-  if ((await engine.down(target, { volumes })) !== 0) {
+  info(
+    emit,
+    `removing '${target}'s containers and network${volumes ? ', data volume and record' : ' (data kept)'}`,
+    { phase: 'teardown' },
+  );
+  if ((await engine.down(target, { volumes, ...(streamOutput ? { onLine: echo } : {}) })) !== 0) {
     throw new DockerError(`\`docker compose down\` failed for '${target}'`);
   }
   // A route left behind points the edge at a container that no longer exists, so that
@@ -271,7 +292,7 @@ export async function teardownCompose(
 
 export async function teardown(
   name: string,
-  { volumes = false, confirm = false, emit = nullEmit } = {},
+  { volumes = false, confirm = false, emit = nullEmit, streamOutput = false } = {},
 ): Promise<Record<string, unknown>> {
   const target = await naming.resolveName(name);
   await preconditions.requireEngine(target);
@@ -304,7 +325,7 @@ export async function teardown(
       await downComposeLeftovers(target, volumes, emit);
       return await teardownKubernetes(target, volumes, emit);
     }
-    await teardownCompose(target, volumes, emit);
+    await teardownCompose(target, volumes, emit, streamOutput);
     return null;
   };
   // ASKED FIRST WITHOUT WAITING, so a wait is SAID: `down --volumes` behind a running

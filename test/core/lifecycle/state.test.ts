@@ -37,6 +37,77 @@ describe('starting, stopping and restarting', () => {
   });
 });
 
+describe('saying what a state change is doing before compose is asked', () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  it.each([
+    ['stop', "stopping 'q': each service closes cleanly first, which can take several seconds"],
+    ['start', "starting 'q'"],
+    ['restart', "restarting 'q'"],
+  ])('%s says so first', async (action, line) => {
+    // `compose stop` takes seconds while Rocket.Chat closes, and nothing was emitted until it
+    // had: the GUI's job dialog sat empty and the terminal printed nothing, both read as hung.
+    await writeRecord('q', metadata({ name: 'q', project: 'houston-q' }));
+    jest.resetModules(); // the module imported at the top holds the real engine
+    const said: string[] = [];
+    const answered = async (): Promise<number> => {
+      said.push('<compose>');
+      return 0;
+    };
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      start: answered,
+      stop: answered,
+      restart: answered,
+    }));
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual('../../../src/core/runner/queries'),
+      rcState: async () => 'running',
+      containerDetails: async () => [
+        { service: 'rocketchat', state: 'running', status: 'Up 1 hour', health: 'healthy' },
+      ],
+    }));
+    const fresh = require('../../../src/core/lifecycle/state') as typeof StateNS;
+    await fresh.setState('q', action, (event) => void said.push(event.message));
+    expect(said.slice(0, 2)).toEqual([line, '<compose>']);
+  });
+});
+
+describe("streaming docker's lines into a GUI job", () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  it('hands compose a line callback only when asked, and emits each line as echo', async () => {
+    await writeRecord('q', metadata({ name: 'q', project: 'houston-q' }));
+    jest.resetModules();
+    const calls: unknown[][] = [];
+    jest.doMock('../../../src/core/runner/engine', () => ({
+      ...jest.requireActual('../../../src/core/runner/engine'),
+      stop: async (...args: unknown[]) => {
+        calls.push(args);
+        const onLine = args[1] as ((line: string) => void) | undefined;
+        onLine?.('Container houston-q-freeswitch-1 Stopping');
+        return 0;
+      },
+    }));
+    const fresh = require('../../../src/core/lifecycle/state') as typeof StateNS;
+    const seen: { message: string; echo: unknown }[] = [];
+    const emit = (event: { message: string; data?: Record<string, unknown> }): void =>
+      void seen.push({ message: event.message, echo: event.data?.echo });
+    await fresh.setState('q', 'stop', emit as never, { streamOutput: true });
+    expect(seen).toContainEqual({
+      message: 'Container houston-q-freeswitch-1 Stopping',
+      echo: 'docker',
+    });
+    // The terminal's call is the one it always was: the name alone.
+    await fresh.setState('q', 'stop', emit as never);
+    expect(calls.map((args) => args.length)).toEqual([2, 1]);
+  });
+});
+
 describe('starting a workspace that was brought down', () => {
   afterEach(() => {
     jest.resetModules();
@@ -342,8 +413,13 @@ describe('stopping and starting a Kubernetes workspace', () => {
     await record.writeRecord('k', meta);
     const fresh = require('../../../src/core/lifecycle/state') as typeof StateNS;
 
-    await fresh.setState('k', 'stop');
+    const said: string[] = [];
+    await fresh.setState('k', 'stop', (event) => void said.push(event.message));
     expect(calls).toEqual([['stop', 'k']]);
+    // Said before the cluster is asked: the pods close cleanly first, as containers do.
+    expect(said[0]).toBe(
+      "stopping 'k': each service closes cleanly first, which can take several seconds",
+    );
     calls.length = 0;
     await fresh.setState('k', 'start');
     expect(calls).toEqual([['start', 'k']]);
