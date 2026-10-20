@@ -43,7 +43,7 @@ describe('the conflict matrix of the built-in presets', () => {
   it('composes the voice PBX lab with every other built-in preset on Docker', () => {
     // Its services, files and ports (drachtio, freeswitch, pbx; 5060, 5080, 20000-20046,
     // 30000-30019) collide with no other preset's.
-    const lab = { voice: { sip: 'on', pbx: 'on', fs_dialplan: 'edit' } };
+    const lab = { voice: { sip_integration: 'on', pbx: 'on', freeswitch_dialplans: 'edit' } };
     // Every preset the catalogue has, not a list kept by hand: e2ee was missing from one.
     const others = [...scenarioNames()].filter((n) => !['voice', 'default'].includes(n));
     expect(others).toEqual(expect.arrayContaining(['airgapped', 'e2ee', 'email', 'ldap']));
@@ -56,6 +56,24 @@ describe('the conflict matrix of the built-in presets', () => {
       expect.arrayContaining(['drachtio', 'freeswitch', 'pbx']),
     );
     expect(composed.keepFiles).toHaveLength(5);
+  });
+
+  it("takes the voice options' 2.1.3 spellings in a combination, and maps them", () => {
+    // `--set voice.sip=on` from a 2.1.3 command or a composed workspace's record.
+    const was = { voice: { sip: 'on', pbx: 'on', fs_dialplan: 'edit' } };
+    const now = { voice: { sip_integration: 'on', pbx: 'on', freeswitch_dialplans: 'edit' } };
+    const [old, current] = [was, now].map((params) =>
+      loadMany(['email', 'voice'], params, 'docker'),
+    );
+    expect([old?.services, old?.keepFiles, old?.ports]).toEqual([
+      current?.services,
+      current?.keepFiles,
+      current?.ports,
+    ]);
+    expect(current?.paramAliases).toEqual({
+      'voice.sip': 'voice.sip_integration',
+      'voice.fs_dialplan': 'voice.freeswitch_dialplans',
+    });
   });
 
   it('composes every pair on both runtimes except saml + oidc, the same in either order', () => {

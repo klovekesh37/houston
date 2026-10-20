@@ -25,6 +25,7 @@
  */
 import { shownValue } from '../format';
 
+import { guide } from './guides';
 import { k8sManifests, presetPort, presetPorts, safeDump, strParam, truthyParam } from './common';
 import { type Params, register } from './registry';
 import { emptyPreset, type Preset } from './types';
@@ -299,6 +300,38 @@ export function build(params: Params): Preset {
     // -- see `bucketJob`.
     kubernetesManifests: [minioManifests(), bucketJob(bucket)],
     notes: presignedNotes(bucket, presigned, s3Host),
+    guides: [
+      guide('s3_minio', {
+        summary: `MinIO as the file upload store, bucket '${bucket}'${presigned ? ', presigned URLs' : ''}.`,
+        setup:
+          presigned && s3Host === 'minio'
+            ? {
+                why: 'In presigned mode the browser fetches files straight from MinIO, so it needs this line in /etc/hosts (needs sudo).',
+                line: '127.0.0.1  minio',
+              }
+            : null,
+        signIn: [[USER, PASSWORD, 'MinIO console']],
+        steps: [
+          'Upload any file or image in Rocket.Chat; it lands in MinIO, not GridFS.',
+          `Watch it arrive in the bucket '${bucket}' in the MinIO console.`,
+        ],
+        know:
+          presigned && s3Host === 'minio'
+            ? [
+                'The hosts entry points at this machine, so the browser must be on it; from another machine re-create with --bind 0.0.0.0 --set s3_host=<this host>.',
+                "Remove the hosts line to reproduce the classic 'presigned URL unreachable' symptom: uploads work, previews and downloads break.",
+              ]
+            : presigned
+              ? [
+                  `The browser fetches files straight from http://${s3Host}:${String(S3_PORT)}, which must be reachable from it (--bind 0.0.0.0).`,
+                  "Point s3_host somewhere unreachable to reproduce the classic 'presigned URL unreachable' symptom: uploads work, previews break.",
+                ]
+              : [
+                  'Downloads are proxied through Rocket.Chat; no hosts entry needed.',
+                  'For real presigned-URL behaviour, re-create with --set presigned=true.',
+                ],
+      }),
+    ],
   };
 }
 

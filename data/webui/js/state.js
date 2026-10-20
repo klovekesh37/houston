@@ -342,12 +342,15 @@ function scenarioCard(d, parsed, shown) {
   // every Kubernetes fact through here a second time.
   const own = parsed.find((x) => x.g.kind === "scenario");
   const items = own ? own.items : [];
+  // Presets that wrote a guide (every one of this workspace's, or none): the card reads
+  // the guide, with its own setup box, instead of their prose.
+  const guides = own ? (own.g.guides || []) : [];
   const introduced = (item) => {
     const before = items[items.indexOf(item) - 1];
     const text = before && before.kind === "prose" ? (before.lines || []).join(" ") : "";
     return /\/etc\/hosts/i.test(text);
   };
-  const setup = items.find((i) => i.kind === "cmd"
+  const setup = guides.length ? null : items.find((i) => i.kind === "cmd"
                                   && !/^https?:\/\//.test(i.value)
                                   && introduced(i));
   if (setup) {
@@ -382,11 +385,111 @@ function scenarioCard(d, parsed, shown) {
                            sub: note ? note.sub : "" }));
   }
 
+  if (guides.length) {
+    // Every place the notes name stays a link row, as before; only the prose moves to the guide.
+    const places = items.filter((i) => i.kind === "place" && !shown.has(i));
+    if (places.length) card.append(ctx.renderNoteItems(ctx.el("div", { class: "panelcard-b notes" }), places));
+    card.append(guideBlock(d, guides));
+    return card;
+  }
   const rest = items.filter((i) => i !== setup && !shown.has(i));
   if (rest.length) {
     card.append(ctx.renderNoteItems(ctx.el("div", { class: "panelcard-b notes" }), rest));
   }
   return card;
+}
+
+// ---- the guide: one preset at a time, in three parts ---------------------------------
+// The notes were one list of paragraphs across every preset of a combined workspace, a
+// wall nobody read (owner, 2026-10-19). Each preset now says who to sign in as, what to
+// try and what to know; a tab strip picks the preset, one pane shows it. The pane keeps
+// the tallest guide's height so the card never jumps, and the next guide fades in.
+function guideText(d, text) {
+  return String(text).split("<name>").join(d.name || "<name>")
+    .split("<repro-url>").join(d.url || d.root_url || "<repro-url>");
+}
+function guidePane(d, g) {
+  const wrap = ctx.el("div", { class: "guide" });
+  wrap.append(ctx.el("p", { class: "guide-one" }, guideText(d, g.summary)));
+  if (g.setup) {
+    wrap.append(ctx.el("div", { class: "setup" },
+      ctx.el("span", { class: "setup-i" }, "▲"),
+      ctx.el("span", { class: "setup-t" },
+        ctx.el("b", {}, "Do this once, on your machine"),
+        ctx.el("span", { class: "setup-w" }, g.setup.why),
+        ctx.el("code", {}, g.setup.line)),
+      ctx.el("button", { class: "cp", onclick: () => ctx.copy(g.setup.line) }, "Copy")));
+  }
+  const parts = [];
+  if ((g.signIn || []).length) {
+    const t = ctx.el("table", { class: "notetable" });
+    for (const [user, password, where] of g.signIn) {
+      t.append(ctx.el("tr", {}, ctx.el("th", {}, user), ctx.el("td", { class: "pw" }, guideText(d, password)),
+        ctx.el("td", { class: "w" }, guideText(d, where))));
+    }
+    parts.push(ctx.el("div", { class: "guide-part" }, ctx.el("span", { class: "section-label flat" }, "Sign in as"), t));
+  }
+  if ((g.steps || []).length) {
+    parts.push(ctx.el("div", { class: "guide-part" }, ctx.el("span", { class: "section-label flat" }, "Try it"),
+      ctx.el("ol", {}, ...g.steps.map((s) => ctx.el("li", {}, ctx.linkify(guideText(d, s)))))));
+  }
+  wrap.append(ctx.el("div", { class: "guide-cols" + (parts.length === 1 ? " one" : "") }, ...parts));
+  if ((g.know || []).length) {
+    wrap.append(ctx.el("div", { class: "guide-part guide-know" }, ctx.el("span", { class: "section-label flat" }, "Good to know"),
+      ctx.el("ul", {}, ...g.know.map((s) => ctx.el("li", {}, ctx.linkify(guideText(d, s)))))));
+  }
+  return wrap;
+}
+function guideBlock(d, guides) {
+  const names = guides.map((g) => g.name);
+  if (!names.includes(ctx.dstate.guideTab)) ctx.dstate.guideTab = names[0];
+  const block = ctx.el("div", { class: "guide-block" },
+    ctx.el("div", { class: "guide-h" }, ctx.el("span", { class: "section-label flat" }, "Using this scenario")));
+  const pane = ctx.el("div", { class: "guide-pane", role: "tabpanel" });
+  const show = (name, animate) => {
+    ctx.dstate.guideTab = name;
+    for (const b of block.querySelectorAll(".guide-tabs button")) {
+      const on = b.dataset.tab === name;
+      b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+    }
+    const next = guidePane(d, guides.find((g) => g.name === name) || guides[0]);
+    if (animate) next.classList.add("entering");
+    pane.replaceChildren(next);
+    if (animate) requestAnimationFrame(() => next.classList.remove("entering"));
+  };
+  if (names.length > 1) {
+    const strip = ctx.el("div", { class: "guide-tabs", role: "tablist", "aria-label": "Presets" },
+      ...names.map((n) => ctx.el("button", { type: "button", role: "tab", "data-tab": n,
+        "aria-selected": String(n === ctx.dstate.guideTab), tabIndex: n === ctx.dstate.guideTab ? 0 : -1,
+        onclick: () => show(n, true) }, n)));
+    strip.addEventListener("keydown", (e) => {
+      const i = names.indexOf(ctx.dstate.guideTab);
+      const to = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1
+        : e.key === "Home" ? 0 : e.key === "End" ? names.length - 1 : -1;
+      if (to < 0 || to >= names.length) return;
+      e.preventDefault(); show(names[to], true);
+      const b = strip.querySelector(`button[data-tab="${names[to]}"]`);
+      if (b) b.focus();
+    });
+    block.append(strip);
+  }
+  block.append(pane);
+  show(ctx.dstate.guideTab, false);
+  // The tallest guide sets the pane's height once the card is on screen, measured off-screen
+  // at the card's width, so switching presets never moves what is below the card.
+  if (names.length > 1) {
+    requestAnimationFrame(() => {
+      const width = pane.getBoundingClientRect().width;
+      if (!width) return;
+      const probe = ctx.el("div", { class: "guide-pane", style: `position:absolute;visibility:hidden;left:-9999px;width:${width}px` });
+      document.body.append(probe);
+      let tallest = 0;
+      for (const g of guides) { probe.replaceChildren(guidePane(d, g)); tallest = Math.max(tallest, probe.getBoundingClientRect().height); }
+      probe.remove();
+      pane.style.minHeight = `${Math.ceil(tallest)}px`;
+    });
+  }
+  return block;
 }
 
 // ---- detail panel -----------------------------------------------------------
@@ -412,7 +515,7 @@ function detailShell(r) {
   ];
 }
 async function selectRepro(name, tab = "overview") {
-  ctx.SELECTED = name; ctx.dstate.tab = tab; ctx.dstate.points = []; ctx.dstate.statsRefused = "";
+  ctx.SELECTED = name; ctx.dstate.tab = tab; ctx.dstate.points = []; ctx.dstate.statsRefused = ""; ctx.dstate.guideTab = "";
   ctx.setView("workspace");
   // Tear the PREVIOUS repro's panel down first. Leaving it up meant that while the
   // fetch was in flight -- and permanently if it failed -- the list highlighted B

@@ -53,16 +53,17 @@ export function ldapParamsMb(params: Record<string, unknown>): number {
 }
 
 /**
- * What the voice preset's `sip=on` adds: Drachtio and FreeSWITCH, measured idle at 7 and 27 MiB
- * on 8.7.0, with room for calls; `pbx=on` adds the lab's Asterisk, idle at 48.5 MiB
- * (2026-10-16). A composed workspace names the params `voice.sip` and `voice.pbx`.
+ * What the voice preset's `sip_integration=on` adds: Drachtio and FreeSWITCH, measured idle at
+ * 7 and 27 MiB on 8.7.0, with room for calls; `pbx=on` adds the lab's Asterisk, idle at
+ * 48.5 MiB (2026-10-16). A composed workspace names the params `voice.sip_integration` and
+ * `voice.pbx`; 2.1.3 spelled the first `sip` (VOICE_PARAM_ALIASES), and its records still do.
  */
 export function voiceParamsMb(params: Record<string, unknown>): number {
   const on = (key: string): boolean =>
     String(params[`voice.${key}`] ?? params[key] ?? '')
       .trim()
       .toLowerCase() === 'on';
-  return (on('sip') ? 60 : 0) + (on('pbx') ? 80 : 0);
+  return (on('sip_integration') || on('sip') ? 60 : 0) + (on('pbx') ? 80 : 0);
 }
 
 /** Prometheus + Grafana + Loki + the OTel collector + two exporters. */

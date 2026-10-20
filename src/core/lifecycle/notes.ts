@@ -11,6 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import type { PresetGuide } from '../../lib/presets/guides';
 import { namesOf, presetsLabel } from '../../lib/presets/composite';
 import * as config from '../../lib/config';
 import { grafanaUrl, notes as monitoringNotes } from '../../lib/monitoring';
@@ -47,6 +48,8 @@ export interface NoteGroup {
   rows: [string, unknown][];
   body: string[];
   commands: string[];
+  /** The scenario card's guide per preset; empty unless every preset of the workspace has one. */
+  guides: PresetGuide[];
 }
 
 export function noteGroup(
@@ -56,7 +59,8 @@ export function noteGroup(
     body = [],
     commands = [],
     kind = '',
-  }: Partial<Pick<NoteGroup, 'rows' | 'body' | 'commands' | 'kind'>> = {},
+    guides = [],
+  }: Partial<Pick<NoteGroup, 'rows' | 'body' | 'commands' | 'kind' | 'guides'>> = {},
 ): NoteGroup {
   return {
     title,
@@ -64,6 +68,7 @@ export function noteGroup(
     rows: rows.map((row) => [String(row[0]), row[1]]),
     body: [...body],
     commands: [...commands],
+    guides: guides.map((one) => structuredClone(one)),
   };
 }
 
@@ -243,7 +248,14 @@ export function scenarioGroup(meta: Metadata): NoteGroup[] {
   ];
   if (notes.length === 0) return [];
   // kind="scenario", not a title the panel has to recognise by its prefix.
-  return [noteGroup(`Scenario · ${presetsLabel(pre.name)}`, { kind: 'scenario', body: notes })];
+  return [
+    noteGroup(`Scenario · ${presetsLabel(pre.name)}`, {
+      kind: 'scenario',
+      body: notes,
+      // A YAML preset has no guide: the card then reads these notes as it always has.
+      guides: pre.guides.length === names.length ? pre.guides : [],
+    }),
+  ];
 }
 
 /** The kept files (a lab dialplan) whose copy in the workspace is not the preset's default. */

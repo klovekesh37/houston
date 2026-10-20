@@ -287,7 +287,7 @@ export function refuseUnsupportedOnKubernetes(req: CreateReq): void {
   // still refused, because being recorded and not applied is what this guard exists to
   // prevent; but the refusal is now per preset rather than a blanket "not supported", and
   // it names the ones that DO work so the answer is actionable.
-  // Each preset of a composed workspace on its own, with its own `--set` (`voice.sip=on`):
+  // Each preset of a composed workspace on its own, with its own `--set` (`voice.sip_integration=on`):
   // one without an adapter, or set the way Kubernetes cannot run it, is named.
   const names = namesOf(req.preset);
   const byPreset = names.length > 1 ? paramsByPreset(names, req.params) : null;

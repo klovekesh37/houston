@@ -33,9 +33,10 @@ describe('note groups', () => {
           ],
           body: ['b'],
           commands: ['c'],
+          guides: [],
         },
-        { title: 'Empty', kind: '', rows: [], body: [], commands: [] },
-        { title: 'Bare', kind: '', rows: [], body: [], commands: ['one'] },
+        { title: 'Empty', kind: '', rows: [], body: [], commands: [], guides: [] },
+        { title: 'Bare', kind: '', rows: [], body: [], commands: ['one'], guides: [] },
         {
           title: 'Unicode',
           kind: '',
@@ -45,6 +46,7 @@ describe('note groups', () => {
           ],
           body: [],
           commands: [],
+          guides: [],
         },
       ],
       flat: [
@@ -96,8 +98,26 @@ describe('note groups', () => {
       rows: [['key', 'value']],
       body: ['know'],
       commands: ['paste'],
+      guides: [],
     });
     expect(flattenNotes([group])).toEqual(['Title:', '    key  value', 'know', '    paste']);
+  });
+
+  it("carries the presets' guides to the card, and none unless every preset wrote one", () => {
+    // The scenario card reads a guide per preset; a YAML preset has none, and then the card
+    // falls back to reading the notes, so a half-guided workspace is not half-rendered.
+    expect(scenarioGroup(record({ preset: 'e2ee' }))[0]?.guides.map((g) => g.name)).toEqual([
+      'e2ee',
+    ]);
+    expect(scenarioGroup(record({ preset: 'email+ldap' }))[0]?.guides.map((g) => g.name)).toEqual([
+      'email',
+      'ldap',
+    ]);
+    expect(scenarioGroup(record({ preset: 'airgapped+email' }))[0]?.guides).toEqual([]);
+    // The CLI's flat form says nothing of it.
+    expect(flattenNotes(scenarioGroup(record({ preset: 'e2ee' }))).join('\n')).not.toContain(
+      'guides',
+    );
   });
 });
 

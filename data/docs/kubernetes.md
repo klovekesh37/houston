@@ -70,7 +70,7 @@ Each refusal says why and what to do instead.
 | `env --set`, `--setting`, `--unset` | the `helm upgrade` the refusal prints, or `houston api` for a setting |
 | `up --env` or `--setting` naming a variable the chart writes itself (`ROOT_URL`, `MONGO_URL`, `REG_TOKEN`, `DEPLOY_*`, Prometheus and microservice variables) | `--root-url` or `--domain`, `--reg-token`; anything else goes through |
 | `seed --scale` | `houston seed --name <name>` |
-| `--preset voice --set sip=on` (and `pbx=on`) | a Docker workspace; `--preset voice` alone, calls between users, works on Kubernetes |
+| `--preset voice --set sip_integration=on` (and `pbx=on`) | a Docker workspace; `--preset voice` alone, calls between users, works on Kubernetes |
 | `up --https` on a cluster not on this machine | `--domain`, below |
 | Rocket.Chat below 8.0.0 on an arm64 node (such as Graviton) | an amd64 node: those images are amd64 only |
 | Rocket.Chat below 3.7.2 | Docker: no usable Helm chart exists |

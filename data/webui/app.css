@@ -363,7 +363,11 @@ input:focus, select:focus, textarea:focus {
    One line was tried and reverted. It fits more rows and pays for them with the port,
    the owner and the scenario, which are what people search a rail BY on a shared box.
    The grouping above is what "which one is unhappy" needed. */
-.wrow { position: relative; display: grid; gap: 3px; width: 100%; text-align: left;
+/* A grid track is at least as wide as its widest unbreakable text, and a preset list has no
+   space in it (e2ee+email+ldap+livechat+oidc+s3_minio), so the track grew past the card and
+   the version and the age sat outside it. The track may shrink, and the text may break. */
+.wrow { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px;
+  width: 100%; min-width: 0; text-align: left;
   padding: .55rem .7rem .55rem .9rem; border: 1px solid var(--line);
   border-radius: var(--r-sm); background: var(--bg); color: var(--ink);
   cursor: pointer; font: inherit; }
@@ -383,14 +387,15 @@ input:focus, select:focus, textarea:focus {
 .wrow[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent); }
 .wrow .r1 { display: flex; align-items: baseline; gap: .45rem; min-width: 0; }
+.wrow > * { min-width: 0; }
 .wrow .nm { flex: 1; min-width: 0; font-weight: 600; font-size: .84rem;
-  overflow-wrap: break-word; }
+  overflow-wrap: anywhere; }
 .wrow .ver { flex: 0 0 auto; font-family: var(--mono); font-size: .76rem; font-weight: 600;
   color: var(--muted); }
 .wrow[aria-current="true"] .ver { color: var(--ink); }
 .wrow .star { flex: 0 0 auto; font-size: .62rem; color: var(--dim); }
 .wrow .meta { font-family: var(--mono); font-size: .7rem; color: var(--dim);
-  overflow-wrap: break-word; }
+  overflow-wrap: anywhere; }
 .wrow .r3 { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .wstate { display: inline-flex; align-items: center; gap: .3rem; font-size: .6rem;
   font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -1381,6 +1386,38 @@ form input, form select { padding: .55rem .7rem; font-family: var(--sans); }
 .setup-t code { display: inline-block; margin-top: .5rem; font-family: var(--mono);
   font-size: .8rem; background: var(--panel); border: 1px solid var(--line2);
   border-radius: var(--r-sm); padding: .28rem .55rem; }
+
+/* ---- the scenario guide: one preset at a time, in three parts ---- */
+.guide-h { padding: .75rem 1rem 0; }
+.guide-tabs { display: flex; flex-wrap: wrap; gap: .35rem; padding: .5rem 1rem 0; }
+.guide-tabs button { font: 600 .78rem var(--mono); padding: .32rem .75rem; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--bg); color: var(--muted); cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+.guide-tabs button:hover { border-color: var(--line2); color: var(--ink); }
+.guide-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.guide-tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+/* One pane, re-filled on a tab change: it keeps the tallest guide's height so the card never
+   jumps, and the new guide fades in. */
+.guide-pane { padding: .7rem 1rem 1.05rem; }
+.guide { opacity: 1; transition: opacity .18s ease; }
+.guide.entering { opacity: 0; }
+.guide-one { font-size: .84rem; color: var(--muted); margin: .1rem 0 .85rem; line-height: 1.5; }
+.guide .setup { margin: 0 0 .9rem; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.guide-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem 2rem; }
+.guide-cols.one { grid-template-columns: minmax(0, 1fr); }
+.guide-part .section-label { display: block; margin: 0 0 .45rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); }
+.guide-part ol, .guide-part ul { margin: 0; padding-left: 1.25rem; font-size: .84rem; line-height: 1.55; color: var(--ink); }
+.guide-part li { margin: .25rem 0; padding-left: .15rem; }
+.guide-part li::marker { color: var(--dim); font-weight: 600; }
+.guide-part ul { color: var(--muted); }
+.guide-part .notetable th { width: auto; white-space: nowrap; padding: .4rem 1rem .4rem 0; font-family: var(--mono);
+  font-weight: 600; color: var(--ink); font-size: .8rem; }
+.guide-part .notetable td { padding: .4rem 1rem .4rem 0; vertical-align: top; }
+.guide-part .notetable td.pw { font-family: var(--mono); font-size: .78rem; color: var(--ink); }
+.guide-part .notetable td.w { color: var(--muted); font-family: var(--sans); font-size: .78rem; padding-right: 0; }
+.guide-know { margin-top: 1rem; }
+@media (max-width: 760px) { .guide-cols { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .guide, .guide-tabs button { transition: none; } }
 
 /* ---- the chart, in its card ---- */
 .chart-box { border: 0; border-radius: 0; background: var(--bg); padding: .7rem .85rem; }

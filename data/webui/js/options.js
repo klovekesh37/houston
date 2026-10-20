@@ -55,14 +55,14 @@ function whyOff(name) {
   if (rival && ticked(rival)) return "One sign-in provider per workspace";
   return "";
 }
-// voice's phone options: each needs the one before it, and all of them Docker. A hidden one is
+// voice's SIP options: each needs the one before it, and all of them Docker. A hidden one is
 // not sent either, or a value typed before switching place would have the create refused.
 const voiceOn = (key) => P("voice")[key] === "on";
 function voiceShown(key) {
   if (key === "ice_servers") return true;
   if (runtime() === "kubernetes") return false;
-  if (key === "sip") return true;
-  return key === "fs_dialplan" ? voiceOn("sip") && voiceOn("pbx") : voiceOn("sip");
+  if (key === "sip_integration") return true;
+  return key === "freeswitch_dialplans" ? voiceOn("sip_integration") && voiceOn("pbx") : voiceOn("sip_integration");
 }
 // ldap's own single sign-on follows a ticked saml or oidc preset: one Keycloak per workspace.
 const keycloakPreset = () => ticked("saml") || ticked("oidc");
@@ -293,29 +293,34 @@ const DESIGNED = {
     "Require email verification on new accounts")) },
   s3_minio: { presigned: () => row("Presigned URLs", check("s3_minio", "presigned", ["true", "false"], "false",
     "Serve downloads from presigned MinIO URLs, not through Rocket.Chat")) },
-  // Each phone option opens once the one it needs is on; on Kubernetes none is offered.
+  // Each option is labelled as Rocket.Chat's settings and compose files name it, and its --set
+  // key is the same words, so a lab built here is repeated on the command line word for word.
+  // Each SIP option opens once the one it needs is on; on Kubernetes none is offered.
   voice: {
-    sip: () => (runtime() === "kubernetes"
-      ? row("Phone services", hint("Dialling numbers and the lab phone system (SIP) run on Docker only. Calls between users work here."))
-      : row("Phone services", check("voice", "sip", ["on", "off"], "off", "Drachtio and FreeSWITCH",
-        "(dial numbers, take calls from a phone system)"),
-      voiceOn("sip") ? hint("voice-alice and voice-bob get extensions 1001 and 1002. Dial 123 to hear yourself.") : null)),
-    voip_domain: () => (voiceShown("voip_domain") ? row("Reached at", txt("voice", "voip_domain", "this machine only"),
-      hint("For a browser on another machine: this machine's LAN IP, public IP, or a domain with UDP open to it.")) : []),
-    rtp_ports: () => (voiceShown("rtp_ports") ? row("Audio ports", txt("voice", "rtp_ports", "20000-20046"),
-      hint("UDP, start-end, at most 200. A second lab on this machine needs its own range.")) : []),
-    pbx: () => (voiceShown("pbx") ? row("Phone system", check("voice", "pbx", ["on", "off"], "off",
-      "A lab phone system (Asterisk)", "(desk phones, ring groups, an outside caller)")) : []),
-    fs_dialplan: () => (voiceShown("fs_dialplan") ? row("FreeSWITCH dialplans",
-      seg("voice", "fs_dialplan", [["stock", "As shipped"], ["edit", "Editable copies"]]),
-      P("voice").fs_dialplan === "edit" ? hint("public.xml and drachtio.xml in the workspace folder; kept across rebuilds and backups.") : null) : []),
+    sip_integration: () => (runtime() === "kubernetes"
+      ? row("SIP integration", hint("SIP integration and the PBX run on Docker only. Calls between users work here."))
+      : row("SIP integration", check("voice", "sip_integration", ["on", "off"], "off", "Drachtio (signaling gateway) and FreeSWITCH (SIP provider)",
+        "(dial numbers, take calls from a PBX)"),
+      voiceOn("sip_integration") ? hint("voice-alice and voice-bob get Voice call extensions 1001 and 1002. Dial 123 to hear yourself.") : null)),
+    voip_domain: () => (voiceShown("voip_domain") ? row("VoIP domain", txt("voice", "voip_domain", "freeswitch (this machine only)"),
+      hint("VOIP_DOMAIN in rocketchat-compose: the address browsers and phones send RTP audio to. For another machine: this machine's LAN or public IP, or a name that points straight at it.")) : []),
+    rtp_ports: () => (voiceShown("rtp_ports") ? row("RTP ports", txt("voice", "rtp_ports", "20000-20046"),
+      hint("UDP, start-end, at most 200 (VOIP_RTP_START_PORT to VOIP_RTP_END_PORT). A second SIP workspace on this machine needs its own range.")) : []),
+    pbx: () => (voiceShown("pbx") ? row("PBX", check("voice", "pbx", ["on", "off"], "off",
+      "A lab PBX (Asterisk)", "(desk phones, ring groups, an outside caller)"),
+      voiceOn("pbx") ? hint("Connected to FreeSWITCH's external profile the way compose.freeswitch.external.yml connects external calls.") : null) : []),
+    freeswitch_dialplans: () => (voiceShown("freeswitch_dialplans") ? row("FreeSWITCH dialplans",
+      seg("voice", "freeswitch_dialplans", [["stock", "stock"], ["edit", "edit"]]),
+      hint(P("voice").freeswitch_dialplans === "edit"
+        ? "edit: public.xml and drachtio.xml as editable copies in the workspace folder, kept across rebuilds and backups."
+        : "stock: as FreeSWITCH writes them. edit: editable copies in the workspace folder.")) : []),
     ice_servers: () => row("ICE servers", txt("voice", "ice_servers", "Rocket.Chat's own"),
-      hint("stun:, turn: or turns:host:port, comma-separated; user:password@ is allowed and shown masked. Empty keeps Rocket.Chat's own (Google STUN).")),
+      hint("Rocket.Chat's ICE servers setting (WebRTC settings): stun:, turn: or turns:host:port, comma-separated; user:password@ is allowed and shown masked. Empty keeps Rocket.Chat's own (Google STUN).")),
   },
 };
 const ORDER = { ldap: ["users", "domain", "directory", "groups", "bind", "tls", "trust", "idp", "mfa", "idp_host"],
   e2ee: ["policy", "users", "files", "allow_unencrypted"],
-  voice: ["sip", "voip_domain", "rtp_ports", "pbx", "fs_dialplan", "ice_servers"] };
+  voice: ["sip_integration", "voip_domain", "rtp_ports", "pbx", "freeswitch_dialplans", "ice_servers"] };
 
 function paramPanel(name) {
   const help = presetOf(name).params_help || {}, keys = Object.keys(help);

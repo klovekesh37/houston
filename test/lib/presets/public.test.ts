@@ -63,7 +63,7 @@ describe('the livechat demo page at /livechat-demo', () => {
       './livechat/public.html:/usr/share/nginx/html/livechat-demo/index.html:ro',
     ]);
     expect(docker.ports).toEqual(load('livechat', {}).ports);
-    expect(docker.notes.join('\n')).toContain('SAME origin as Rocket.Chat');
+    expect(docker.notes.join('\n')).toContain('same origin as Rocket.Chat');
     const kube = withPublicUrl(resolve('livechat', 'kubernetes', {}), URL_, 'kubernetes');
     expect(container(kube, 'widget-site').volumeMounts?.map((m) => m.mountPath)).toEqual([
       '/usr/share/nginx/html/index.html',

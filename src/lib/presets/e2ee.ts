@@ -16,6 +16,7 @@
 import { ValidationError } from '../errors';
 import { parseVersion } from '../version-spec';
 
+import { guide } from './guides';
 import { EMAIL_2FA, choiceParam } from './common';
 import { type Params, register, registerScenario } from './registry';
 import { Scenario } from './scenario';
@@ -80,6 +81,28 @@ function adapter(intent: Intent): Preset {
     },
     softEnv: intent.users ? [EMAIL_2FA] : [],
     postReady: intent.users ? [{ action: 'e2ee_users' }] : [],
+    guides: [
+      guide('e2ee', {
+        summary: `End-to-end encryption switched on${intent.users ? ', with test users' : ''}; policy ${intent.policy}.`,
+        signIn: intent.users ? E2EE_TEST_USERS.map((user) => [user, user, '']) : [],
+        steps: [
+          'Open Rocket.Chat on localhost or over HTTPS.',
+          'Sign in as two users, in separate browser profiles.',
+          'Save the encryption password Rocket.Chat shows once, at the first sign-in.',
+        ],
+        know: [
+          {
+            optional: 'Encryption policy: optional. People choose it for each DM or private room.',
+            default:
+              'Encryption policy: default. New DMs and private rooms start encrypted; people may turn it off.',
+            enforced:
+              'Encryption policy: enforced. Private rooms created from now on must be encrypted; federated rooms are exempt.',
+          }[intent.policy] ?? `Encryption policy: ${intent.policy}.`,
+          'Keys are made in the browser at the first sign-in; a browser encrypts only on a secure origin.',
+          intent.files ? '' : 'Files are not encrypted (files=off).',
+        ],
+      }),
+    ],
     notes: [
       `End-to-end encryption is on (policy=${intent.policy}). A user's keys are made in their browser the first time they sign in, and Rocket.Chat shows their encryption password once; save it.`,
       ...(intent.users

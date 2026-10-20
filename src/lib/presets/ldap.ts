@@ -27,6 +27,7 @@ import {
   safeDump,
   strParam,
 } from './common';
+import { guide, type PresetGuide } from './guides';
 import * as keycloak from './keycloak';
 import { type Params, register, registerScenario } from './registry';
 import { Scenario } from './scenario';
@@ -410,19 +411,19 @@ function idpParts(it: LDAPIntent): IdpParts | null {
           },
         ],
     notes: [
-      `SSO: Keycloak signs in this directory's users. Click '${button}' and sign in as`,
-      '    user1 / user1, the same user LDAP login uses; Rocket.Chat matches the two by email.',
+      // One string per point: the GUI reads a line indented by four spaces as something to
+      // paste, and wrapped prose written that way came out as a row of Copy boxes.
+      `SSO: Keycloak signs in this directory's users. Click '${button}' and sign in as user1 / user1, the same user LDAP login uses; Rocket.Chat matches the two by email.`,
       ...(it.mfa
-        ? ['    Keycloak asks each user to set up an authenticator app at their first sign-in.']
+        ? ['Keycloak asks each user to set up an authenticator app at their first sign-in.']
         : []),
       ...(!saml && it.idpHost === 'keycloak'
-        ? ['    The browser needs a hosts entry for Keycloak:  127.0.0.1  keycloak']
+        ? ['The browser needs a hosts entry for Keycloak:', '    127.0.0.1  keycloak']
         : []),
       ...(it.idpHost === 'localhost' || it.idpHost === 'keycloak'
-        ? ['    From another machine: --bind 0.0.0.0 --set idp_host=<this host>']
+        ? ['From another machine: --bind 0.0.0.0 --set idp_host=<this host>']
         : []),
-      `Keycloak admin console: ${host}  (admin / admin, realm '${keycloak.REALM}'; the users`,
-      '    are under User federation > directory)',
+      `Keycloak admin console: ${host}  (admin / admin, realm '${keycloak.REALM}'; the users are under User federation > directory)`,
     ],
   };
 }
@@ -813,51 +814,113 @@ function directoryDescription(it: LDAPIntent): string {
 
 function adNotes(it: LDAPIntent): string[] {
   return [
-    `phpLDAPadmin: http://localhost:${String(UI_PORT)}`,
-    `    log in with DN  CN=Administrator,CN=Users,${it.baseDn}  /  ${AD_ADMIN_PASSWORD}`,
-    `    Rocket.Chat users are user1..user${String(it.users)} (sAMAccountName, or UPN`,
-    `    userN@${it.domain}), password same as name; Rocket.Chat keys them by objectGUID`,
+    // One string per point (see the SSO notes): the place with its login in parentheses, as
+    // the GUI's link rows read it, then prose.
+    `phpLDAPadmin: http://localhost:${String(UI_PORT)}  (log in with DN CN=Administrator,CN=Users,${it.baseDn} / ${AD_ADMIN_PASSWORD})`,
+    `Rocket.Chat users are user1..user${String(it.users)} (sAMAccountName, or UPN userN@${it.domain}), password same as name; Rocket.Chat keys them by objectGUID.`,
     ...(it.users > SHIPPED_USERS_MAX
-      ? ['    A large directory takes a while to seed: about 5 minutes for 20,000 users.']
+      ? ['A large directory takes a while to seed: about 5 minutes for 20,000 users.']
       : []),
     ...(it.groups
       ? [
-          'Groups: rocket-chat holds staff, which holds every user but the last; rocket-admin',
-          '    (user1); employee (everyone). Login asks for rocket-chat membership through the',
-          `    nesting (AD's in-chain rule), so user${String(it.users)} is refused. With an Enterprise`,
-          '    licence, rocket-admin members get the admin role and employee members join',
-          '    #employees at login.',
-          '    Samba returns every member of a large group at once; Windows AD splits one past',
-          '    1,500 members into ranges, which this directory does not reproduce.',
+          `Groups: rocket-chat holds staff, which holds every user but the last; rocket-admin (user1); employee (everyone). Login asks for rocket-chat membership through the nesting (AD's in-chain rule), so user${String(it.users)} is refused. With an Enterprise licence, rocket-admin members get the admin role and employee members join #employees at login.`,
+          'Samba returns every member of a large group at once; Windows AD splits one past 1,500 members into ranges, which this directory does not reproduce.',
         ]
       : []),
     ...(it.bind === 'service'
       ? [
-          `Rocket.Chat binds as CN=${READONLY_USER},CN=Users,${it.baseDn} / ${READONLY_USER}, an`,
-          '    ordinary user. Samba sets no page limit (Windows AD stops at 1,000 entries).',
+          `Rocket.Chat binds as CN=${READONLY_USER},CN=Users,${it.baseDn} / ${READONLY_USER}, an ordinary user. Samba sets no page limit (Windows AD stops at 1,000 entries).`,
         ]
       : []),
   ];
 }
 
+/** The scenario card's guide for this directory, its groups, its bind and its SSO. */
+function guideFor(it: LDAPIntent): PresetGuide {
+  const n = String(it.users);
+  const ad = isAd(it);
+  const sso = it.idp !== 'none';
+  const saml = it.idp === 'saml';
+  const button = saml ? 'Keycloak SSO' : 'Keycloak (OIDC)';
+  const hostsEntry = sso && !saml && it.idpHost === 'keycloak';
+  return guide('ldap', {
+    summary: ad
+      ? `Samba as Active Directory with ${n} users${it.groups ? ' and nested groups' : ''}; Rocket.Chat signs them in.`
+      : `OpenLDAP with ${n} users and the group rc-users; Rocket.Chat signs them in.`,
+    setup: hostsEntry
+      ? {
+          why: 'Add this line to /etc/hosts (needs sudo); it is how your browser reaches Keycloak at the address Rocket.Chat uses.',
+          line: '127.0.0.1  keycloak',
+        }
+      : null,
+    signIn: [
+      [`user1 … user${n}`, 'same as the name', 'Rocket.Chat, LDAP login'],
+      ad
+        ? [`CN=Administrator,CN=Users,${it.baseDn}`, AD_ADMIN_PASSWORD, 'phpLDAPadmin, as a DN']
+        : [`cn=admin,${it.baseDn}`, it.adminPassword, 'phpLDAPadmin, as a DN'],
+      ...(sso
+        ? ([
+            [`user1 … user${n}`, 'same as the name', `press '${button}' on the login page`],
+            ['admin', 'admin', `Keycloak admin console, realm '${keycloak.REALM}'`],
+          ] as [string, string, string][])
+        : []),
+    ],
+    steps: [
+      'Sign in to Rocket.Chat as user1 / user1.',
+      'Browse the directory in phpLDAPadmin with the admin DN.',
+      sso
+        ? `Or press '${button}' and sign in as user1 / user1: Keycloak signs in the same directory user.`
+        : '',
+    ],
+    know: [
+      ...(it.groups
+        ? ad
+          ? [
+              `rocket-chat holds staff (every user but the last); rocket-admin holds user1; employee holds everyone. Login asks for rocket-chat membership through the nesting (AD's in-chain rule), so user${n} is refused.`,
+              'With an Enterprise licence rocket-admin members get the admin role and employee members join #employees at login.',
+              'Samba returns every member of a large group at once; Windows AD splits one past 1,500 members into ranges, which this directory does not reproduce.',
+            ]
+          : [
+              `Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all). Only rocket-chat may log in: user${n} is refused by the group filter.`,
+              'With an Enterprise licence (--license or --reg-token), rocket-admin members get the admin role and employee members join #employees at login.',
+            ]
+        : []),
+      it.bind === 'service'
+        ? ad
+          ? `Rocket.Chat binds as CN=${READONLY_USER},CN=Users,${it.baseDn} / ${READONLY_USER}, an ordinary user. Samba sets no page limit (Windows AD stops at 1,000 entries).`
+          : `Rocket.Chat binds as cn=${READONLY_USER},${it.baseDn} / ${READONLY_PASSWORD}; slapd limits it to 500 entries per search, so a sync over more users hits it.`
+        : '',
+      it.users > SHIPPED_USERS_MAX
+        ? 'A large directory takes a while to seed: about 5 minutes for 20,000 users.'
+        : '',
+      sso
+        ? 'Rocket.Chat matches the Keycloak sign-in to the directory user by email; the Keycloak users are under User federation > directory.'
+        : '',
+      sso && it.mfa
+        ? 'Keycloak asks each user to set up an authenticator app at the first sign-in.'
+        : '',
+      hostsEntry
+        ? 'The hosts entry points at this machine, so the browser must be on it. From another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>, which needs no hosts entry.'
+        : sso && it.idpHost === 'localhost'
+          ? 'Keycloak is reached on localhost, so the browser must be on this machine; from another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>.'
+          : '',
+    ],
+  });
+}
+
 function notesFor(it: LDAPIntent): string[] {
   if (isAd(it)) return adNotes(it);
   return [
-    `phpLDAPadmin: http://localhost:${String(UI_PORT)}`,
-    `    log in with DN  cn=admin,${it.baseDn}  /  ${it.adminPassword}`,
-    `    Rocket.Chat users are user1..user${String(it.users)}, password same as name`,
+    `phpLDAPadmin: http://localhost:${String(UI_PORT)}  (log in with DN cn=admin,${it.baseDn} / ${it.adminPassword})`,
+    `Rocket.Chat users are user1..user${String(it.users)}, password same as name.`,
     ...(it.groups
       ? [
-          'Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all).',
-          `    Only rocket-chat may log in: user${String(it.users)} is refused by the group filter.`,
-          '    With an Enterprise licence (--license or --reg-token), rocket-admin members get',
-          '    the admin role and employee members join #employees at login.',
+          `Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all). Only rocket-chat may log in: user${String(it.users)} is refused by the group filter. With an Enterprise licence (--license or --reg-token), rocket-admin members get the admin role and employee members join #employees at login.`,
         ]
       : []),
     ...(it.bind === 'service'
       ? [
-          `Rocket.Chat binds as cn=${READONLY_USER},${it.baseDn} / ${READONLY_PASSWORD}, whom slapd`,
-          '    limits to 500 entries per search: a sync over more users hits it.',
+          `Rocket.Chat binds as cn=${READONLY_USER},${it.baseDn} / ${READONLY_PASSWORD}, whom slapd limits to 500 entries per search: a sync over more users hits it.`,
         ]
       : []),
   ];
@@ -929,6 +992,7 @@ function composeAdapter(it: LDAPIntent): Preset {
     // missing the moment phpLDAPadmin gained a port.
     ports: [...presetPorts('ldap'), ...(idp === null ? [] : [idp.port])],
     notes: [...notesFor(it), ...(idp?.notes ?? [])],
+    guides: [guideFor(it)],
     postReady: idp?.postReady ?? [],
     paramsHelp: { ...PARAMS_HELP },
     scenario: 'ldap',
@@ -1170,6 +1234,7 @@ function kubernetesAdapter(it: LDAPIntent): Preset {
     ...emptyPreset('ldap'),
     description: describe(it),
     notes: [...notesFor(it), ...(idp?.notes ?? [])],
+    guides: [guideFor(it)],
     postReady: idp?.postReady ?? [],
     topology: 'kubernetes',
     // Declared here for the same reason the Compose adapter declares it: phpLDAPadmin is

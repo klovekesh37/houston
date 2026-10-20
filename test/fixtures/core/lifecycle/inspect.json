@@ -61,7 +61,8 @@
             "k6 Load Test dashboard is provisioned too; it fills in while a `loadtest --live` run streams metrics.",
             "Container logs -> Loki: open the 'Rocket.Chat Logs' dashboard in Grafana (http://localhost:5050/d/houston-logs) - no login needed."
           ],
-          "commands": []
+          "commands": [],
+          "guides": []
         }
       ],
       "name": "T-1",

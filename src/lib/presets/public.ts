@@ -15,6 +15,7 @@
  * small nginx of its own, `minio-ui`, strips it on both runtimes. `/livechat` is not
  * available: Rocket.Chat serves its own widget there on the same host.
  */
+import { withoutLocalSetup } from './guides';
 import { k8sManifests, presetPort, safeDump, safeLoadAll } from './common';
 import { type Preset } from './types';
 
@@ -142,8 +143,9 @@ function addRedirects(realm: string, publicUrl: string): string {
 const KEYCLOAK_HOST_NOTES: readonly (readonly [string, number])[] = [
   ['OIDC needs one host entry', 6],
   ["  It is 'localhost', so the browser must be on THIS machine", 3],
-  ['    The browser needs a hosts entry for Keycloak', 1],
-  ['    From another machine: --bind 0.0.0.0 --set idp_host=', 1],
+  // ldap's SSO notes: the sentence, then the entry to paste on its own line.
+  ['The browser needs a hosts entry for Keycloak', 2],
+  ['From another machine: --bind 0.0.0.0 --set idp_host=', 1],
 ];
 
 function dropRuns(notes: readonly string[], runs: typeof KEYCLOAK_HOST_NOTES): string[] {
@@ -170,6 +172,7 @@ export function withPublicUrl(pre: Preset, publicUrl: string, runtime: string): 
     services: JSON.parse(JSON.stringify(pre.services)) as Preset['services'],
     files: [...pre.files],
     notes: [...pre.notes],
+    guides: withoutLocalSetup(pre.guides),
     postReady: pre.postReady.map((action) => JSON.parse(JSON.stringify(action)) as typeof action),
     extra: { ...pre.extra },
   };
@@ -254,8 +257,7 @@ export function withPublicUrl(pre: Preset, publicUrl: string, runtime: string): 
         ];
     }
     out.notes.push(
-      `Demo page over HTTPS: ${base}${DEMO_PATH}/ -- the SAME origin as Rocket.Chat, so`,
-      '    cross-origin (CORS, framing) problems will not show there; the port above does.',
+      `Demo page over HTTPS: ${base}${DEMO_PATH}/  (the same origin as Rocket.Chat, so CORS and framing problems will not show there; the port above does)`,
     );
   }
 

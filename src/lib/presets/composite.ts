@@ -291,6 +291,10 @@ export function composePresets(
     for (const [key, help] of Object.entries(preset.paramsHelp)) {
       out.paramsHelp[`${owner}.${key}`] = help;
     }
+    for (const [old, now] of Object.entries(preset.paramAliases)) {
+      out.paramAliases[`${owner}.${old}`] = `${owner}.${now}`;
+    }
+    out.guides.push(...preset.guides.map((one) => structuredClone(one)));
     out.notes.push(...preset.notes);
     out.requiresLicense ||= preset.requiresLicense;
   }
@@ -322,7 +326,11 @@ export function composePresets(
     parts.map((preset) => [preset.name, preset.scenarioParams]),
   );
   for (const [needs, note] of COMBINED_NOTES) {
-    if (needs.every((name) => names.includes(name))) out.notes.push(...note);
+    if (!needs.every((name) => names.includes(name))) continue;
+    out.notes.push(...note);
+    // The card says it under the first preset the combination names.
+    const owner = out.guides.find((one) => one.name === needs[0]);
+    if (owner !== undefined) owner.know.push(note.map((line) => line.trim()).join(' '));
   }
   return out;
 }

@@ -12,7 +12,10 @@
 // e2ee preset's options sent as its settings.
 // Five retained-job History behaviors extend the 205 baseline.
 // Five seed GUI behaviors and twenty-two re-verification regressions extend the 178 baseline.
-const EXPECTED = 222;
+// Re-recorded for a directory workspace's notes reading as points (the presets write one
+// string per point now), for a rail card whose long name and preset list stay inside it, and
+// for the scenario card reading each preset's guide behind tabs.
+const EXPECTED = 225;
 
 module.exports = (results) => {
   const wanted = process.env.BROWSER_GATE_PROBE === 'count' ? EXPECTED + 1 : EXPECTED;

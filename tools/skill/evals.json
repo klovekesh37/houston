@@ -64,7 +64,7 @@
     "run": [
       "houston up\\b[^\\n]*--preset voice\\b",
       "houston up\\b[^\\n]*--license \\S*voice\\.lic",
-      "houston up\\b[^\\n]*sip=on",
+      "houston up\\b[^\\n]*sip_integration=on",
       "houston up\\b[^\\n]*pbx=on"
     ]
   },

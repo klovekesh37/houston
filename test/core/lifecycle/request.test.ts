@@ -418,6 +418,18 @@ describe('--set across several presets', () => {
       /unknown --set param saml\.users for presets 'email', 'ldap' - valid: .*email\.verification.*ldap\.users/u,
     );
   });
+
+  it("routes a voice option's 2.1.3 spelling as typed, qualified or plain, and knows it", () => {
+    // A 2.1.3 command or a composed record says voice.sip; the record keeps what was typed and
+    // the preset reads it through its aliases, so neither check may call it unknown.
+    const { load } = require('../../../src/lib/presets/index') as typeof PresetsNS;
+    expect(paramsByPreset(['email', 'voice'], { 'voice.sip': 'on', fs_dialplan: 'edit' })).toEqual({
+      email: {},
+      voice: { sip: 'on', fs_dialplan: 'edit' },
+    });
+    expect(unknownParams({ sip: 'on', pbx: 'on', fs_dialplan: 'edit' }, load('voice'))).toEqual([]);
+    expect(unknownParams({ ring: 'on' }, load('voice'))).toEqual(['ring']);
+  });
 });
 
 describe('the browser host of a composed workspace', () => {

@@ -323,11 +323,16 @@ export function reqContext(req: CreateReq): string {
   return named || config.defaultKubeContext();
 }
 
-/** The params the preset does not document, sorted. */
+/** The params the preset neither documents nor takes as an earlier spelling, sorted. */
 export function unknownParams(params: Record<string, unknown>, pre: Preset): string[] {
   return Object.keys(params)
-    .filter((key) => !Object.hasOwn(pre.paramsHelp, key))
+    .filter((key) => !takesParam(pre, key))
     .sort();
+}
+
+/** Whether `pre` reads `key`: documented, or a spelling an earlier release documented. */
+function takesParam(pre: Preset, key: string): boolean {
+  return Object.hasOwn(pre.paramsHelp, key) || Object.hasOwn(pre.paramAliases, key);
 }
 
 /**
@@ -339,24 +344,30 @@ export function paramsByPreset(
   names: readonly string[],
   params: Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
-  const helps = Object.fromEntries(
-    names.map((name) => [name, presets.asValidation(() => presets.load(name, {})).paramsHelp]),
+  const loaded = Object.fromEntries(
+    names.map((name) => [name, presets.asValidation(() => presets.load(name, {}))]),
   );
+  // A key is routed as typed, an earlier spelling included: the record keeps what was typed,
+  // and the preset reads it through its aliases (both spellings at once is its refusal).
+  const takes = (name: string, key: string): boolean => {
+    const pre = loaded[name];
+    return pre !== undefined && takesParam(pre, key);
+  };
   const out: Record<string, Record<string, unknown>> = Object.fromEntries(
     names.map((name) => [name, {}]),
   );
   const valid = names.flatMap((name) =>
-    Object.keys(helps[name] ?? {}).map((key) => `${name}.${key}`),
+    Object.keys(loaded[name]?.paramsHelp ?? {}).map((key) => `${name}.${key}`),
   );
   for (const [raw, value] of Object.entries(params)) {
     const dot = raw.indexOf('.');
     const qualifier = dot > 0 ? raw.slice(0, dot) : '';
     const target = out[qualifier];
-    if (target !== undefined && Object.hasOwn(helps[qualifier] ?? {}, raw.slice(dot + 1))) {
+    if (target !== undefined && takes(qualifier, raw.slice(dot + 1))) {
       target[raw.slice(dot + 1)] = value;
       continue;
     }
-    const owners = names.filter((name) => Object.hasOwn(helps[name] ?? {}, raw));
+    const owners = names.filter((name) => takes(name, raw));
     if (owners.length === 1) {
       (out[owners[0] as string] as Record<string, unknown>)[raw] = value;
       continue;

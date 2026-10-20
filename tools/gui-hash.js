@@ -5,7 +5,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const EXPECTED = 'd43a36615321b906c4d9f5c2940f54990163ae3bc8fb9be61cb110153d086b34';
+const EXPECTED = '4fb1a05f1a715881c887fc77319d5a4b12a90908d67d2d4accce6e1edc789fda';
+// Re-recorded for the scenario card reading each preset's guide behind tabs: who to sign in
+// as, what to try, what to know, one preset at a time, the pane at the tallest guide's height.
+// Re-recorded for the rail card keeping a long name and preset list inside its box: its grid
+// track may shrink below the text, which breaks anywhere.
+// Re-recorded for the voice options' one vocabulary: each row labelled as Rocket.Chat's
+// settings and compose files name it (SIP integration, VoIP domain, RTP ports, PBX, FreeSWITCH
+// dialplans), its --set key the same words (sip_integration, freeswitch_dialplans), the
+// dialplan choice showing the values themselves.
 // Re-recorded for voice's designed controls: each phone option opens once the one it needs is
 // on, none is offered on Kubernetes, and a hidden one is not sent.
 // Re-recorded for a cluster's Prepare and Forget offered to admins only, as the server now

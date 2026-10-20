@@ -1,5 +1,5 @@
 /**
- * Dynamic `voice` preset: Rocket.Chat Voice, calls between users, and with `sip=on` the SIP stack
+ * Dynamic `voice` preset: Rocket.Chat Voice, calls between users, and with `sip_integration=on` the SIP stack
  * Rocket.Chat's documentation pairs it with (Drachtio and Rocket.Chat's own FreeSWITCH image).
  *
  * A call's audio goes browser to browser over WebRTC; Rocket.Chat only signals. So calls between
@@ -7,7 +7,7 @@
  * Rocket.Chat 8 has no setting that switches Voice on, a workspace licensed for it has it. Without
  * one the workspace still boots and says so, because a licence can be applied later.
  *
- * With sip=on Rocket.Chat reaches Drachtio, a SIP signalling gateway, on :9022, and Drachtio
+ * With sip_integration=on Rocket.Chat reaches Drachtio, a SIP signalling gateway, on :9022, and Drachtio
  * reaches FreeSWITCH on :5060. Both run as Rocket.Chat's own compose files define them
  * (`compose.drachtio.yml`, `compose.freeswitch.yml` in RocketChat/rocketchat-compose): the same
  * images, command and variables. FreeSWITCH's stock dialplan answers 123 with an echo test and
@@ -20,19 +20,23 @@
  * FreeSWITCH's replies came from, so advertising the machine's address does not cut Drachtio off
  * (measured: ACK and BYE delivered with FreeSWITCH advertising the host's address).
  *
- * Parameters (via `--set`):
- *   sip          on|off (default off).
- *   voip_domain  VOIP_DOMAIN, the hostname or IPv4 browsers reach this machine at (sip=on).
- *   rtp_ports    the published RTP range, start-end (default 20000-20046, sip=on).
- *   ice_servers  Rocket.Chat's Ice Servers setting: [user:password@]stun:|turn:|turns:host:port,...
- *   pbx          on|off (default off): the PBX lab, `voice-pbx.ts` (sip=on).
- *   fs_dialplan  stock|edit (default stock): FreeSWITCH's dialplans as files to edit (pbx=on).
+ * Parameters (via `--set`), named as Rocket.Chat's settings and compose files name them; the GUI
+ * labels each with the same words (SIP integration, VoIP domain, RTP ports, ICE servers, PBX,
+ * FreeSWITCH dialplans), so a lab built in one front-end is repeated in the other word for word:
+ *   sip_integration       on|off (default off).
+ *   voip_domain           VOIP_DOMAIN, the hostname or IPv4 browsers reach this machine at.
+ *   rtp_ports             the published RTP range, start-end (default 20000-20046).
+ *   ice_servers           Rocket.Chat's ICE servers setting: [user:password@]stun:|turn:|turns:host:port,...
+ *   pbx                   on|off (default off): the PBX lab, `voice-pbx.ts` (sip_integration=on).
+ *   freeswitch_dialplans  stock|edit (default stock): FreeSWITCH's dialplans as files to edit (pbx=on).
+ * 2.1.3 spelled the first and last `sip` and `fs_dialplan`; `VOICE_PARAM_ALIASES` keeps them working.
  */
 import { ValidationError } from '../errors';
 import { shownValue } from '../format';
 import { redactIceServers } from '../redact';
 import { parseVersion } from '../version-spec';
 
+import { guide, type PresetGuide } from './guides';
 import { EMAIL_2FA, choiceParam, strParam } from './common';
 import { type Params, register, registerScenario } from './registry';
 import { Scenario } from './scenario';
@@ -82,16 +86,24 @@ interface Intent {
   fsDialplan: 'stock' | 'edit';
 }
 
+/** The 2.1.3 names of two options, still taken everywhere a `--set` key is read. */
+export const VOICE_PARAM_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  sip: 'sip_integration',
+  fs_dialplan: 'freeswitch_dialplans',
+});
+
 const PARAMS_HELP: Readonly<Record<string, string>> = Object.freeze({
-  sip: 'off|on (default off); add Drachtio and FreeSWITCH, give the test users extensions 1001 and 1002',
+  sip_integration:
+    'off|on (default off); SIP integration: Drachtio and FreeSWITCH as rocketchat-compose runs them, SIP integration enabled in Rocket.Chat, Voice call extensions 1001 and 1002 for the test users. Docker only',
   voip_domain:
-    'VOIP_DOMAIN: the hostname or IPv4 browsers reach this machine at, for SIP audio from other machines (default freeswitch, this machine only; sip=on)',
-  rtp_ports: 'the published UDP RTP range, start-end (default 20000-20046; sip=on)',
+    'VOIP_DOMAIN: the hostname or IPv4 address browsers and phones send RTP audio to (default freeswitch, this machine only; sip_integration=on)',
+  rtp_ports:
+    'the published UDP RTP range, start-end, at most 200 ports (VOIP_RTP_START_PORT-VOIP_RTP_END_PORT; default 20000-20046; sip_integration=on)',
   ice_servers:
-    "Rocket.Chat's Ice Servers setting, comma-separated [user:password@]stun:|turn:|turns:host:port; unset keeps Rocket.Chat's own (Google STUN)",
-  pbx: "off|on (default off); add a lab phone system (Asterisk) on FreeSWITCH's external side: desk phones, ring groups, an outside world (sip=on)",
-  fs_dialplan:
-    'stock|edit (default stock); edit gives FreeSWITCH editable copies of its public and drachtio dialplans (pbx=on)',
+    "Rocket.Chat's ICE servers setting (WebRTC settings), comma-separated [user:password@]stun:|turn:|turns:host:port; unset keeps Rocket.Chat's own (Google STUN)",
+  pbx: "off|on (default off); a lab PBX (Asterisk) on FreeSWITCH's external profile: desk phones, ring groups, an outside caller (sip_integration=on)",
+  freeswitch_dialplans:
+    "stock|edit (default stock); edit gives FreeSWITCH's public and drachtio dialplans as editable copies in the workspace folder (pbx=on)",
 });
 
 function rtpRange(params: Params): readonly [number, number] {
@@ -109,10 +121,10 @@ function rtpRange(params: Params): readonly [number, number] {
 
 function resolveIntent(params: Params): Intent {
   // choiceParam's first choice is the default.
-  const sip = choiceParam(params, 'sip', ['off', 'on']) === 'on';
+  const sip = choiceParam(params, 'sip_integration', ['off', 'on']) === 'on';
   for (const key of ['voip_domain', 'rtp_ports']) {
     if (!sip && strParam(params, key, '') !== '') {
-      throw new Error(`--set ${key} has an effect only with sip=on`);
+      throw new Error(`--set ${key} has an effect only with sip_integration=on`);
     }
   }
   const voipDomain = strParam(params, 'voip_domain', 'freeswitch');
@@ -131,10 +143,12 @@ function resolveIntent(params: Params): Intent {
     }
   }
   const pbx = choiceParam(params, 'pbx', ['off', 'on']) === 'on';
-  if (pbx && !sip) throw new Error('--set pbx=on needs sip=on');
+  if (pbx && !sip) throw new Error('--set pbx=on needs sip_integration=on');
   const fsDialplan =
-    choiceParam(params, 'fs_dialplan', ['stock', 'edit']) === 'edit' ? 'edit' : 'stock';
-  if (fsDialplan === 'edit' && !pbx) throw new Error('--set fs_dialplan=edit needs pbx=on');
+    choiceParam(params, 'freeswitch_dialplans', ['stock', 'edit']) === 'edit' ? 'edit' : 'stock';
+  if (fsDialplan === 'edit' && !pbx) {
+    throw new Error('--set freeswitch_dialplans=edit needs pbx=on');
+  }
   return { sip, voipDomain, rtp: rtpRange(params), iceServers, pbx, fsDialplan };
 }
 
@@ -186,6 +200,45 @@ function sipServices(intent: Intent): Record<string, Record<string, unknown>> {
   };
 }
 
+/** The scenario card's guide: who to sign in as, what to try, what to know, for this lab. */
+function voiceGuide(intent: Intent): PresetGuide {
+  const stack = intent.sip ? ' with the SIP integration (Drachtio and FreeSWITCH)' : '';
+  const lab = intent.pbx ? ' and a lab PBX' : '';
+  return guide('voice', {
+    summary: `Rocket.Chat Voice, calls between users${stack}${lab}; needs a licence with the Voice add-on.`,
+    signIn: Object.entries(VOICE_TEST_USERS).map(([user, extension]) => [
+      user,
+      user,
+      intent.sip ? `extension ${extension}` : '',
+    ]),
+    steps: [
+      'Open Rocket.Chat on localhost or over HTTPS (--https or --domain).',
+      'Sign in as both users in separate browser profiles, open a direct message between them, and press the call button.',
+      intent.sip ? 'Dial 123 from the keypad: FreeSWITCH answers with an echo test.' : '',
+      intent.pbx
+        ? 'Ring voice-bob from the PBX: docker exec houston-<name>-pbx-1 asterisk -rx "channel originate Local/1002@from-outside application Echo".'
+        : intent.sip
+          ? "Ring voice-bob from FreeSWITCH: docker exec houston-<name>-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'."
+          : '',
+    ],
+    know: [
+      'Without a licence with the Voice add-on (teams-voip) there is no call button: pass --license at create, or apply one later under Administration → Subscription, then houston ready --name <name> gives the extensions.',
+      'On a plain-HTTP address other than localhost the browser withholds the microphone, and Rocket.Chat 8.8.1 shows "Application Error".',
+      intent.sip
+        ? intent.voipDomain === 'freeswitch'
+          ? "SIP audio reaches a browser on this machine only; for other machines set voip_domain to this machine's address and --bind 0.0.0.0."
+          : `FreeSWITCH advertises ${intent.voipDomain}; browsers must reach it and the RTP ports over UDP.`
+        : '',
+      intent.pbx
+        ? 'PBX numbers: 22101 rings 10 s then answers, 22102 never, 22103 busy, 22104 at once; ring groups 23000 and 23001; 5550000 echo, 5550001 rings forever, 5550002 busy; softphone accounts 22001 to 22004 (password = number).'
+        : '',
+      intent.pbx
+        ? 'The lab files are in the workspace folder under voice/; the Voice guide has the eight test calls, the call flow and the editable dialplans.'
+        : '',
+    ],
+  });
+}
+
 function adapter(intent: Intent): Preset {
   const users = Object.keys(VOICE_TEST_USERS).join(', ');
   const preset: Preset = {
@@ -193,7 +246,7 @@ function adapter(intent: Intent): Preset {
     description:
       // One sentence: the GUI's create dialog shows only the first.
       'Rocket.Chat Voice, which needs a licence with the Voice add-on: calls between users in ' +
-      'the browser, with test users; sip=on adds Drachtio and FreeSWITCH.',
+      'the browser, with test users; sip_integration=on adds Drachtio and FreeSWITCH.',
     source: 'built-in (scenario)',
     scenario: 'voice',
     scenarioParams: { ...intent },
@@ -209,6 +262,7 @@ function adapter(intent: Intent): Preset {
     },
     softEnv: [EMAIL_2FA],
     postReady: [{ action: 'voice_users', extensions: intent.sip }],
+    guides: [voiceGuide(intent)],
     notes: [
       `Voice test users: ${users}, each with its username as its password. Sign in as both in separate browser profiles, open a direct message between them, and press the call button.`,
       'Voice needs a licence with the Voice add-on (teams-voip); without one Rocket.Chat shows no call button. Pass --license when creating the workspace, or apply one later in Administration → Subscription.',
@@ -245,7 +299,7 @@ function adapter(intent: Intent): Preset {
     notes: [
       ...preset.notes,
       'SIP: once Voice is licensed, voice-alice gets extension 1001 and voice-bob 1002 (after a licence applied later, houston ready --name <name> sets them). Dial 123 for FreeSWITCH’s echo test (you hear yourself): Rocket.Chat → Drachtio → FreeSWITCH. Dialling 1002 rings voice-bob directly, as Rocket.Chat calls its own users itself.',
-      "To ring voice-bob from the SIP side, as a phone system would: docker exec houston-<name>-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'",
+      "To ring voice-bob from the SIP side, as a PBX would: docker exec houston-<name>-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'",
       intent.voipDomain === 'freeswitch'
         ? "SIP audio reaches a browser on this machine only (FreeSWITCH advertises its container name). For browsers on other machines, as Rocket.Chat's docs set it up: --set voip_domain=<this machine's hostname or IP>, --bind 0.0.0.0 (or that IP), and the RTP range open to them over UDP."
         : `FreeSWITCH advertises ${intent.voipDomain} and publishes UDP ${String(intent.rtp[0])}-${String(intent.rtp[1])} on the bind address: browsers must reach both (bind wider than loopback). Calls between users are not affected: their audio goes browser to browser.`,
@@ -277,12 +331,13 @@ export function refuseVoiceBefore800(pre: Preset, rcVersion: string): void {
 const SCENARIO = new Scenario<Intent>({
   name: 'voice',
   paramsHelp: PARAMS_HELP,
+  paramAliases: VOICE_PARAM_ALIASES,
   resolveIntent,
   adapters: {
     docker: adapter,
     // Settings and REST-created users work the same there; the SIP services have no manifests.
     kubernetes: (intent) => {
-      if (intent.sip) throw new Error('voice sip=on runs on Docker only');
+      if (intent.sip) throw new Error('voice sip_integration=on runs on Docker only');
       return adapter(intent);
     },
   },

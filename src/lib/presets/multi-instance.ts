@@ -21,6 +21,7 @@
  *   instances   number of Rocket.Chat instances to run (default 2, clamped 2..5).
  */
 import { TRAEFIK_TAG } from '../config';
+import { guide } from './guides';
 import { intParam } from './common';
 import { type Params, register } from './registry';
 import { emptyPreset, type Preset } from './types';
@@ -103,6 +104,18 @@ export function build(params: Params): Preset {
     source: 'built-in (dynamic)',
     files: [['traefik/dynamic.yml', dynamicConfig(instances)]],
     paramsHelp: { instances: 'number of Rocket.Chat instances (default 2, max 5)' },
+    guides: [
+      guide('multi-instance', {
+        summary: `${String(instances)} Rocket.Chat instances behind one load balancer, with NATS between them.`,
+        steps: [
+          'Verify the mesh, every connected instance: houston api --name <name> GET /api/v1/instances.get (one a restart replaced stays listed a while).',
+          'Open two instance URLs (listed above) in separate browsers and post in one.',
+        ],
+        know: [
+          'Cross-instance real-time needs an Enterprise licence (its scalability module): without one, a message posted on one instance shows on the others only after a reload. Add one with --license or under Workspace > Subscription.',
+        ],
+      }),
+    ],
     notes: [
       'Verify the mesh (lists every connected instance; one a restart replaced stays listed a while):',
       '    houston api --name <name> GET /api/v1/instances.get',

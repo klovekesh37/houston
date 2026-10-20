@@ -57,8 +57,11 @@ const RANKS = [
   // `yaml-dump` is the YAML 1.1 writer, and imports only `float-text`. It sits here because
   // both of its callers are above it: `config` at rank 2 writes config.yaml with it, and
   // `compose` at rank 4 a workspace's docker-compose.yml.
+  // `presets/guides` is the scenario card's guide shape and two pure helpers; it imports
+  // nothing, and `presets/types` (rank 2) names its type.
   [
     '^src/lib/(lock|events|redact|context|teammode|mongo-kernel|close-matches|format|yaml-dump)\\.ts$',
+    '^src/lib/presets/guides\\.ts$',
   ],
   // `tempdir` finds the temp root and makes private temp directories. It stands on `home`
   // (rank 0) for absolute paths and on `format` (rank 1) for the quoting of its refusal, and only

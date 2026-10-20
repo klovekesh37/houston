@@ -785,9 +785,8 @@
    },
    "post_ready": [],
    "notes": [
-    "phpLDAPadmin: http://localhost:8082",
-    "    log in with DN  cn=admin,dc=example,dc=com  /  admin",
-    "    Rocket.Chat users are user1..user5, password same as name"
+    "phpLDAPadmin: http://localhost:8082  (log in with DN cn=admin,dc=example,dc=com / admin)",
+    "Rocket.Chat users are user1..user5, password same as name."
    ],
    "instances": 1,
    "entry_service": "",
@@ -883,9 +882,8 @@
    },
    "post_ready": [],
    "notes": [
-    "phpLDAPadmin: http://localhost:8082",
-    "    log in with DN  cn=admin,dc=a,dc=b,dc=c  /  admin",
-    "    Rocket.Chat users are user1..user2, password same as name"
+    "phpLDAPadmin: http://localhost:8082  (log in with DN cn=admin,dc=a,dc=b,dc=c / admin)",
+    "Rocket.Chat users are user1..user2, password same as name."
    ],
    "instances": 1,
    "entry_service": "",
@@ -943,9 +941,8 @@
    },
    "post_ready": [],
    "notes": [
-    "phpLDAPadmin: http://localhost:8082",
-    "    log in with DN  cn=admin,dc=example,dc=com  /  admin",
-    "    Rocket.Chat users are user1..user5, password same as name"
+    "phpLDAPadmin: http://localhost:8082  (log in with DN cn=admin,dc=example,dc=com / admin)",
+    "Rocket.Chat users are user1..user5, password same as name."
    ],
    "instances": 1,
    "entry_service": "",

@@ -1,3 +1,5 @@
+import type { PresetGuide } from './guides';
+
 /**
  * The resolved preset shape, shared by the loader, Compose and the Kubernetes adapters.
  *
@@ -27,6 +29,10 @@ export interface Preset {
   source: string;
   files: [string, string][];
   paramsHelp: Record<string, string>;
+  /** Earlier spellings of documented keys, old → now: accepted everywhere, listed nowhere. */
+  paramAliases: Record<string, string>;
+  /** The scenario card's guide, one per preset (`guides.ts`); none for a YAML preset. */
+  guides: PresetGuide[];
   postReady: Record<string, unknown>[];
   notes: string[];
   instances: number;
@@ -67,6 +73,8 @@ export function emptyPreset(name: string): Preset {
     source: 'built-in',
     files: [],
     paramsHelp: {},
+    paramAliases: {},
+    guides: [],
     postReady: [],
     notes: [],
     instances: 1,
@@ -124,6 +132,8 @@ export function presetFromJSON(raw: Raw): Preset {
       return [String(pair[0] ?? ''), String(pair[1] ?? '')] as [string, string];
     }),
     paramsHelp: strMap(raw.params_help),
+    paramAliases: {},
+    guides: [],
     postReady: list(raw.post_ready).map(obj),
     notes: list(raw.notes).map(String),
     instances: Number(raw.instances ?? 1) || 1,

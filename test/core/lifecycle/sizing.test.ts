@@ -129,12 +129,14 @@ describe('capacity arithmetic', () => {
   it('charges the SIP stack and the PBX lab, alone or composed', () => {
     const req = (params: Record<string, string>) => createReq({ version: '8.8.1', params });
     const base = neededMb('voice', false, req({}));
+    expect(neededMb('voice', false, req({ sip_integration: 'on' }))).toBe(base + 60);
+    // 2.1.3 spelled it sip, and its records still do.
     expect(neededMb('voice', false, req({ sip: 'on' }))).toBe(base + 60);
     // The Asterisk idled at 48.5 MiB (2026-10-16), with room for calls.
-    expect(neededMb('voice', false, req({ sip: 'on', pbx: 'on' }))).toBe(base + 140);
-    expect(neededMb('email+voice', false, req({ 'voice.sip': 'on', 'voice.pbx': 'on' }))).toBe(
-      neededMb('email+voice', false, req({})) + 140,
-    );
+    expect(neededMb('voice', false, req({ sip_integration: 'on', pbx: 'on' }))).toBe(base + 140);
+    expect(
+      neededMb('email+voice', false, req({ 'voice.sip_integration': 'on', 'voice.pbx': 'on' })),
+    ).toBe(neededMb('email+voice', false, req({})) + 140);
   });
 });
 

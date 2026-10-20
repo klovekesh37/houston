@@ -20,6 +20,7 @@
  *   registration   show the pre-chat registration form first (default false).
  *   department     create an Omnichannel department (default true).
  */
+import { guide } from './guides';
 import { EMAIL_2FA, intParam, k8sManifests, presetPort, presetPorts, truthyParam } from './common';
 import { type Params, register } from './registry';
 import { emptyPreset, type Preset } from './types';
@@ -220,6 +221,27 @@ export function build(params: Params): Preset {
       },
     ],
     notes: livechatNotes(widgetUrl),
+    guides: [
+      guide('livechat', {
+        summary: 'Omnichannel with the Livechat widget on a separate demo website.',
+        signIn: [
+          [
+            'admin',
+            'the Rocket.Chat password above',
+            `the Omnichannel agent${department ? ", department 'support'" : ''}`,
+          ],
+        ],
+        steps: [
+          "Sign in to Rocket.Chat as admin: that gives presence, so visitors see 'agents online'.",
+          'Open the customer website, or the built-in widget at <repro-url>/livechat, and start a chat.',
+          "Answer it in Rocket.Chat's Omnichannel area.",
+        ],
+        know: [
+          agents > 1 ? `${String(agents)} agents are created and assigned to the department.` : '',
+          'Business hours and canned responses are Enterprise features: pass --reg-token to enable them, or configure them by hand.',
+        ],
+      }),
+    ],
   };
 }
 

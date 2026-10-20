@@ -18,6 +18,7 @@
  */
 import * as config from '../config';
 
+import { guide } from './guides';
 import { k8sManifests, presetPort, presetPorts, truthyParam } from './common';
 import { type Params, register } from './registry';
 import { emptyPreset, type Preset } from './types';
@@ -106,6 +107,23 @@ export function build(params: Params): Preset {
     extra: { [config.EXTRA_MAILPIT_URL]: mailpitUrl },
     ports: [...presetPorts('email')],
     kubernetesManifests: [mailpitManifests()],
+    guides: [
+      guide('email', {
+        summary: 'Mailpit catches every email Rocket.Chat sends.',
+        steps: [
+          "Admin → Email → 'Send test email', then open Mailpit.",
+          'A seeded user is asked for a sign-in code: read it in Mailpit (one shared inbox; tell users apart by the To column).',
+        ],
+        know: [
+          'Email 2FA is on, but enforced only for verified emails: seeded users get the code flow, admin signs in plain.',
+          "houston's own token, api and seed calls fetch a required code from Mailpit by themselves.",
+          'Seeded users (--seed) are created with verified emails, ready for 2FA.',
+          verification
+            ? 'New accounts must verify their email before they can sign in (verification=true).'
+            : '',
+        ],
+      }),
+    ],
     notes: [
       `Mailpit (EVERY email RC sends, for ALL users, lands here): ${mailpitUrl}`,
       '  — one shared inbox; tell users apart by the To: column.',

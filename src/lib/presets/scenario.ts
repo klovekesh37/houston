@@ -12,26 +12,47 @@ import type { Preset } from './types';
 export interface ScenarioSpec<Intent> {
   readonly name: string;
   readonly paramsHelp: Readonly<Record<string, string>>;
+  /** Earlier spellings of `paramsHelp` keys, old → now (2.1.3's `sip` for `sip_integration`). */
+  readonly paramAliases?: Readonly<Record<string, string>>;
   readonly resolveIntent: (params: Params) => Intent;
   readonly adapters: Readonly<Record<string, (intent: Intent) => Preset>>;
+}
+
+/**
+ * `params` with each alias key moved to the key it stands for. Both spellings of one option in
+ * one request is a refusal, never a silent winner.
+ */
+export function canonicalParams(params: Params, aliases: Readonly<Record<string, string>>): Params {
+  const out: Params = { ...params };
+  for (const [old, now] of Object.entries(aliases)) {
+    if (!Object.hasOwn(out, old)) continue;
+    if (Object.hasOwn(out, now)) {
+      throw new Error(`--set ${old} is the earlier spelling of ${now}; give one of them`);
+    }
+    out[now] = out[old];
+    delete out[old];
+  }
+  return out;
 }
 
 /** One built-in scenario and its small deployment-specific adapters. */
 export class Scenario<Intent = unknown> {
   readonly name: string;
   readonly paramsHelp: Readonly<Record<string, string>>;
+  readonly paramAliases: Readonly<Record<string, string>>;
   readonly resolveIntent: (params: Params) => Intent;
   readonly adapters: Readonly<Record<string, (intent: Intent) => Preset>>;
 
   constructor(spec: ScenarioSpec<Intent>) {
     this.name = spec.name;
     this.paramsHelp = spec.paramsHelp;
+    this.paramAliases = spec.paramAliases ?? {};
     this.resolveIntent = spec.resolveIntent;
     this.adapters = spec.adapters;
   }
 
   resolve(params: Params | null | undefined, deploymentType: string): Preset {
-    const given = { ...(params ?? {}) };
+    const given = canonicalParams(params ?? {}, this.paramAliases);
     const known = new Set(Object.keys(this.paramsHelp));
     const unknown = Object.keys(given)
       .filter((key) => !known.has(key))
@@ -51,6 +72,6 @@ export class Scenario<Intent = unknown> {
           `'${deploymentType}'; supported: ${supported}`,
       );
     }
-    return adapter(this.resolveIntent(given));
+    return { ...adapter(this.resolveIntent(given)), paramAliases: { ...this.paramAliases } };
   }
 }

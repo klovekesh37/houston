@@ -135,7 +135,13 @@ const ROOT = path.resolve(__dirname, '..');
 // also a project copy, and a same-version copy is not called another build; the shipped skill
 // names a support ticket among its uses and teaches no load testing yet.
 // The skill eval refuses a run that would score nothing, rather than report a pass.
-const FLOOR = 4669;
+// The voice options' one vocabulary: the 2.1.3 names sip and fs_dialplan read as aliases by the
+// preset, by a combination's routing and by the unknown-key check, both spellings at once
+// refused, and the memory charge the same for either spelling.
+// The scenario card's guides: one per guided preset with its parameters, the composite order and
+// the combined note, the public-URL stripping, the scenario group's all-or-nothing rule, and the
+// blank lines a conditional part leaves dropped.
+const FLOOR = 4689;
 
 /** Every authored construct that removes a test from a run or inverts what it asserts. */
 const SKIP_CONSTRUCTS = [

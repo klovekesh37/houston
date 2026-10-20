@@ -1,7 +1,12 @@
 import { ValidationError } from '../../../src/lib/errors';
 import { EMAIL_2FA } from '../../../src/lib/presets/common';
 import { load, loadMany, resolve, scenarioNames } from '../../../src/lib/presets/index';
-import { refuseVoiceBefore800, VOICE_TEST_USERS } from '../../../src/lib/presets/voice';
+import { type Preset } from '../../../src/lib/presets/types';
+import {
+  refuseVoiceBefore800,
+  VOICE_PARAM_ALIASES,
+  VOICE_TEST_USERS,
+} from '../../../src/lib/presets/voice';
 
 /** The Voice settings a preset writes, without the prefix. */
 function voiceSettings(params: Record<string, unknown> = {}): Record<string, string> {
@@ -47,12 +52,12 @@ describe('the voice preset', () => {
     const preset = load('voice');
     expect(preset.env[EMAIL_2FA]).toBe('false');
     expect(preset.softEnv).toEqual([EMAIL_2FA]);
-    expect(load('voice', { sip: 'on' }).env[EMAIL_2FA]).toBe('false');
+    expect(load('voice', { sip_integration: 'on' }).env[EMAIL_2FA]).toBe('false');
     expect(loadMany(['voice', 'email'], {}, 'docker').env[EMAIL_2FA]).toBe('true');
   });
 
-  it('with sip=on adds Drachtio and FreeSWITCH and points Rocket.Chat at them', () => {
-    expect(voiceSettings({ sip: 'on' })).toEqual({
+  it('with sip_integration=on adds Drachtio and FreeSWITCH and points Rocket.Chat at them', () => {
+    expect(voiceSettings({ sip_integration: 'on' })).toEqual({
       VoIP_TeamCollab_SIP_Integration_Enabled: 'true',
       VoIP_TeamCollab_Drachtio_Host: 'drachtio',
       VoIP_TeamCollab_Drachtio_Port: '9022',
@@ -60,7 +65,7 @@ describe('the voice preset', () => {
       VoIP_TeamCollab_SIP_Server_Host: 'freeswitch',
       VoIP_TeamCollab_SIP_Server_Port: '5060',
     });
-    const preset = load('voice', { sip: 'on' });
+    const preset = load('voice', { sip_integration: 'on' });
     expect(Object.keys(preset.services).sort()).toEqual(['drachtio', 'freeswitch']);
     expect(preset.dependsOn).toEqual(['drachtio', 'freeswitch']);
   });
@@ -68,7 +73,7 @@ describe('the voice preset', () => {
   it("runs Drachtio as rocketchat-compose's compose.drachtio.yml does", () => {
     // Same image, command and environment; never published (docs: reachable only by
     // Rocket.Chat and the SIP provider).
-    expect(load('voice', { sip: 'on' }).services.drachtio).toEqual({
+    expect(load('voice', { sip_integration: 'on' }).services.drachtio).toEqual({
       image: 'docker.io/drachtio/drachtio-server:latest',
       restart: 'unless-stopped',
       expose: [9022, '5060/udp'],
@@ -86,7 +91,7 @@ describe('the voice preset', () => {
     // Same image and every variable, the compose escapes written as that file writes them, and
     // the RTP range published (host = container: FreeSWITCH names its own ports in the SDP).
     // houston adds only depends_on (FreeSWITCH resolves the drachtio name once, at startup).
-    expect(load('voice', { sip: 'on' }).services.freeswitch).toEqual({
+    expect(load('voice', { sip_integration: 'on' }).services.freeswitch).toEqual({
       image: 'docker.io/rocketchat/freeswitch:latest',
       restart: 'unless-stopped',
       depends_on: ['drachtio'],
@@ -106,14 +111,14 @@ describe('the voice preset', () => {
       expose: ['5060/udp'],
       ports: ['20000-20046:20000-20046/udp'],
     });
-    expect(load('voice', { sip: 'on' }).ports).toEqual(
+    expect(load('voice', { sip_integration: 'on' }).ports).toEqual(
       Array.from({ length: 47 }, (_, i) => 20000 + i),
     );
   });
 
   it('takes VOIP_DOMAIN and the RTP range as voip_domain and rtp_ports', () => {
     const preset = load('voice', {
-      sip: 'on',
+      sip_integration: 'on',
       voip_domain: 'voip.example.com',
       rtp_ports: '21000-21010',
     });
@@ -126,14 +131,14 @@ describe('the voice preset', () => {
     expect(fs.ports).toEqual(['21000-21010:21000-21010/udp']);
     expect(preset.ports).toEqual(Array.from({ length: 11 }, (_, i) => 21000 + i));
     expect(
-      load('voice', { sip: 'on', voip_domain: '203.0.113.7' }).services.freeswitch?.environment,
+      load('voice', { sip_integration: 'on', voip_domain: '203.0.113.7' }).services.freeswitch?.environment,
     ).toMatchObject({ EXTERNAL_ADDRESS_FQDN: '203.0.113.7' });
   });
 
   it("keeps voip_domain and both presets' ports when composed with email", () => {
     const composed = loadMany(
       ['email', 'voice'],
-      { voice: { sip: 'on', voip_domain: 'voip.example.com' } },
+      { voice: { sip_integration: 'on', voip_domain: 'voip.example.com' } },
       'docker',
     );
     expect(composed.services.freeswitch?.environment).toMatchObject({
@@ -144,14 +149,14 @@ describe('the voice preset', () => {
 
   it('writes ice_servers into the Ice Servers setting, with or without SIP', () => {
     const servers = 'stun:stun.example.com:3478,u:p@turn:turn.example.com:3478';
-    for (const params of [{ ice_servers: servers }, { sip: 'on', ice_servers: servers }]) {
+    for (const params of [{ ice_servers: servers }, { sip_integration: 'on', ice_servers: servers }]) {
       expect(voiceSettings(params)).toMatchObject({ VoIP_TeamCollab_Ice_Servers: servers });
     }
-    expect(voiceSettings({ sip: 'on' })).not.toHaveProperty('VoIP_TeamCollab_Ice_Servers');
+    expect(voiceSettings({ sip_integration: 'on' })).not.toHaveProperty('VoIP_TeamCollab_Ice_Servers');
   });
 
-  it('gives the users extensions with sip=on, and says how to try the SIP path', () => {
-    const preset = load('voice', { sip: 'on' });
+  it('gives the users extensions with sip_integration=on, and says how to try the SIP path', () => {
+    const preset = load('voice', { sip_integration: 'on' });
     expect(preset.postReady).toEqual([{ action: 'voice_users', extensions: true }]);
     expect(VOICE_TEST_USERS).toEqual({ 'voice-alice': '1001', 'voice-bob': '1002' });
     const notes = preset.notes.join('\n');
@@ -168,43 +173,43 @@ describe('the voice preset', () => {
     expect(notes).toContain('this machine');
   });
 
-  it('runs calls between users on Kubernetes, and refuses sip=on there', () => {
+  it('runs calls between users on Kubernetes, and refuses sip_integration=on there', () => {
     expect(scenarioNames()).toContain('voice');
     expect(resolve('voice', 'kubernetes', {}).services).toEqual({});
-    expect(() => resolve('voice', 'kubernetes', { sip: 'on' })).toThrow(
-      'voice sip=on runs on Docker only',
+    expect(() => resolve('voice', 'kubernetes', { sip_integration: 'on' })).toThrow(
+      'voice sip_integration=on runs on Docker only',
     );
   });
 
   // A plain Error, as every preset's: `up` turns it into the usage error (exit 2).
   it.each([
-    [{ sip: 'maybe' }, "--set sip='maybe' expects one of: off, on"],
+    [{ sip_integration: 'maybe' }, "--set sip_integration='maybe' expects one of: off, on"],
     [
       { ring: 'on' },
-      "unknown --set param(s) for preset 'voice': ring - valid: fs_dialplan, ice_servers, pbx, rtp_ports, sip, voip_domain",
+      "unknown --set param(s) for preset 'voice': ring - valid: freeswitch_dialplans, ice_servers, pbx, rtp_ports, sip_integration, voip_domain",
     ],
     [
-      { sip: 'on', voip_domain: 'https://voip.example.com' },
+      { sip_integration: 'on', voip_domain: 'https://voip.example.com' },
       "--set voip_domain='https://voip.example.com' expects a hostname or IPv4 address",
     ],
     [
-      { sip: 'on', voip_domain: 'voip.example.com:5060' },
+      { sip_integration: 'on', voip_domain: 'voip.example.com:5060' },
       "--set voip_domain='voip.example.com:5060' expects a hostname or IPv4 address",
     ],
     [
-      { sip: 'on', rtp_ports: '20046-20000' },
+      { sip_integration: 'on', rtp_ports: '20046-20000' },
       "--set rtp_ports='20046-20000' expects start-end, start below end, both from 1024 to 65535, at most 200 ports",
     ],
     [
-      { sip: 'on', rtp_ports: '80-90' },
+      { sip_integration: 'on', rtp_ports: '80-90' },
       "--set rtp_ports='80-90' expects start-end, start below end, both from 1024 to 65535, at most 200 ports",
     ],
     [
-      { sip: 'on', rtp_ports: '20000-40000' },
+      { sip_integration: 'on', rtp_ports: '20000-40000' },
       "--set rtp_ports='20000-40000' expects start-end, start below end, both from 1024 to 65535, at most 200 ports",
     ],
     [
-      { sip: 'on', voip_domain: 'voip..example.com' },
+      { sip_integration: 'on', voip_domain: 'voip..example.com' },
       "--set voip_domain='voip..example.com' expects a hostname or IPv4 address",
     ],
     [
@@ -212,14 +217,57 @@ describe('the voice preset', () => {
       // The refusal reaches houston.log and the GUI's Activity: it must not carry the password.
       "--set ice_servers entry 'u:********@turn:turn.example.com:3478' is not [user:password@]stun:, turn: or turns:host:port",
     ],
-    [{ voip_domain: 'voip.example.com' }, '--set voip_domain has an effect only with sip=on'],
-    [{ rtp_ports: '21000-21010' }, '--set rtp_ports has an effect only with sip=on'],
+    [{ voip_domain: 'voip.example.com' }, '--set voip_domain has an effect only with sip_integration=on'],
+    [{ rtp_ports: '21000-21010' }, '--set rtp_ports has an effect only with sip_integration=on'],
     [
       { ice_servers: 'stun.example.com:3478' },
       "--set ice_servers entry 'stun.example.com:3478' is not [user:password@]stun:, turn: or turns:host:port",
     ],
   ])('refuses %j, saying what it takes', (params, said) => {
     expect(() => load('voice', params)).toThrow(said);
+  });
+});
+
+describe("the voice preset's 2.1.3 names", () => {
+  it('lists the official names only, and keeps the 2.1.3 names as aliases', () => {
+    // `houston presets`, the GUI and the skill read paramsHelp: one vocabulary, the one
+    // Rocket.Chat's settings and compose files use. The aliases are read, never listed.
+    const preset = load('voice');
+    expect(Object.keys(preset.paramsHelp)).toEqual([
+      'sip_integration',
+      'voip_domain',
+      'rtp_ports',
+      'ice_servers',
+      'pbx',
+      'freeswitch_dialplans',
+    ]);
+    expect(preset.paramAliases).toEqual(VOICE_PARAM_ALIASES);
+    expect(VOICE_PARAM_ALIASES).toEqual({
+      sip: 'sip_integration',
+      fs_dialplan: 'freeswitch_dialplans',
+    });
+  });
+
+  it('takes sip and fs_dialplan as sip_integration and freeswitch_dialplans', () => {
+    // A 2.1.3 command, a workspace record or a bundle from that release names them so.
+    const pick = (p: Preset): unknown[] => [
+      p.services,
+      p.env,
+      p.files,
+      p.keepFiles,
+      p.ports,
+      p.postReady,
+    ];
+    expect(pick(load('voice', { sip: 'on', pbx: 'on', fs_dialplan: 'edit' }))).toEqual(
+      pick(load('voice', { sip_integration: 'on', pbx: 'on', freeswitch_dialplans: 'edit' })),
+    );
+    expect(() => resolve('voice', 'kubernetes', { sip: 'on' })).toThrow('runs on Docker only');
+  });
+
+  it('refuses both spellings of one option in one request', () => {
+    expect(() => load('voice', { sip: 'on', sip_integration: 'off' })).toThrow(
+      '--set sip is the earlier spelling of sip_integration; give one of them',
+    );
   });
 });
 

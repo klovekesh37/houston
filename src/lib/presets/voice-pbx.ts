@@ -1,6 +1,6 @@
 /**
  * The voice preset's PBX lab (`pbx=on`): Rocket.Chat's official external FreeSWITCH settings,
- * and FreeSWITCH's own dialplans as files a person can edit (`fs_dialplan=edit`).
+ * and FreeSWITCH's own dialplans as files a person can edit (`freeswitch_dialplans=edit`).
  *
  * The external settings are `compose.freeswitch.external.yml` from RocketChat/rocketchat-compose
  * (ee0d72d1, unchanged on main 967a4d3a), with the lab PBX as the external domain. The file
@@ -55,7 +55,7 @@ export function fsDialplanFiles(): [string, string][] {
 }
 
 /*
- * The lab PBX: an Asterisk on FreeSWITCH's external side, as a customer's phone system would
+ * The lab PBX: an Asterisk on FreeSWITCH's external profile, as a customer's PBX would
  * be. It is in no Rocket.Chat document -- the PBX is the customer's -- so it is houston's own:
  * a trunk to freeswitch:5080, four softphone accounts, simulated desk phones, ring groups and
  * an "outside world", all in files written once and kept, so a person can edit the dialplan
@@ -265,9 +265,9 @@ export function pbxFiles(voipDomain: string): [string, string][] {
 /** What `info` says about the lab. `<name>` as the voice preset's other notes have it. */
 export function pbxNotes(voipDomain: string): string[] {
   return [
-    `PBX lab: an Asterisk phone system trunked to FreeSWITCH's external side (port 5080). Numbers: 1001/1002 the Rocket.Chat users; 22001–22004 softphone accounts (user = password = number, SIP port 5060 on the bind address); 22101 rings 10 s then answers, 22102 never answers, 22103 is busy, 22104 answers at once; ring group 23000 = 22101 + 22001 + voice-bob, 23001 = 22102 + voice-bob; 5550000 echo, 5550001 rings forever, 5550002 busy, other 5+ digit numbers answer after 3 s with a tone. Rocket.Chat users dial 5+ digits to reach it.`,
+    `PBX lab: an Asterisk PBX trunked to FreeSWITCH's external profile (port 5080). Numbers: 1001/1002 the Rocket.Chat users; 22001–22004 softphone accounts (user = password = number, SIP port 5060 on the bind address); 22101 rings 10 s then answers, 22102 never answers, 22103 is busy, 22104 answers at once; ring group 23000 = 22101 + 22001 + voice-bob, 23001 = 22102 + voice-bob; 5550000 echo, 5550001 rings forever, 5550002 busy, other 5+ digit numbers answer after 3 s with a tone. Rocket.Chat users dial 5+ digits to reach it.`,
     `An outside caller (shows as ${OUTSIDE_CALLER}): docker exec houston-<name>-pbx-1 asterisk -rx "channel originate Local/23000@from-outside application Echo" (Local/1002@from-outside rings voice-bob alone).`,
-    'Edit the lab in ~/.houston/repros/<name>/voice/ (under HOUSTON_HOME when set): pbx/extensions.conf and pbx/pjsip.conf, kept across up --force, stop/start and upgrade (delete one and run up --force for the default); apply with docker exec houston-<name>-pbx-1 asterisk -rx "dialplan reload" (or "pjsip reload"). With fs_dialplan=edit, freeswitch/public.xml and drachtio.xml too: docker exec houston-<name>-freeswitch-1 fs_cli -x reloadxml (after an editor that replaces the file, such as vim or sed -i: docker restart houston-<name>-freeswitch-1).',
+    'Edit the lab in ~/.houston/repros/<name>/voice/ (under HOUSTON_HOME when set): pbx/extensions.conf, pbx/pjsip.conf and pbx/rtp.conf, kept across up --force, stop/start, upgrade and backups (restore --new brings them back; delete one and run up --force for the default); apply with docker exec houston-<name>-pbx-1 asterisk -rx "dialplan reload" (or "pjsip reload"; rtp.conf needs docker restart houston-<name>-pbx-1). With freeswitch_dialplans=edit, freeswitch/public.xml and drachtio.xml too: docker exec houston-<name>-freeswitch-1 fs_cli -x reloadxml (after an editor that replaces the file, such as vim or sed -i: docker restart houston-<name>-freeswitch-1).',
     `The call flow (ladder): docker run --rm -it --net=container:houston-<name>-freeswitch-1 --cap-add NET_RAW --cap-add NET_ADMIN docker.io/library/alpine:3.24.2 sh -c 'apk add -q --no-cache sngrep && sngrep port 5060 or port 5080'. Text traces: asterisk -rx "pjsip set logger on" in the pbx, fs_cli -x "sofia profile external siptrace on" in freeswitch.`,
     advertises(voipDomain)
       ? `Softphones elsewhere reach the PBX at ${voipDomain}:5060. FreeSWITCH advertises ${voipDomain} to the PBX as well, so the workspace must be bound to cover it (--bind 0.0.0.0 or that IP) or PBX calls have no audio.`

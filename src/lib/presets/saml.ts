@@ -14,6 +14,7 @@
  * the cert at runtime (post_ready) and applies it to RC -- no manual exchange. The IdP is
  * published on host port 8081 (browser-reachable).
  */
+import { guide } from './guides';
 import { EMAIL_2FA, intParam, presetPort, presetPorts, strParam } from './common';
 import * as keycloak from './keycloak';
 import { type Params, register } from './registry';
@@ -55,6 +56,30 @@ function samlPreset(
         'not on this machine)',
     },
     ports: [...presetPorts('saml')],
+    guides: [
+      guide('saml', {
+        summary: `Keycloak as a SAML identity provider with ${String(users)} users.`,
+        signIn: [
+          [
+            `${prefix}user1 … ${prefix}user${String(users)}`,
+            'same as the name',
+            "press 'Keycloak SSO' on the login page",
+          ],
+          ['admin', 'admin', `Keycloak admin console, realm '${KC_REALM}' (not master)`],
+        ],
+        steps: [
+          "On the login page press 'Keycloak SSO': your browser is sent to Keycloak.",
+          `Sign in as ${prefix}user1 / ${prefix}user1.`,
+        ],
+        know: [
+          `SAML sends your browser to http://${idpHost}:${String(KC_PORT)}: that address must resolve and be reachable from wherever the browser runs.`,
+          idpHost === 'localhost'
+            ? 'It is localhost, so the browser must be on this machine; from another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>.'
+            : '',
+          `In the Keycloak console switch the realm (top left) to '${KC_REALM}': the users are not in master. The 'temporary admin' banner there is normal in dev mode.`,
+        ],
+      }),
+    ],
     notes: [
       `SAML sends your BROWSER to http://${idpHost}:${String(KC_PORT)} — that address has`,
       '  to resolve and be reachable from wherever the browser is running.',

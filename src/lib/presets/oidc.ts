@@ -12,6 +12,7 @@
  * entry `127.0.0.1  keycloak` (houston prints it). Keycloak is published on host port
  * 8085 (SAML uses 8081, so the two presets do not collide).
  */
+import { guide } from './guides';
 import { EMAIL_2FA, intParam, presetPort, presetPorts, strParam } from './common';
 import * as keycloak from './keycloak';
 import { type Params, register } from './registry';
@@ -70,6 +71,35 @@ function oidcPreset(
         name: keycloak.capitalize(keycloak.OIDC_PROVIDER),
         settings,
       },
+    ],
+    guides: [
+      guide('oidc', {
+        summary: `Keycloak as an OpenID Connect provider with ${String(users)} users.`,
+        setup:
+          idpHost === KC_HOST
+            ? {
+                why: 'Add this line to /etc/hosts (needs sudo); it is how your browser reaches Keycloak at the address Rocket.Chat uses.',
+                line: `127.0.0.1  ${KC_HOST}`,
+              }
+            : null,
+        signIn: [
+          [
+            `${prefix}user1 … ${prefix}user${String(users)}`,
+            'same as the name',
+            "press 'Keycloak (OIDC)' on the login page",
+          ],
+          ['admin', 'admin', `Keycloak admin console, realm '${KC_REALM}'`],
+        ],
+        steps: [
+          idpHost === KC_HOST ? 'Add the hosts entry above.' : '',
+          `On the login page press 'Keycloak (OIDC)' and sign in as ${prefix}user1 / ${prefix}user1.`,
+        ],
+        know: [
+          idpHost === KC_HOST
+            ? 'The hosts entry points at this machine, so the browser must be on it. From another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>, which needs no hosts entry.'
+            : `Your browser and Rocket.Chat both reach Keycloak at http://${idpHost}:${String(KC_PORT)}; the workspace must be bound wide enough for both (--bind 0.0.0.0).`,
+        ],
+      }),
     ],
     notes: [
       ...(idpHost === KC_HOST

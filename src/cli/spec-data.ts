@@ -189,7 +189,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: true,
         defaultValue: null,
-        description: 'preset parameter KEY=VALUE (repeatable), e.g. --set users=5',
+        description:
+          "preset parameter KEY=VALUE (repeatable), e.g. --set users=5; 'houston presets' lists each preset's keys",
         hidden: false,
         negatablePair: false,
       },

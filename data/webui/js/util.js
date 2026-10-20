@@ -355,7 +355,7 @@ let ME = "";                  // the signed-in user, "" when nobody is signed in
 // measurement jobs wait for a slot before they start, and testing only for
 // "running" made every one of them look like it had already finished.
 const jobActive = (s) => s === "running" || s === "queued";
-const dstate = { tab: "overview", detail: null, statsTimer: null, statsRefused: "", points: [] };
+const dstate = { tab: "overview", detail: null, statsTimer: null, statsRefused: "", points: [], guideTab: "" };
 
 // Restart counts already seen, keyed "<workspace>/<pod>". A restart COUNT is
 // cumulative and says nothing about now: a microservices workspace whose

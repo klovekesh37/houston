@@ -459,16 +459,27 @@ const CASES: readonly BrowserCase[] = [
     'restore as new says before it starts that the side ports are taken and what works',
   ],
   ['surfaces rail', 'an upgraded workspace rolls back behind a red confirm and the panel follows'],
+  [
+    'surfaces rail',
+    "a directory workspace's notes read as points, with its login on the place row",
+  ],
+  ['surfaces rail', 'a card with a long name and a long preset list stays inside its box'],
+  ['surfaces rail', "a combined workspace's scenario card is a guide per preset behind tabs"],
 ];
 
+// Re-recorded when "a directory workspace's notes read as points, with its login on the place row"
+// and "a card with a long name and a long preset list stays inside its box" joined: the presets
+// write one string per point, and the rail card's grid track may shrink below its text.
+// Re-recorded when "a combined workspace's scenario card is a guide per preset behind tabs"
+// joined: the scenario card reads each preset's guide instead of its prose.
 // Re-recorded when "the voice panel opens each phone option once the one it needs is on" and
 // "on kubernetes the voice panel offers no phone options and sends none" joined: voice's designed controls.
-const CASES_DIGEST = 'e529bda9c0697433286d9cd2d8a5531385225d80568af181fbdec243be8f46db';
+const CASES_DIGEST = '199a46a81b24e4c810983e340ec956468f78c7ef1ce5340957a055c6228bdcc0';
 const caseIds = CASES.map(([file, name]) => `${file}: ${name}`);
 const casesDigest = crypto.createHash('sha256').update(JSON.stringify(CASES)).digest('hex');
-if (CASES.length !== 188 || new Set(caseIds).size !== 188 || casesDigest !== CASES_DIGEST) {
+if (CASES.length !== 191 || new Set(caseIds).size !== 191 || casesDigest !== CASES_DIGEST) {
   throw new Error(
-    `browser behavior inventory changed: expected 188 unique cases at ${CASES_DIGEST}, ` +
+    `browser behavior inventory changed: expected 191 unique cases at ${CASES_DIGEST}, ` +
       `got ${String(CASES.length)} cases, ${String(new Set(caseIds).size)} unique, ${casesDigest}`,
   );
 }
@@ -3918,6 +3929,49 @@ async function prepareSurface(name: string): Promise<void> {
   if (name === 'the down and unknown words are readable in both themes') {
     useRows([detail({ name: 'down-one', state: 'down' }), detail({ name: 'odd-one', state: '?' })]);
   }
+  if (name === "a directory workspace's notes read as points, with its login on the place row") {
+    // The AD lab's notes as the preset writes them, through the real parser.
+    useRows([
+      detail({
+        preset: 'ldap',
+        notes: presets.load('ldap', { directory: 'ad', groups: 'on' }).notes,
+      }),
+    ]);
+  }
+  if (name === 'a card with a long name and a long preset list stays inside its box') {
+    useRows([
+      detail({
+        name: 'admin-rc8-5-1-e2ee--email--ldap-ec470f',
+        preset: 'e2ee+email+ldap+livechat+oidc+s3_minio',
+        host_port: 3000,
+        created_by: 'admin',
+        monitoring: true,
+        uptime: '10 minutes',
+      }),
+    ]);
+  }
+  if (name === "a combined workspace's scenario card is a guide per preset behind tabs") {
+    // The real presets' guides, in the group the core hands the card for a combined workspace.
+    const names = ['e2ee', 'email', 'ldap', 'livechat', 'oidc', 's3_minio', 'voice'];
+    const composed = presets.loadMany(names, {}, 'docker');
+    useRows([
+      detail({
+        preset: names.join('+'),
+        presets: names,
+        notes: composed.notes,
+        note_groups: [
+          {
+            title: `Scenario · ${names.join(' + ')}`,
+            kind: 'scenario',
+            rows: [],
+            body: composed.notes,
+            commands: [],
+            guides: composed.guides,
+          },
+        ],
+      }),
+    ]);
+  }
 }
 
 async function preparePortedCase(file: string, name: string): Promise<AppOptions> {
@@ -4524,19 +4578,19 @@ async function exerciseKubernetesDialogs(name: string, page: Page): Promise<void
   }
   if (name === 'on kubernetes the voice panel offers no phone options and sends none') {
     // Chosen on Docker first: what was typed there must not reach a Kubernetes create,
-    // where sip=on is refused only after Create.
+    // where sip_integration=on is refused only after Create.
     await page.locator('#btn-new').click();
     await page.locator('#create-dialog[open]').waitFor({ state: 'visible' });
     await pickPlace(page, 'docker');
     await createDetails(page);
     await page.locator('#plist input[value=voice]').check();
-    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
+    await page.locator('.ppanel input[data-p=voice][data-k=sip_integration]').check();
     await page.locator('.ppanel input[data-p=voice][data-k=voip_domain]').fill('192.168.1.20');
     await createWhere(page);
     await pickPlace(page, 'k8s:kind-support');
     await createDetails(page);
     expect(await page.locator('#plist input[value=voice]').isChecked()).toBe(true);
-    expect(await page.locator('.ppanel [data-p=voice][data-k=sip]').count()).toBe(0);
+    expect(await page.locator('.ppanel [data-p=voice][data-k=sip_integration]').count()).toBe(0);
     expect(await page.locator('.ppanel [data-p=voice][data-k=voip_domain]').count()).toBe(0);
     expect(await page.locator('.ppanel', { hasText: 'run on Docker only' }).count()).toBe(1);
     expect(await page.locator('.ppanel input[data-p=voice][data-k=ice_servers]').count()).toBe(1);
@@ -5418,6 +5472,84 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     expect(await page.locator('#repros').textContent()).toContain('t1234');
     return;
   }
+  if (name === "a directory workspace's notes read as points, with its login on the place row") {
+    // Wrapped prose indented by four spaces was read as things to paste: one sentence became
+    // five Copy boxes in the scenario card, and the DN to log in with sat in a box of its own.
+    await openWorkspace(page);
+    await page.locator('#d-body .note-p').first().waitFor({ state: 'visible' });
+    expect(await page.locator('#d-body .note-cmd').count()).toBe(0);
+    const points = await page.locator('#d-body .note-p').allInnerTexts();
+    expect(points.some((p) => p.includes('sAMAccountName') && p.includes('objectGUID'))).toBe(true);
+    expect(points.some((p) => p.startsWith('Groups:') && p.includes('#employees at login'))).toBe(
+      true,
+    );
+    expect(
+      await page.locator('#d-body .linkrow .l-sub', { hasText: 'log in with DN' }).count(),
+    ).toBe(1);
+    return;
+  }
+  if (name === 'a card with a long name and a long preset list stays inside its box') {
+    // A grid track is at least as wide as its widest unbreakable text: a preset list with no
+    // space in it pushed the version and the age past the card's edge.
+    const card = page.locator('.wrow').first();
+    await card.waitFor({ state: 'visible' });
+    const box = await card.evaluate((node) => {
+      const right = (sel: string): number =>
+        node.querySelector(sel)?.getBoundingClientRect().right ?? 0;
+      return {
+        overflow: node.scrollWidth - node.clientWidth,
+        edge: node.getBoundingClientRect().right,
+        ver: right('.ver'),
+        age: right('.wage'),
+        meta: right('.meta'),
+      };
+    });
+    expect(box.overflow).toBe(0);
+    expect(box.ver).toBeLessThanOrEqual(box.edge);
+    expect(box.age).toBeLessThanOrEqual(box.edge);
+    expect(box.meta).toBeLessThanOrEqual(box.edge);
+    return;
+  }
+  if (name === "a combined workspace's scenario card is a guide per preset behind tabs") {
+    // Seven presets' notes were one wall of paragraphs; the card now shows the places as
+    // before, then one preset's guide at a time, the card's height the same for each.
+    await openWorkspace(page);
+    const tabs = page.locator('#d-body .guide-tabs button');
+    await tabs.first().waitFor({ state: 'visible' });
+    expect(await tabs.allInnerTexts()).toEqual([
+      'e2ee',
+      'email',
+      'ldap',
+      'livechat',
+      'oidc',
+      's3_minio',
+      'voice',
+    ]);
+    expect(await page.locator('#d-body .guide-tabs button[aria-selected=true]').innerText()).toBe(
+      'e2ee',
+    );
+    expect(await page.locator('#d-body .guide-pane .notetable tr').count()).toBe(3);
+    expect(await page.locator('#d-body .note-p').count()).toBe(0);
+    expect(await page.locator('#d-body .linkrow').count()).toBeGreaterThanOrEqual(6);
+    await page.waitForTimeout(150);
+    const card = page.locator('#d-body .panelcard', { has: page.locator('.guide-tabs') });
+    const height = async (): Promise<number> =>
+      await card.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+    const before = await height();
+    await page.locator('#d-body .guide-tabs button[data-tab=oidc]').click();
+    await page.waitForTimeout(250);
+    // innerText folds the entry's two spaces into one; the copy button gets the line itself.
+    expect(await page.locator('#d-body .guide-pane .setup code').innerText()).toMatch(
+      /^127\.0\.0\.1\s+keycloak$/u,
+    );
+    expect(Math.abs((await height()) - before)).toBeLessThanOrEqual(1);
+    await page.locator('#d-body .guide-tabs button[data-tab=oidc]').press('End');
+    await page.waitForTimeout(250);
+    expect(await page.locator('#d-body .guide-tabs button[aria-selected=true]').innerText()).toBe(
+      'voice',
+    );
+    return;
+  }
   if (name === 'the detail panel opens and switches tabs') {
     await openWorkspace(page);
     expect(await page.locator('#detail').textContent()).toContain('7.4.1');
@@ -5701,14 +5833,14 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     await page.locator('#plist input[value=voice]').check();
     await page.locator('#plist input[value=email]').check();
     expect(await page.locator('.ppanel-h').allInnerTexts()).toEqual(['email', 'voice']);
-    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
+    await page.locator('.ppanel input[data-p=voice][data-k=sip_integration]').check();
     await page.locator('.ppanel input[data-p=voice][data-k=pbx]').check();
     await submitTheCreate(page, '8.8.1');
-    // What the core receives is what `--preset email+voice --set voice.sip=on --set
+    // What the core receives is what `--preset email+voice --set voice.sip_integration=on --set
     // voice.pbx=on` gives it: one rule for both front-ends.
     const request = mockCreateRepro.mock.calls[0]?.[0];
     expect(request?.preset).toBe('email+voice');
-    expect(request?.params).toEqual({ 'voice.sip': 'on', 'voice.pbx': 'on' });
+    expect(request?.params).toEqual({ 'voice.sip_integration': 'on', 'voice.pbx': 'on' });
     return;
   }
   if (name === 'the voice panel opens each phone option once the one it needs is on') {
@@ -5723,31 +5855,43 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
         ),
       ),
     ];
-    expect(await shown()).toEqual(['sip', 'ice_servers']);
-    await page.locator('.ppanel input[data-p=voice][data-k=sip]').check();
-    expect(await shown()).toEqual(['sip', 'voip_domain', 'rtp_ports', 'pbx', 'ice_servers']);
-    await page.locator('.ppanel input[data-p=voice][data-k=pbx]').check();
+    expect(await shown()).toEqual(['sip_integration', 'ice_servers']);
+    await page.locator('.ppanel input[data-p=voice][data-k=sip_integration]').check();
     expect(await shown()).toEqual([
-      'sip',
+      'sip_integration',
       'voip_domain',
       'rtp_ports',
       'pbx',
-      'fs_dialplan',
       'ice_servers',
     ]);
-    await page.locator('.ppanel button[data-p=voice][data-k=fs_dialplan][data-v=edit]').click();
+    await page.locator('.ppanel input[data-p=voice][data-k=pbx]').check();
+    expect(await shown()).toEqual([
+      'sip_integration',
+      'voip_domain',
+      'rtp_ports',
+      'pbx',
+      'freeswitch_dialplans',
+      'ice_servers',
+    ]);
+    await page
+      .locator('.ppanel button[data-p=voice][data-k=freeswitch_dialplans][data-v=edit]')
+      .click();
     expect(
       await page.locator('.ppanel', { hasText: 'kept across rebuilds and backups' }).count(),
     ).toBe(1);
     await page.locator('.ppanel input[data-p=voice][data-k=voip_domain]').fill('192.168.1.20');
-    // pbx off hides the dialplan choice, and a hidden choice is not sent: fs_dialplan=edit
+    // pbx off hides the dialplan choice, and a hidden choice is not sent: freeswitch_dialplans=edit
     // without pbx=on is a refusal.
     await page.locator('.ppanel input[data-p=voice][data-k=pbx]').uncheck();
-    expect(await shown()).not.toContain('fs_dialplan');
+    expect(await shown()).not.toContain('freeswitch_dialplans');
     await submitTheCreate(page, '8.8.1');
     const request = mockCreateRepro.mock.calls[0]?.[0];
     expect(request?.preset).toBe('voice');
-    expect(request?.params).toEqual({ sip: 'on', voip_domain: '192.168.1.20', pbx: 'off' });
+    expect(request?.params).toEqual({
+      sip_integration: 'on',
+      voip_domain: '192.168.1.20',
+      pbx: 'off',
+    });
     return;
   }
   if (name === 'the e2ee options send the policy and switches as its settings') {
@@ -6136,6 +6280,10 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     await openCreate(page);
     await createDetails(page);
     await page.locator('#create-form input[name=version]').fill('develop');
+    // The version lookup fires 400 ms after typing stops and, with no network here, answers
+    // 400 for a CI build. Waited for: on a fast run the page was gone before it fired, on a
+    // slow lane it landed after the refusal and was read as a stray failure.
+    await page.waitForResponse((r) => new URL(r.url()).pathname === '/api/versions/develop');
     await page.locator('#create-submit').click();
     const toast = page.locator('#toasts .toast', { hasText: 'limited to admins' });
     await toast.waitFor({ state: 'visible' });
@@ -6628,23 +6776,26 @@ describe('the frozen GUI against the in-process Fastify server', () => {
     const activePage = await activeContext.newPage();
     page = activePage;
     expectedConsoleError =
-      name === 'a wrong password shows an error in the page'
-        ? { pathname: '/signin', status: 401 }
-        : name === 'the env tab shows the refusal rather than an empty table'
-          ? { pathname: '/api/repros/t1234/env', status: 409 }
-          : name === 'the live chart stops asking when the answer is a refusal'
-            ? { pathname: '/api/repros/t1234/stats', status: 409 }
-            : name === 'you can change your own password from the browser'
-              ? { pathname: '/api/me/password', status: 400 }
-              : name === 'a failed overview read says so and offers to try again'
-                ? { pathname: '/api/clusters/overview', status: 500 }
-                : name === 'this machine says it could not read its clusters, not that it has none'
-                  ? { pathname: '/api/clusters', status: 500 }
-                  : name === 'a refusal raised inside a dialog is read on top of it'
-                    ? { pathname: '/api/repros', status: 400 }
-                    : name === 'a refused hand over is said inside its dialog'
-                      ? { pathname: '/api/repros/t1234/owner', status: 404 }
-                      : null;
+      name === 'a refusal raised inside a dialog is read on top of it'
+        ? { pathname: '/api/versions/develop', status: 400 }
+        : name === 'a wrong password shows an error in the page'
+          ? { pathname: '/signin', status: 401 }
+          : name === 'the env tab shows the refusal rather than an empty table'
+            ? { pathname: '/api/repros/t1234/env', status: 409 }
+            : name === 'the live chart stops asking when the answer is a refusal'
+              ? { pathname: '/api/repros/t1234/stats', status: 409 }
+              : name === 'you can change your own password from the browser'
+                ? { pathname: '/api/me/password', status: 400 }
+                : name === 'a failed overview read says so and offers to try again'
+                  ? { pathname: '/api/clusters/overview', status: 500 }
+                  : name ===
+                      'this machine says it could not read its clusters, not that it has none'
+                    ? { pathname: '/api/clusters', status: 500 }
+                    : name === 'a refusal raised inside a dialog is read on top of it'
+                      ? { pathname: '/api/repros', status: 400 }
+                      : name === 'a refused hand over is said inside its dialog'
+                        ? { pathname: '/api/repros/t1234/owner', status: 404 }
+                        : null;
     activePage.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
     activePage.on('console', (message) => {
       if (message.type() !== 'error') return;
@@ -6659,6 +6810,12 @@ describe('the frozen GUI against the in-process Fastify server', () => {
         sawExpectedConsoleError = true;
         return;
       }
+      // The refused create's own 400, logged by the browser when the page outlives it.
+      const expectedRefusalConsole =
+        name === 'a refusal raised inside a dialog is read on top of it' &&
+        pathname === '/api/repros' &&
+        message.text().includes('status of 400');
+      if (expectedRefusalConsole) return;
       failures.push(`console: ${message.text()}`);
     });
     activePage.on('requestfailed', (request) => {
@@ -6720,8 +6877,10 @@ describe('the frozen GUI against the in-process Fastify server', () => {
           new URL(response.url()).pathname === '/api/clusters' &&
           response.status() === 500) ||
         (name === 'a refusal raised inside a dialog is read on top of it' &&
-          response.request().method() === 'POST' &&
-          new URL(response.url()).pathname === '/api/repros' &&
+          ((response.request().method() === 'POST' &&
+            new URL(response.url()).pathname === '/api/repros') ||
+            (response.request().method() === 'GET' &&
+              new URL(response.url()).pathname === '/api/versions/develop')) &&
           response.status() === 400) ||
         (name === 'a refused hand over is said inside its dialog' &&
           response.request().method() === 'POST' &&

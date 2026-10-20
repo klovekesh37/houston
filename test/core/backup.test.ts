@@ -1701,6 +1701,7 @@ describe('backing up and restoring a workspace', () => {
     async function editedLabBundle(backup: typeof BackupNS): Promise<string> {
       await writeRepro('lab', COMPOSE_ONE, {
         preset: 'voice',
+        // 2.1.3's spelling on purpose: a bundle from that release restores through the alias.
         extra: { params: { sip: 'on', pbx: 'on' } },
       });
       const edited = path.join(home, 'repros', 'lab', 'voice', 'pbx', 'extensions.conf');

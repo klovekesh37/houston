@@ -11,7 +11,7 @@ function fsOf(params: Record<string, unknown>): Service {
 describe("the voice PBX lab: FreeSWITCH's external side", () => {
   it('gives FreeSWITCH the official external variables with pbx=on', () => {
     // compose.freeswitch.external.yml, the `$$` escapes as that file writes them.
-    expect(fsOf({ sip: 'on', pbx: 'on' }).environment).toMatchObject({
+    expect(fsOf({ sip_integration: 'on', pbx: 'on' }).environment).toMatchObject({
       ACCEPT_EXTERNAL_CALLS: 'true',
       EXTERNAL_CALLS_DOMAIN: 'pbx:5060',
       EXTERNAL_NUMBER_EXPRESSION: '^(\\+?\\d{5,})$$',
@@ -22,26 +22,26 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
         'sofia/external/$${dialed_extension}@$${external_calls_domain}',
       SIP_EXTERNAL_INBOUND_ACL: 'any_v4.auto',
     });
-    expect(fsOf({ sip: 'on', pbx: 'on' }).expose).toEqual(['5060/udp', '5080/udp']);
+    expect(fsOf({ sip_integration: 'on', pbx: 'on' }).expose).toEqual(['5060/udp', '5080/udp']);
     // The official file's port, after the base file's RTP range (compose merges them in that order).
-    expect(fsOf({ sip: 'on', pbx: 'on' }).ports).toEqual([
+    expect(fsOf({ sip_integration: 'on', pbx: 'on' }).ports).toEqual([
       '20000-20046:20000-20046/udp',
       '5080:5080/udp',
     ]);
-    expect(load('voice', { sip: 'on', pbx: 'on' }).ports).toContain(5080);
-    expect(load('voice', { sip: 'on' }).ports).not.toContain(5080);
+    expect(load('voice', { sip_integration: 'on', pbx: 'on' }).ports).toContain(5080);
+    expect(load('voice', { sip_integration: 'on' }).ports).not.toContain(5080);
   });
 
-  it('leaves sip=on alone without pbx', () => {
-    expect(fsOf({ sip: 'on' }).environment.ACCEPT_EXTERNAL_CALLS).toBe('false');
-    expect(fsOf({ sip: 'on' }).environment).not.toHaveProperty('EXTERNAL_CALLS_DOMAIN');
-    expect(fsOf({ sip: 'on' }).expose).toEqual(['5060/udp']);
+  it('leaves sip_integration=on alone without pbx', () => {
+    expect(fsOf({ sip_integration: 'on' }).environment.ACCEPT_EXTERNAL_CALLS).toBe('false');
+    expect(fsOf({ sip_integration: 'on' }).environment).not.toHaveProperty('EXTERNAL_CALLS_DOMAIN');
+    expect(fsOf({ sip_integration: 'on' }).expose).toEqual(['5060/udp']);
   });
 
-  it('mounts editable dialplans only with fs_dialplan=edit, one file at a time, kept', () => {
+  it('mounts editable dialplans only with freeswitch_dialplans=edit, one file at a time, kept', () => {
     // One mount per file: the image's entrypoint leaves a dialplan alone when that FILE is
     // mounted from the host, and renders it from the variables otherwise.
-    const edit = load('voice', { sip: 'on', pbx: 'on', fs_dialplan: 'edit' });
+    const edit = load('voice', { sip_integration: 'on', pbx: 'on', freeswitch_dialplans: 'edit' });
     expect((edit.services.freeswitch as Service).volumes).toEqual([
       './voice/freeswitch/public.xml:/etc/freeswitch/dialplan/public.xml:ro',
       './voice/freeswitch/drachtio.xml:/etc/freeswitch/dialplan/drachtio.xml:ro',
@@ -53,7 +53,7 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
     expect(pub).toContain(
       '<action application="bridge" data="sofia/internal/${dialed_extension}@${domain_name}"/>',
     );
-    const stock = load('voice', { sip: 'on', pbx: 'on' });
+    const stock = load('voice', { sip_integration: 'on', pbx: 'on' });
     expect((stock.services.freeswitch as Service).volumes).toBeUndefined();
     expect(
       stock.files.map(([file]) => file).filter((file) => file.startsWith('voice/freeswitch/')),
@@ -61,21 +61,21 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
   });
 
   it.each([
-    [{ pbx: 'on' }, '--set pbx=on needs sip=on'],
-    [{ sip: 'on', fs_dialplan: 'edit' }, '--set fs_dialplan=edit needs pbx=on'],
-    [{ sip: 'on', pbx: 'maybe' }, "--set pbx='maybe' expects one of: off, on"],
+    [{ pbx: 'on' }, '--set pbx=on needs sip_integration=on'],
+    [{ sip_integration: 'on', freeswitch_dialplans: 'edit' }, '--set freeswitch_dialplans=edit needs pbx=on'],
+    [{ sip_integration: 'on', pbx: 'maybe' }, "--set pbx='maybe' expects one of: off, on"],
   ])('refuses %j', (params, message) => {
     expect(() => load('voice', params)).toThrow(message);
   });
 
   it('refuses pbx on Kubernetes, as it refuses sip', () => {
-    expect(() => resolve('voice', 'kubernetes', { sip: 'on', pbx: 'on' })).toThrow(
-      'voice sip=on runs on Docker only',
+    expect(() => resolve('voice', 'kubernetes', { sip_integration: 'on', pbx: 'on' })).toThrow(
+      'voice sip_integration=on runs on Docker only',
     );
   });
 
   it('routes voice.pbx in a composed workspace', () => {
-    const composed = loadMany(['email', 'voice'], { voice: { sip: 'on', pbx: 'on' } }, 'docker');
+    const composed = loadMany(['email', 'voice'], { voice: { sip_integration: 'on', pbx: 'on' } }, 'docker');
     expect((composed.services.freeswitch as Service).environment.ACCEPT_EXTERNAL_CALLS).toBe(
       'true',
     );
@@ -84,7 +84,7 @@ describe("the voice PBX lab: FreeSWITCH's external side", () => {
 
 describe('the voice PBX lab: the Asterisk phone system', () => {
   const lab = (params: Record<string, unknown> = {}): Preset =>
-    load('voice', { sip: 'on', pbx: 'on', ...params });
+    load('voice', { sip_integration: 'on', pbx: 'on', ...params });
   const file = (pre: Preset, name: string): string =>
     pre.files.find(([path]) => path === name)?.[1] ?? '';
 
@@ -141,7 +141,7 @@ describe('the voice PBX lab: the Asterisk phone system', () => {
     expect(file(pre, 'voice/pbx/pjsip.conf')).toContain('#include lab/transports.conf');
     expect(file(pre, 'voice/pbx/pjsip.conf')).not.toContain('external_');
     expect(file(lab(), 'voice/pbx/transports.conf')).not.toContain('external_');
-    expect(lab({ fs_dialplan: 'edit' }).keepFiles).toHaveLength(5);
+    expect(lab({ freeswitch_dialplans: 'edit' }).keepFiles).toHaveLength(5);
   });
 
   it('trunks to FreeSWITCH :5080 and gives four softphone accounts', () => {
@@ -180,8 +180,14 @@ describe('the voice PBX lab: the Asterisk phone system', () => {
       'alpine:3.24.2',
       'sngrep port 5060 or port 5080',
       '--bind 0.0.0.0 or that IP',
+      // The three kept files, and what brings them back: the note once named two of them.
+      'pbx/extensions.conf, pbx/pjsip.conf and pbx/rtp.conf',
+      'restore --new brings them back',
+      'freeswitch_dialplans=edit',
     ]) {
       expect(notes).toContain(text);
     }
+    // One vocabulary: the official word is PBX, and the SIP services are named.
+    expect(notes).not.toMatch(/phone (system|services)/iu);
   });
 });

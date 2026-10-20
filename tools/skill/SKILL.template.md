@@ -37,7 +37,7 @@ command takes it and read the last line (see [The output contract](#the-output-c
 | the same with LDAP | `houston up --version 7.4.1 --name <n>-ldap --preset ldap --wait --json` | a **new name**: an existing one is reused as it was |
 | SAML, OIDC, email, S3, livechat, offline | `--preset saml`, `oidc`, `email`, `s3_minio`, `livechat` or `airgapped` on `up` | `oidc`: ask the person to add `127.0.0.1 keycloak` to `/etc/hosts` |
 | encrypted conversations | `houston up --version 8.8.0 --name <n> --preset e2ee --wait --json` | the person signs in as `e2e-alice` and `e2e-bob` in two browser profiles ([E2EE](#e2ee)) |
-| Voice calls | `houston up --version 8.7.0 --name <n> --preset voice --license <file> --wait --json` | the person signs in as `voice-alice` and `voice-bob` and calls; `--set sip=on` adds the SIP stack ([Voice](#voice)) |
+| Voice calls | `houston up --version 8.7.0 --name <n> --preset voice --license <file> --wait --json` | the person signs in as `voice-alice` and `voice-bob` and calls; `--set sip_integration=on` adds the SIP integration ([Voice](#voice)) |
 | a pull request's build, or develop | `houston up --version pr-42617 --name <n> --wait --json` | a CI build, not a partial version ([Versions](#versions)) |
 | HTTPS on this machine | `houston up --version 8.5.1 --name <n> --https --wait --json` | for OAuth, SAML and anything that needs a secure origin; the person runs `houston trust-ca` once first ([HTTPS](#https)) |
 | HTTPS for a phone or another machine | `houston up --version 8.5.1 --name <n> --domain <host> --email <address> --wait --json` | ask for the name; it must already point at this machine ([HTTPS](#https)) |
@@ -143,8 +143,8 @@ From `houston info --name <n> --json`:
   to free a port: two workspaces with the same `ldap`, `saml`, `oidc`, `email`, `s3_minio`
   or `livechat` preset cannot run at once, because its side service holds a fixed port that
   stopping does not free, and the second `up` exits 8 naming the workspace that holds it.
-  Two `voice` workspaces with `sip=on` clash the same way on their audio ports: give the
-  second its own range with `--set rtp_ports=21000-21046` rather than removing the first.
+  Two `voice` workspaces with `sip_integration=on` clash the same way on their RTP ports: give
+  the second its own range with `--set rtp_ports=21000-21046` rather than removing the first.
   Only one with `pbx=on` can run per machine;
 - exit 6: show `error.gate.approve_with` to the person, never run it yourself;
 - `houston trust-ca`, or editing `/etc/hosts`.
@@ -220,12 +220,15 @@ must reach Rocket.Chat on localhost or over HTTPS. `data/docs/e2ee.md` has the r
 The `voice` preset creates `voice-alice` and `voice-bob` (password = username) for
 Rocket.Chat Voice calls. It needs Rocket.Chat 8.0.0 or later and a licence with the Voice
 add-on: without `--license` the workspace boots with a warning and no call button.
-`sip=on` (Docker only) adds Drachtio and FreeSWITCH wired to Rocket.Chat
-and gives the users extensions 1001 and 1002; dialling 123 reaches FreeSWITCH's echo test.
-For browsers on other machines add `--set voip_domain=<this machine's host or IP> --bind 0.0.0.0`
-(they need UDP to it; through a tunnel a SIP call is answered but keeps ringing, with no audio).
-`--set pbx=on` (it needs `sip=on`) adds a lab phone system (Asterisk) on FreeSWITCH's
-external side, with desk phones, ring groups and editable dialplans, for testing PBX integrations.
+`--set sip_integration=on` (Docker only) adds Drachtio and FreeSWITCH wired to Rocket.Chat
+and gives the users Voice call extensions 1001 and 1002; dialling 123 reaches FreeSWITCH's echo
+test. For browsers on other machines add `--set voip_domain=<this machine's host or IP>
+--bind 0.0.0.0` (they need UDP to it; through a tunnel a SIP call is answered but keeps ringing,
+with no audio). `--set pbx=on` (it needs `sip_integration=on`) adds a lab PBX (Asterisk) on
+FreeSWITCH's external profile, with desk phones, ring groups and editable dialplans
+(`--set freeswitch_dialplans=edit`), for testing PBX integrations. The option names are the
+words Rocket.Chat's settings and rocketchat-compose use, and the GUI labels them the same;
+2.1.3's `sip` and `fs_dialplan` still work.
 The browser must reach Rocket.Chat on localhost or over HTTPS. `data/docs/voice.md` has the
 rest.
 
@@ -270,8 +273,8 @@ Each refusal names the reason and the alternative:
 - any `env` change: an environment variable is a Helm value there. Use `houston api` for
   a setting.
 - `seed --scale`: Docker only. `houston seed` works on both.
-- `voice` with `sip=on` or `pbx=on`: the phone services run on Docker only. `--preset voice`
-  alone, calls between users, works on both.
+- `voice` with `sip_integration=on` or `pbx=on`: Drachtio, FreeSWITCH and the PBX run on Docker
+  only. `--preset voice` alone, calls between users, works on both.
 
 `stats` needs metrics-server and says how to install it. Everything else works on both
 runtimes.
