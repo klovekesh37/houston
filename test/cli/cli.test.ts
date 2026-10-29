@@ -35,7 +35,7 @@ describe('the durable record of a failure', () => {
       });
       const handled = await runCli(['info', '--name', 'nope'], {
         execute: async () => {
-          throw new NotFoundError("no repro named 'nope'");
+          throw new NotFoundError("no workspace named 'nope'");
         },
         io,
       });
@@ -291,5 +291,55 @@ describe("a multi-instance workspace's info", () => {
     expect(row).toContain('email');
     expect(row).not.toContain('multi-instance');
     expect(out).toContain('instances (2');
+  });
+});
+
+describe('a localhost URL printed over SSH', () => {
+  afterEach(() => {
+    delete process.env.SSH_CONNECTION;
+    delete process.env.SSH_CLIENT;
+  });
+
+  const info = async (name: string): Promise<string> => {
+    let out = '';
+    const io = { writeOut: (text: string) => void (out += text), writeErr: () => undefined };
+    const handlers = require('../../src/cli/handlers') as typeof HandlersNS;
+    expect(
+      await runCli(['info', '--name', name], { io, execute: handlers.createExecutor(io) }),
+    ).toBe(0);
+    return out;
+  };
+
+  it('says how to open it from your computer, once, and only over SSH and only for localhost', async () => {
+    // localhost is the server: a reader whose shell is SSH'd in was handed a URL their own
+    // browser opens on their own laptop, where nothing answers.
+    const record = require('../../src/core/runner/record') as typeof RecordNS;
+    await record.writeRecord(
+      'tun',
+      record.metadata({ name: 'tun', project: 'houston-tun', rootUrl: 'http://localhost:3412' }),
+    );
+    await record.writeRecord(
+      'pub',
+      record.metadata({
+        name: 'pub',
+        project: 'houston-pub',
+        rootUrl: 'http://localhost:3413',
+        publicUrl: 'https://pub.example.com',
+        extra: { tls: 'acme' },
+      }),
+    );
+    const line =
+      'localhost is the machine running houston. From your computer: ssh -L 3412:localhost:3412 ' +
+      '<you>@<this server>, then open the URL; or create it with --domain for an address ' +
+      'anyone can open.';
+    expect(await info('tun')).not.toContain('localhost is the machine running houston');
+    process.env.SSH_CONNECTION = '10.0.0.2 51000 10.0.0.1 22';
+    const over = await info('tun');
+    expect(over.split(line)).toHaveLength(2);
+    // A public name opens from anywhere: nothing to say.
+    expect(await info('pub')).not.toContain('localhost is the machine running houston');
+    delete process.env.SSH_CONNECTION;
+    process.env.SSH_CLIENT = '10.0.0.2 51000 22';
+    expect(await info('tun')).toContain(line);
   });
 });

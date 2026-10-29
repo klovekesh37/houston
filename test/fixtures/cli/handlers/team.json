@@ -11,22 +11,22 @@
     },
     "down --volumes of a colleague's workspace, under --yes": {
       "code": 0,
-      "stdout": "deleting 'alice-rc8-5-1', owned by alice.\n✓ 'alice-rc8-5-1' removed (containers, data volume, and record).\n",
+      "stdout": "deleting 'alice-rc8-5-1', owned by alice.\n✓ 'alice-rc8-5-1' removed (containers, data volume, and record; owned by alice).\n",
       "stderr": ""
     },
     "down --volumes of your own workspace, under --yes": {
       "code": 0,
-      "stdout": "✓ 'alice-rc8-5-1' removed (containers, data volume, and record).\n",
+      "stdout": "✓ 'alice-rc8-5-1' removed (containers, data volume, and record; owned by alice).\n",
       "stderr": ""
     },
     "down --volumes --json without --yes": {
       "code": 2,
-      "stdout": "{\"contract\": 2, \"data\": null, \"error\": {\"code\": \"VALIDATION_FAILED\", \"message\": \"--volumes deletes the data volume and the record, and --json has nobody to prompt. Add --yes to confirm it in the command.\"}, \"generated_at\": \"<t>\", \"houston_version\": \"2.1.5\", \"ok\": false, \"schema\": \"houston.error.v1\", \"warnings\": []}\n",
+      "stdout": "{\"contract\": 2, \"data\": null, \"error\": {\"code\": \"VALIDATION_FAILED\", \"message\": \"--volumes deletes the data volume and the record, and --json has nobody to prompt. Add --yes to confirm it in the command.\"}, \"generated_at\": \"<t>\", \"houston_version\": \"2.1.6\", \"ok\": false, \"schema\": \"houston.error.v1\", \"warnings\": []}\n",
       "stderr": "error: --volumes deletes the data volume and the record, and --json has nobody to prompt. Add --yes to confirm it in the command.\n"
     },
     "down, keeping the data": {
       "code": 0,
-      "stdout": "✓ 'alice-rc8-5-1' down (data kept).\n  bring it back: houston up --version <same> --name alice-rc8-5-1\n  delete for good: add --volumes, or run `houston prune`\n",
+      "stdout": "✓ 'alice-rc8-5-1' down (data kept; owned by alice).\n  bring it back: houston up --version 8.5.1 --name alice-rc8-5-1\n  delete for good: add --volumes (`houston prune` deletes every taken-down workspace, not just this one)\n",
       "stderr": ""
     },
     "a bare name finds the workspace its owner made": {
@@ -37,12 +37,12 @@
     "a bare name does not find somebody else's": {
       "code": 4,
       "stdout": "",
-      "stderr": "error: no repro named 'test' (run `houston list`)\n"
+      "stderr": "error: no workspace named 'test' (run `houston list`)\n"
     },
     "an unknown name is exit 4 before anything is asked": {
       "code": 4,
       "stdout": "",
-      "stderr": "error: no repro named 'nope' (run `houston list`)\n"
+      "stderr": "error: no workspace named 'nope' (run `houston list`)\n"
     },
     "chown of a record whose extra is null": {
       "code": 0,

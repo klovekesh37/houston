@@ -97,8 +97,8 @@ const SIGNATURES: readonly (readonly [readonly string[], string])[] = Object.fre
   // verify is an unhandled InvalidLicenseError at startup, and the server never serves or exits.
   [
     ['invalidlicenseerror'],
-    'Rocket.Chat refused the licence given with --license (InvalidLicenseError) and does ' +
-      'not finish starting with it. Re-create with the licence text exactly as issued, or ' +
+    'Rocket.Chat refused the license given with --license (InvalidLicenseError) and does ' +
+      'not finish starting with it. Re-create with the license text exactly as issued, or ' +
       'without --license.',
   ],
 ]);

@@ -561,7 +561,7 @@ export async function prune({
   }
   if (!confirm) {
     throw new ValidationError(
-      `prune deletes ${String(targets.length)} down repro(s) incl. data - pass confirm=true`,
+      `prune deletes ${String(targets.length)} taken-down workspace(s) incl. data - pass confirm=true`,
     );
   }
   // The NAMESPACES go in the subject too. Recording only `targets` meant a sweep that

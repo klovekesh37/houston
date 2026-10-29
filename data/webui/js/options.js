@@ -292,7 +292,8 @@ const DESIGNED = {
   email: { verification: () => row("Verification", check("email", "verification", ["true", "false"], "false",
     "Require email verification on new accounts")) },
   s3_minio: { presigned: () => row("Presigned URLs", check("s3_minio", "presigned", ["true", "false"], "false",
-    "Serve downloads from presigned MinIO URLs, not through Rocket.Chat")) },
+    "Serve downloads from presigned MinIO URLs, not through Rocket.Chat (your browser must "
+    + "reach MinIO directly; breaks over HTTPS)")) },
   // Each option is labelled as Rocket.Chat's settings and compose files name it, and its --set
   // key is the same words, so a lab built here is repeated on the command line word for word.
   // Each SIP option opens once the one it needs is on; on Kubernetes none is offered.
@@ -302,10 +303,10 @@ const DESIGNED = {
       : row("SIP integration", check("voice", "sip_integration", ["on", "off"], "off", "Drachtio (signaling gateway) and FreeSWITCH (SIP provider)",
         "(dial numbers, take calls from a PBX)"),
       voiceOn("sip_integration") ? hint("voice-alice and voice-bob get Voice call extensions 1001 and 1002. Dial 123 to hear yourself.") : null)),
-    voip_domain: () => (voiceShown("voip_domain") ? row("VoIP domain", txt("voice", "voip_domain", "freeswitch (this machine only)"),
-      hint("VOIP_DOMAIN in rocketchat-compose: the address browsers and phones send RTP audio to. For another machine: this machine's LAN or public IP, or a name that points straight at it.")) : []),
+    voip_domain: () => (voiceShown("voip_domain") ? row("VoIP domain", txt("voice", "voip_domain", "freeswitch (a browser on this server only)"),
+      hint("VOIP_DOMAIN in rocketchat-compose: the address browsers and phones send RTP audio to. For a browser on another computer: this server's LAN or public IP, or a name that points straight at it.")) : []),
     rtp_ports: () => (voiceShown("rtp_ports") ? row("RTP ports", txt("voice", "rtp_ports", "20000-20046"),
-      hint("UDP, start-end, at most 200 (VOIP_RTP_START_PORT to VOIP_RTP_END_PORT). A second SIP workspace on this machine needs its own range.")) : []),
+      hint("UDP, start-end, at most 200 (VOIP_RTP_START_PORT to VOIP_RTP_END_PORT). A second SIP workspace on this server needs its own range.")) : []),
     pbx: () => (voiceShown("pbx") ? row("PBX", check("voice", "pbx", ["on", "off"], "off",
       "A lab PBX (Asterisk)", "(desk phones, ring groups, an outside caller)"),
       voiceOn("pbx") ? hint("Connected to FreeSWITCH's external profile the way compose.freeswitch.external.yml connects external calls.") : null) : []),

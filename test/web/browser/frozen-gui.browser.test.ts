@@ -319,6 +319,8 @@ const CASES: readonly BrowserCase[] = [
   ['remote', 'the panel says that localhost means the readers own machine'],
   ['remote', 'a wide bound workspace is given the address that works from here'],
   ['remote', 'a local browser is told none of this'],
+  ['remote', 'an https workspace read from another computer shows its public address'],
+  ['remote', 'a localhost workspace read from another computer says where its links open'],
   ['remote', 'the create dialog warns a remote reader about the default bind'],
   ['remote', 'the create dialog stays quiet on a laptop'],
   ['plain http', 'signing in works over plain http on a real hostname'],
@@ -480,12 +482,15 @@ const CASES: readonly BrowserCase[] = [
 // saying what it removes, behind one dialog instead of two browser confirm boxes.
 // Re-recorded when "the voice panel opens each phone option once the one it needs is on" and
 // "on kubernetes the voice panel offers no phone options and sends none" joined: voice's designed controls.
-const CASES_DIGEST = '5d16dc43a8c3e4f307862065b45fe1fdaff022e3be16c9643f2379102846615e';
+// Re-recorded when "an https workspace read from another computer shows its public address" and
+// "a localhost workspace read from another computer says where its links open" joined: the
+// overview names the address Open RC follows, and a remote reader is told where localhost is.
+const CASES_DIGEST = '007b7e961dac3869e53cb8807d76ee6a60a7c2128e63d11565e0225c5be3e176';
 const caseIds = CASES.map(([file, name]) => `${file}: ${name}`);
 const casesDigest = crypto.createHash('sha256').update(JSON.stringify(CASES)).digest('hex');
-if (CASES.length !== 192 || new Set(caseIds).size !== 192 || casesDigest !== CASES_DIGEST) {
+if (CASES.length !== 194 || new Set(caseIds).size !== 194 || casesDigest !== CASES_DIGEST) {
   throw new Error(
-    `browser behavior inventory changed: expected 192 unique cases at ${CASES_DIGEST}, ` +
+    `browser behavior inventory changed: expected 194 unique cases at ${CASES_DIGEST}, ` +
       `got ${String(CASES.length)} cases, ${String(new Set(caseIds).size)} unique, ${casesDigest}`,
   );
 }
@@ -509,10 +514,14 @@ function detail(overrides: Record<string, unknown> = {}): Record<string, unknown
     // The CI build it runs (its ghcr tag) and whether it was given a license.
     ci_build: '',
     licensed: false,
+    // Whether Rocket.Chat refused it when `ready` last asked.
+    license_refused: false,
     health: 'healthy',
     url: 'http://localhost:3001',
     root_url: 'http://localhost:3001',
     public_url: '',
+    // What every "Open" follows: the https name, else `--root-url`'s, else root_url.
+    open_url: 'http://localhost:3001',
     login: { user: 'admin', password: 'admin123' },
     degraded: '',
     instances: 1,
@@ -1061,7 +1070,12 @@ async function prepareClusterCase(name: string): Promise<void> {
 
   if (name === 'a kubernetes workspace names its cluster and can check its certificate') {
     useRows([
-      kubeDetail({ public_url: 'https://t1234.rc.example.com', tls: 'acme', state: 'running' }),
+      kubeDetail({
+        public_url: 'https://t1234.rc.example.com',
+        open_url: 'https://t1234.rc.example.com',
+        tls: 'acme',
+        state: 'running',
+      }),
     ]);
   }
   if (name === 'a cluster delete says in its job what aws still holds') {
@@ -1525,8 +1539,8 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
       { timeout: 5000 },
     );
     const local = await page.locator('#cl-local').innerText();
-    expect(local).toContain("This machine's kubeconfig could not be read: error: error loading");
-    expect(local).not.toContain('No cluster on this machine');
+    expect(local).toContain("This server's kubeconfig could not be read: error: error loading");
+    expect(local).not.toContain('No cluster on this server');
     // And the footer agrees: it said "k8s: not set up" beside this page.
     await page.waitForFunction(
       () =>
@@ -1709,7 +1723,7 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     );
     const local = await page.locator('#cl-local').innerText();
     expect(local).toContain('could not be read');
-    expect(local).not.toContain('No cluster on this machine');
+    expect(local).not.toContain('No cluster on this server');
     return;
   }
 
@@ -1722,7 +1736,7 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     await page.locator('#btn-clusters').click();
     await page.waitForTimeout(400);
     const early = await page.locator('#cl-local').innerText();
-    expect(early).not.toContain('No cluster on this machine');
+    expect(early).not.toContain('No cluster on this server');
     expect(early).toContain('default');
     await page.waitForTimeout(2600);
     return;
@@ -1840,7 +1854,7 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     const welcome = page.locator('#home-welcome');
     await welcome.waitFor({ state: 'visible' });
     expect(await welcome.innerText()).toContain('Create your first workspace');
-    expect(await page.locator('#detail').textContent()).toContain('Memory on this machine');
+    expect(await page.locator('#detail').textContent()).toContain('Memory on this server');
     await welcome.getByRole('button', { name: /Create a workspace/u }).click();
     await page.locator('#create-dialog[open]').waitFor({ state: 'visible' });
     expect(await page.locator('#create-step-1').isVisible()).toBe(true);
@@ -2517,7 +2531,7 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     // A k3s on this machine sat in the EKS table with "?" for its cost and its builder.
     const local = page.locator('#cl-local');
     const here = await local.innerText();
-    expect(here).toContain('This machine'.toUpperCase());
+    expect(here).toContain('This server'.toUpperCase());
     expect(here).toContain('Free'.toUpperCase());
     expect(await page.locator('#cl-local .mrow[data-place="k8s:default"]').innerText()).toContain(
       'Running',
@@ -2549,7 +2563,7 @@ async function exerciseClusterCase(name: string, page: Page): Promise<void> {
     expect(said).toContain('storage class local-path');
     expect(said).toContain('ingress traefik');
     expect(said).not.toContain('✓');
-    expect(said).toContain('Free: it runs on this machine');
+    expect(said).toContain('Free: it runs on this server');
     expect(said).not.toContain('LoadBalancer');
     const pane = await page.locator('#actpane').innerText();
     expect(pane).toContain('Create a workspace here');
@@ -3060,6 +3074,8 @@ function publicOrigin(file: string, name: string): boolean {
     'the panel says that localhost means the readers own machine',
     'a wide bound workspace is given the address that works from here',
     'the create dialog warns a remote reader about the default bind',
+    'an https workspace read from another computer shows its public address',
+    'a localhost workspace read from another computer says where its links open',
   ];
   const plain = [
     'signing in works over plain http on a real hostname',
@@ -3967,7 +3983,7 @@ async function prepareSurface(name: string): Promise<void> {
         notes: composed.notes,
         note_groups: [
           {
-            title: `Scenario · ${names.join(' + ')}`,
+            title: `Preset · ${names.join(' + ')}`,
             kind: 'scenario',
             rows: [],
             body: composed.notes,
@@ -3990,6 +4006,21 @@ async function preparePortedCase(file: string, name: string): Promise<AppOptions
     useRows([detail({ bind_host: '127.0.0.1' })]);
   if (name === 'a wide bound workspace is given the address that works from here')
     useRows([detail({ bind_host: '0.0.0.0' })]);
+  if (name === 'an https workspace read from another computer shows its public address')
+    useRows([
+      detail({
+        public_url: 'https://t1234.ws.example.test',
+        open_url: 'https://t1234.ws.example.test',
+        tls: 'acme',
+      }),
+    ]);
+  if (name === 'a localhost workspace read from another computer says where its links open')
+    useRows([
+      detail({
+        preset: 'email',
+        links: [{ label: 'Mailpit', url: 'http://localhost:8025', kind: '' }],
+      }),
+    ]);
   if (name === 'a link row shows the workspaces root url verbatim') {
     useRows([
       detail({ links: [{ label: 'Rocket.Chat', url: 'http://localhost:3001', kind: '' }] }),
@@ -4156,7 +4187,7 @@ async function exerciseChrome(name: string, page: Page): Promise<void> {
     await page.waitForFunction(() => document.querySelector('#detail .pv.home') !== null);
     await page.locator('#btn-scenarios').click();
     await page.waitForFunction(() =>
-      document.querySelector('#detail')?.textContent.includes('Scenarios'),
+      document.querySelector('#detail')?.textContent.includes('Presets'),
     );
     await page.locator('.brand').click();
     await page.waitForFunction(() => document.querySelector('#detail .pv.home') !== null);
@@ -4165,10 +4196,10 @@ async function exerciseChrome(name: string, page: Page): Promise<void> {
   if (name === 'the dashboard poll does not close the page you are reading') {
     await page.locator('#btn-scenarios').click();
     await page.waitForFunction(() =>
-      document.querySelector('#detail')?.textContent.includes('Scenarios'),
+      document.querySelector('#detail')?.textContent.includes('Presets'),
     );
     await page.waitForTimeout(5000);
-    expect(await page.locator('#detail').textContent()).toContain('Scenarios');
+    expect(await page.locator('#detail').textContent()).toContain('Presets');
     return;
   }
   await page.locator('#btn-scenarios').click();
@@ -4177,7 +4208,7 @@ async function exerciseChrome(name: string, page: Page): Promise<void> {
   );
   expect(await scenarioParts(page, 'livechat', 'l-u')).toEqual([
     'http://localhost:8090',
-    '<repro-url>/livechat',
+    '<workspace-url>/livechat',
   ]);
   expect(await scenarioParts(page, 'livechat', 'l-w')).toEqual([
     'widget embedded, cross-origin',
@@ -4199,7 +4230,9 @@ async function exerciseRemote(name: string, page: Page): Promise<void> {
     const said = (await warning.textContent()) ?? '';
     expect(said).toContain(PUBLIC_NAME);
     expect(said).toContain('0.0.0.0');
-    expect(said).toContain('admin/admin123');
+    // The section is More options, and a wide bind gets a generated admin password.
+    expect(said).toContain('More options');
+    expect(said).not.toContain('admin123');
     expect(await page.locator('#d-body .urlbox').first().textContent()).toContain(
       'http://localhost:3001',
     );
@@ -4208,17 +4241,41 @@ async function exerciseRemote(name: string, page: Page): Promise<void> {
   if (name.includes('wide bound')) {
     await openWorkspace(page);
     await page.waitForFunction(() =>
-      document.querySelector('#d-body')?.textContent.includes('From this machine'),
+      document.querySelector('#d-body')?.textContent.includes('From your browser'),
     );
     expect(await page.locator('#d-body').textContent()).toContain(`http://${PUBLIC_NAME}:3001`);
     expect(await page.locator('#d-body .banner.warn').count()).toBe(0);
+    return;
+  }
+  if (name.includes('an https workspace')) {
+    // Measured on the shared server: an HTTPS workspace's URL box said http://localhost
+    // under an amber "only the server itself can reach it", beside an Open RC that worked.
+    await openWorkspace(page);
+    const box = page.locator('#d-body .urlbox').first();
+    await box.waitFor({ state: 'visible' });
+    expect(await box.textContent()).toContain('https://t1234.ws.example.test');
+    const body = (await page.locator('#d-body').textContent()) ?? '';
+    expect(body).toContain('On the server');
+    expect(body).toContain('http://localhost:3001');
+    expect(await page.locator('#d-body .banner').count()).toBe(0);
+    return;
+  }
+  if (name.includes('says where its links open')) {
+    // A remote reader's Mailpit link opened localhost on their own computer, unsaid.
+    await openWorkspace(page);
+    await page.locator('#d-body .linkrow').first().waitFor({ state: 'visible' });
+    const note = page.locator('#d-body .panelcard #links-loopback');
+    expect(await note.count()).toBe(1);
+    expect(await note.textContent()).toContain('Links to localhost open on YOUR computer');
+    const open = page.locator('#detail .d-actions a', { hasText: 'Open RC' });
+    expect(await open.getAttribute('title')).toContain('YOUR computer');
     return;
   }
   if (name.includes('local browser')) {
     await openWorkspace(page);
     await page.locator('#d-body .urlbox').first().waitFor({ state: 'visible' });
     expect(await page.locator('#d-body .banner.warn').count()).toBe(0);
-    expect(await page.locator('#d-body').textContent()).not.toContain('From this machine');
+    expect(await page.locator('#d-body').textContent()).not.toContain('From your browser');
     expect(await browserImport(page, '/js/util.js', 'remoteHost')).toBe('');
     return;
   }
@@ -4229,9 +4286,9 @@ async function exerciseRemote(name: string, page: Page): Promise<void> {
     await hint.waitFor({ state: 'visible' });
     const said = (await hint.textContent()) ?? '';
     expect(said).toContain('0.0.0.0');
-    expect(said).toContain('hostname');
-    expect(said).toContain('admin/admin123');
-    expect(said.length).toBeLessThan(170);
+    expect(said).toContain("Let's Encrypt");
+    expect(said).not.toContain('admin123');
+    expect(said.length).toBeLessThan(180);
   } else expect(await page.locator('#create-bind-hint').isHidden()).toBe(true);
 }
 
@@ -4866,7 +4923,7 @@ async function exerciseKubernetesPane(name: string, page: Page): Promise<void> {
   expect(labels).not.toEqual(
     expect.arrayContaining(['Run a load test', 'Find capacity', 'Check the certificate']),
   );
-  expect(await page.locator('#actpane').textContent()).toContain('Compose-only');
+  expect(await page.locator('#actpane').textContent()).toContain('Docker-only');
 }
 
 async function exerciseKubernetesPanel(name: string, page: Page): Promise<void> {
@@ -5836,7 +5893,7 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     await page.locator('#detail', { hasText: 'room for' }).waitFor({ state: 'visible' });
     const body = await page.locator('#detail').textContent();
     expect(body).toContain('Room for about 1 more');
-    expect(body).toContain('Memory on this machine');
+    expect(body).toContain('Memory on this server');
     return;
   }
   if (name === 'a down workspace is something home asks you about') {
@@ -6111,9 +6168,9 @@ async function exerciseSurface(name: string, page: Page): Promise<void> {
     // The notes card names the set the same way: not the stored `email+ldap`.
     expect(
       await page
-        .locator('#d-body .panelcard-h .section-label', { hasText: 'Scenario' })
+        .locator('#d-body .panelcard-h .section-label', { hasText: 'Preset' })
         .textContent(),
-    ).toBe('Scenario · email + ldap');
+    ).toBe('Preset · email + ldap');
     return;
   }
   if (name === 'the create dialog opens and lists presets') {
@@ -6728,8 +6785,8 @@ async function exercise(browserCase: BrowserCase, page: Page): Promise<void> {
   }
   if (name.includes('scenario') || name.includes('preset notes')) {
     await page.locator('#btn-scenarios').click();
-    await page.locator('#detail', { hasText: 'Scenarios' }).waitFor({ state: 'visible' });
-    expect(await page.locator('#detail').textContent()).toContain('Scenarios');
+    await page.locator('#detail', { hasText: 'Presets' }).waitFor({ state: 'visible' });
+    expect(await page.locator('#detail').textContent()).toContain('Presets');
     return;
   }
   if (

@@ -425,6 +425,11 @@ describe('the repro.json format', () => {
     expect(externalUrl(sample({ publicUrl: 'https://rc.example.test' }))).toBe(
       'https://rc.example.test',
     );
+    // `up --root-url https://…` behind a proxy or a tunnel: `info`, `list` and the GUI showed
+    // only http://localhost:<port>, which is houston's own address, not the one people open.
+    expect(externalUrl(sample({ extra: { advertised_url: 'https://rc.tunnel.test' } }))).toBe(
+      'https://rc.tunnel.test',
+    );
     expect(adminPass(sample())).toBe(config.ADMIN_PASSWORD);
     expect(adminPass(sample({ adminPassword: 'generated' }))).toBe('generated');
   });
@@ -623,7 +628,7 @@ describe('reading records, as earlier releases read one and all of them', () => 
   const alpha = () => path.join(config.reprosDir(), 'alpha', 'repro.json');
   const missing =
     "'alpha' has no repro.json, so it is a half-written workspace rather than one houston " +
-    'can act on — finish it with `houston up --name alpha`, or remove it with ' +
+    'can act on — finish it with `houston up --version <version> --name alpha`, or remove it with ' +
     '`houston down --name alpha --volumes`';
 
   const STATES: [string, () => void, () => unknown[], () => unknown[]][] = [

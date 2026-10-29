@@ -106,7 +106,7 @@ describe('the same table as earlier releases', () => {
     const logs =
       '=== UnHandledPromiseRejection ===\nInvalidLicenseError: Invalid license\n' +
       '    at validateFormat (/app/bundle/programs/server/npm/node_modules/@rocket.chat/license/dist/validation/validateFormat.js:14:15)';
-    expect(match(logs)).toContain('refused the licence given with --license');
+    expect(match(logs)).toContain('refused the license given with --license');
   });
 
   it('answers identically for every sample, including the ones it does not know', () => {

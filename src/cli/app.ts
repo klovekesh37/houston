@@ -397,7 +397,7 @@ export function buildCli(options: BuildCliOptions): Command {
   const root = new Command('houston');
   commandSpecs.set(root, 'root');
   root
-    .description('Launch version-matched Rocket.Chat reproduction environments.')
+    .description('Launch throwaway, version-matched Rocket.Chat workspaces to reproduce an issue.')
     .helpOption('--help', 'Show this message and exit.')
     .enablePositionalOptions()
     .version(

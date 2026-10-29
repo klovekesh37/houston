@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import * as presets from '../../../src/lib/presets/index';
-import { ownedKubeconfig } from '../../../src/core/kube/exec';
+import { kube, ownedKubeconfig } from '../../../src/core/kube/exec';
 import { CONTEXT as KUBE_CONTEXT } from '../../../src/core/kube/names';
 import * as paths from '../../../src/core/runner/paths';
 import { type Metadata, metadata } from '../../../src/core/runner/record';
@@ -287,7 +287,7 @@ describe('which notes a record produces', () => {
     );
     expect(s.notes).toEqual(
       flattenNotes([
-        noteGroup('Scenario · oidc', { kind: 'scenario', body: presets.load('oidc', {}).notes }),
+        noteGroup('Preset · oidc', { kind: 'scenario', body: presets.load('oidc', {}).notes }),
       ]),
     );
     expect(s.notes).not.toContain('a sentence some older release wrote down');
@@ -326,31 +326,47 @@ describe('which notes a record produces', () => {
     expect(kind.some(([key]) => key === 'Costs')).toBe(false);
   });
 
-  it('says what its pod count counts, rather than "about" a number nine pods ran beside', async () => {
-    // `info` said "Pods  about 5" for a monolith with five presets and nine pods running: the
-    // number is the chart's and MongoDB's, and a preset's own services were never in it.
-    const podsOf = async (values: Partial<Metadata>): Promise<string> =>
-      ((
-        await noteGroupsOf(
-          record({
-            name: 'w',
-            project: 'houston-w',
-            ...values,
-            extra: { runtime: 'kubernetes', namespace: 'houston-w', ...values.extra },
-          }),
+  it('counts the pods its namespace runs, and counts nothing when the cluster does not answer', async () => {
+    // `info` said "5 for Rocket.Chat and MongoDB" beside a chart-7.0.2 monolith's two pods:
+    // what the chart runs differs by chart version, so the number is read, never predicted.
+    const realRun = kube.run;
+    const podsOf = async (answer: Record<string, unknown>[] | null): Promise<string> => {
+      kube.run = (argv) =>
+        Promise.resolve(
+          answer === null
+            ? { argv, returncode: 1, stdout: '', stderr: 'Unable to connect to the server' }
+            : { argv, returncode: 0, stdout: JSON.stringify({ items: answer }), stderr: '' },
+        );
+      try {
+        return ((
+          await noteGroupsOf(
+            record({
+              name: 'w',
+              project: 'houston-w',
+              preset: 'ldap',
+              extra: { runtime: 'kubernetes', namespace: 'houston-w', deployment: 'monolith' },
+            }),
+          )
         )
-      )
-        .find((group) => group.title === 'Kubernetes')
-        ?.rows.find(([key]) => key === 'Pods')?.[1] ?? '') as string;
-    expect(await podsOf({ preset: 'e2ee+ldap', extra: { deployment: 'monolith' } })).toBe(
-      '5 for Rocket.Chat and MongoDB, plus what its preset runs',
+          .find((group) => group.title === 'Kubernetes')
+          ?.rows.find(([key]) => key === 'Pods')?.[1] ?? '') as string;
+      } finally {
+        kube.run = realRun;
+      }
+    };
+    const pod = (name: string, phase: string) => ({ metadata: { name }, status: { phase } });
+    expect(await podsOf([pod('mongodb-0', 'Running'), pod('rocketchat-0', 'Running')])).toBe(
+      '2 in its namespace, all running',
     );
-    expect(await podsOf({ extra: { deployment: 'monolith', instances: 3 } })).toBe(
-      '7 for Rocket.Chat and MongoDB',
-    );
-    expect(await podsOf({ extra: { deployment: 'microservices' } })).toBe(
-      '9 for Rocket.Chat and MongoDB',
-    );
+    expect(
+      await podsOf([
+        pod('mongodb-0', 'Running'),
+        pod('rocketchat-0', 'Running'),
+        pod('openldap-0', 'Running'),
+        pod('phpldapadmin-0', 'Pending'),
+      ]),
+    ).toBe('4 in its namespace, 3 running');
+    expect(await podsOf(null)).toBe('not counted: the cluster did not answer');
   });
 
   it('exports a kubeconfig only for the cluster houston itself made', async () => {
@@ -490,7 +506,7 @@ describe("a composed workspace's notes", () => {
     const body = (groups[0]?.body ?? []).join('\n');
     expect(body).toContain('Mailpit');
     expect(body).toContain('an LDAP login asks for a code');
-    expect(groups[0]?.title).toBe('Scenario · email+ldap');
+    expect(groups[0]?.title).toBe('Preset · email+ldap');
   });
 
   it('are titled by the presets asked for, not the deployment Compose builds with them', () => {
@@ -503,7 +519,7 @@ describe("a composed workspace's notes", () => {
         extra: { runtime: 'docker', deployment: 'multi-instance', instances: 2 },
       }),
     );
-    expect(groups[0]?.title).toBe('Scenario · saml');
+    expect(groups[0]?.title).toBe('Preset · saml');
     // Its notes stay: the deployment's lines are about this workspace too.
     expect((groups[0]?.body ?? []).join('\n')).toContain('instances.get');
   });

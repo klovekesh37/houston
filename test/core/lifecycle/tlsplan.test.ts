@@ -6,7 +6,7 @@ import * as config from '../../../src/lib/config';
 import { metadata, writeRecord } from '../../../src/core/runner/record';
 import { MODE_ACME, MODE_LOCAL, dnsEnvPath } from '../../../src/core/tls';
 
-import type { Event } from '../../../src/lib/events';
+import { type Event, nullEmit } from '../../../src/lib/events';
 import type { ClusterPlan } from '../../../src/core/kube/context';
 import type { IngressEndpoint } from '../../../src/core/kube/endpoints';
 import { preflight as newPreflight } from '../../../src/core/kube/tools';
@@ -15,7 +15,9 @@ import type { TlsSpec } from '../../../src/core/tls';
 import { recordedLocalHost, resolveTls, tlsFromRecord } from '../../../src/core/lifecycle/tlsplan';
 import type * as ExecNS from '../../../src/core/kube/exec';
 import type * as TlsPlanNS from '../../../src/core/lifecycle/tlsplan';
+import type * as PolicyNS from '../../testsetup-policy';
 import { createReq, kubeTls } from '../../../src/core/lifecycle/types';
+import { defaultDomainFromZone } from '../../../src/core/lifecycle/request';
 
 /** Whether a Kubernetes workspace's release is still there, as `workloadExists` answers. */
 let mockRunning = true;
@@ -102,6 +104,67 @@ describe('the HTTPS plan', () => {
     const restored = await resolveTls(createReq({ version: '8.5.1' }), 'restore-me', '127.0.0.1');
     expect(restored?.mode).toBe(MODE_ACME);
     expect(restored?.host).toBe('rc.example.com');
+  });
+
+  describe('--email', () => {
+    // `up --email x` with no name silently chose a local certificate: a workspace on a
+    // shared server that no laptop's browser could open, with nothing said.
+    const email = (fields: Partial<Parameters<typeof createReq>[0]>, name: string) =>
+      resolveTls(
+        createReq({ version: '8.5.1', acmeEmail: 'ops@example.com', ...fields }),
+        name,
+        '127.0.0.1',
+      );
+
+    it('is refused without a name, and --https still asks for the local certificate', async () => {
+      await expect(email({}, 'lonely')).rejects.toMatchObject({
+        name: 'ValidationError',
+        message: expect.stringContaining("--email is the Let's Encrypt contact for --domain"),
+      });
+      expect((await email({ https: true }, 'local-asked'))?.mode).toBe(MODE_LOCAL);
+      const named = await email({ domain: 'named.example.com' }, 'named');
+      expect([named?.mode, named?.host]).toEqual([MODE_ACME, 'named.example.com']);
+    });
+
+    it('takes the name from a cluster zone when none is typed', async () => {
+      const dir = path.join(process.env.HOUSTON_HOME as string, 'clusters', 'support');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 'cluster.json'),
+        JSON.stringify({
+          name: 'support',
+          region: 'us-east-1',
+          provider: 'eks',
+          zone: 'z.example.com',
+        }),
+      );
+      const req = createReq({
+        version: '8.5.1',
+        acmeEmail: 'ops@example.com',
+        context: 'arn:aws:eks:us-east-1:1:cluster/support',
+      });
+      await defaultDomainFromZone(req, 'zoned', nullEmit);
+      const spec = await resolveTls(req, 'zoned', '127.0.0.1');
+      expect([spec?.mode, spec?.host]).toEqual([MODE_ACME, 'zoned.z.example.com']);
+    });
+
+    it('keeps the name a --domain workspace already has, rather than going local', async () => {
+      await writeRecord(
+        'has-name',
+        metadata({
+          name: 'has-name',
+          project: 'houston-has-name',
+          publicUrl: 'https://kept.example.com',
+          extra: { tls: 'acme', tls_email: 'old@example.com' },
+        }),
+      );
+      const spec = await email({}, 'has-name');
+      expect([spec?.mode, spec?.host, spec?.acmeEmail]).toEqual([
+        MODE_ACME,
+        'kept.example.com',
+        'ops@example.com',
+      ]);
+    });
   });
 
   it('refuses a name the cluster serves for another workspace here, and only while it runs', async () => {
@@ -385,6 +448,45 @@ describe('the Kubernetes HTTPS plan', () => {
     expect((await tlsplan.kubernetesTlsPlan(req, localSpec(), existing)).clusterOwns443).toBe(
       false,
     );
+  });
+
+  describe('on a machine without Docker', () => {
+    // The edge is a Docker container. On a Docker-less k3s, `up --https` installed Traefik and
+    // cert-manager, could not spawn the edge, said "free the port", and `ready` then waited
+    // ~10 minutes for a name nothing would ever answer.
+    const engineDown = (): void => {
+      jest.doMock('../../../src/core/runner/host', () => ({
+        ...(require('../../testsetup-policy') as typeof PolicyNS).healthyHost(),
+        dockerAvailable: async () => false,
+      }));
+    };
+    afterEach(() => {
+      // Back to the suite's healthy engine; `dontMock` would expose the real one, which says no.
+      jest.doMock('../../../src/core/runner/host', () =>
+        (require('../../testsetup-policy') as typeof PolicyNS).healthyHost(),
+      );
+    });
+    const req = createReq({ version: '8.5.1', https: true });
+
+    it('refuses before the chart when the name needs the edge, and names Docker', async () => {
+      jest.resetModules();
+      resolver({ 'ws.houston.localhost': ['127.0.0.1'] });
+      engineDown();
+      const tlsplan = clusterWith({ claims: [80, 443] });
+      const refused = tlsplan.kubernetesTlsPlan(req, localSpec(), existing);
+      await expect(refused).rejects.toThrow(/Docker is not available/);
+      await expect(refused).rejects.toThrow(/houston doctor/);
+    });
+
+    it('does not ask for Docker when the cluster serves the name itself', async () => {
+      jest.resetModules();
+      resolver({ 'ws.houston.localhost': ['172.16.0.2'] });
+      engineDown();
+      const tlsplan = clusterWith({ claims: [80, 443] });
+      expect((await tlsplan.kubernetesTlsPlan(req, localSpec(), existing)).clusterOwns443).toBe(
+        true,
+      );
+    });
   });
 
   it('starts the edge for a name only when the cluster does not own :443', async () => {

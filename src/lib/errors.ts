@@ -224,7 +224,7 @@ export const GATE_CODES: Readonly<Record<string, string>> = Object.freeze({
   GATE_KEEP_UNOWNED:
     'the cluster was not created by houston, so its expiry is not houston’s to move',
   GATE_SHARE_UNOWNED: 'the cluster was not created by houston, so houston grants no access to it',
-  GATE_PUBLIC_EXPOSURE: 'the request would expose a repro beyond loopback',
+  GATE_PUBLIC_EXPOSURE: 'the request would expose a workspace beyond loopback',
   GATE_RETENTION: 'retaining this run was not authorised',
   // DISTINCT from GATE_UNAPPROVED_CLUSTER, which already means "the CA private key may
   // not go there". Giving one code two meanings breaks the premise jsonout rests on --

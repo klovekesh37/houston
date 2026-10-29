@@ -174,10 +174,10 @@ function slotsFor(kind: JobKind): Pool | undefined {
   return undefined;
 }
 
-function logJobStarted(jobId: string, kind: JobKind, label: string): void {
+function logJobStarted(jobId: string, kind: JobKind, label: string, verb: string): void {
   try {
     const eventlog = require('../core/eventlog') as typeof EventlogNS;
-    eventlog.jobStarted(jobId, kind, label);
+    eventlog.jobStarted(jobId, kind, label, verb);
   } catch {
     // A durable log is best-effort and must never break the operation it describes.
   }
@@ -186,7 +186,7 @@ function logJobStarted(jobId: string, kind: JobKind, label: string): void {
 function logJobEnded(job: Job, kind: JobKind): void {
   try {
     const eventlog = require('../core/eventlog') as typeof EventlogNS;
-    eventlog.jobEnded(job.id, kind, job.label, job.status, job.error ?? '');
+    eventlog.jobEnded(job.id, kind, job.label, job.status, job.error ?? '', job.verb);
   } catch {
     // The same boundary: a call-time import and a best-effort write.
   }
@@ -206,6 +206,8 @@ export interface JobSummary {
   result_dropped: boolean;
   /** Where a cluster job acts, its AWS region; '' for every other job. */
   region: string;
+  /** What a teardown or state job does (`delete`, `take down`, `stop`, ...); '' for the rest. */
+  verb: string;
   /** Whether Stop may end it: an audited kind, still queued or running. */
   stoppable: boolean;
 }
@@ -225,6 +227,11 @@ export class Job<Result = unknown> {
    * the same name in another region while this one was built.
    */
   region = '';
+  /**
+   * What the job does, where its kind is two things: a teardown deletes or takes down, a state
+   * job stops, starts or restarts. Activity and the rail could not tell them apart.
+   */
+  verb = '';
   /** Who pressed Stop, once somebody has; the job then ends at its next wait. */
   stoppedBy = '';
   /** Whether its own cleanup said it took everything back (`NOTHING_LEFT`). */
@@ -297,6 +304,7 @@ export class Job<Result = unknown> {
       error_kind: this.errorKind,
       result_dropped: this.resultDropped,
       region: this.region,
+      verb: this.verb,
       stoppable: STOPPABLE_KINDS.has(this.kind) && ACTIVE_STATUSES.has(this.status),
     };
   }
@@ -314,6 +322,8 @@ export interface SubmitOptions {
   label?: string;
   actor?: string;
   region?: string;
+  /** What the job does, where the kind alone does not say (`Job.verb`). */
+  verb?: string;
   /** Audit once the job names its workspace (`workspace-name`), or when it ends without. */
   auditWhenNamed?: boolean;
 }
@@ -367,6 +377,7 @@ export class JobManager {
     const id = `job_${this.nextId.toString(16).padStart(10, '0')}`;
     const job = new Job<Result>(id, kind, label, actor, pool !== undefined);
     job.region = options.region ?? '';
+    job.verb = options.verb ?? '';
     if (options.auditWhenNamed === true) {
       job.auditOnName = (named) =>
         auditService.audit(actor, kind, named, { origin: request.origin, outcome: 'accepted' });
@@ -443,7 +454,7 @@ export class JobManager {
   ): Promise<void> {
     let slot = false;
     try {
-      logJobStarted(job.id, kind, job.label);
+      logJobStarted(job.id, kind, job.label, job.verb);
       if (pool !== undefined) {
         slot = pool.tryAcquire();
         if (!slot) {

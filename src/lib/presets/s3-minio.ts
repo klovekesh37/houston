@@ -121,8 +121,8 @@ function presignedNotes(bucket: string, presigned: boolean, s3Host: string): str
       'PRESIGNED MODE: the browser fetches files straight from MinIO, so add',
       'this line to /etc/hosts (needs sudo):',
       '    127.0.0.1  minio',
-      '  That entry points at THIS machine, so the browser has to be on it. From',
-      '  another machine, re-create with:  --bind 0.0.0.0 --set s3_host=<this host>',
+      '  That entry works only for a browser on the machine running houston. From',
+      '  another computer, re-create with:  --bind 0.0.0.0 --set s3_host=<this host>',
       "Remove the line to reproduce the classic 'presigned URL unreachable'",
       'ticket symptom (uploads work, previews/downloads break).',
     );
@@ -279,7 +279,7 @@ export function build(params: Params): Preset {
     description:
       "MinIO S3-compatible storage wired as RC's file upload backend " +
       `(bucket '${bucket}', console :${String(CONSOLE_PORT)}). Default proxies ` +
-      'downloads through RC; --set presigned=true for real presigned URLs.',
+      'downloads through RC; turn on Presigned URLs (--set presigned=true) for real ones.',
     env: s3Settings(bucket, presigned, s3Host),
     services: minioServices(bucket),
     dependsOn: ['minio'],
@@ -291,7 +291,7 @@ export function build(params: Params): Preset {
       s3_host:
         'hostname the BROWSER reaches MinIO on in presigned mode ' +
         "(default 'minio', which needs a hosts entry and only works " +
-        'on this machine)',
+        'for a browser on the machine running houston)',
     },
     volumes: { minio_data: { driver: 'local' } },
     ports: [...presetPorts('s3_minio')],
@@ -318,7 +318,7 @@ export function build(params: Params): Preset {
         know:
           presigned && s3Host === 'minio'
             ? [
-                'The hosts entry points at this machine, so the browser must be on it; from another machine re-create with --bind 0.0.0.0 --set s3_host=<this host>.',
+                'The hosts entry works only for a browser on the machine running houston; from another computer re-create with --bind 0.0.0.0 --set s3_host=<this host>.',
                 "Remove the hosts line to reproduce the classic 'presigned URL unreachable' symptom: uploads work, previews and downloads break.",
               ]
             : presigned
@@ -328,7 +328,7 @@ export function build(params: Params): Preset {
                 ]
               : [
                   'Downloads are proxied through Rocket.Chat; no hosts entry needed.',
-                  'For real presigned-URL behaviour, re-create with --set presigned=true.',
+                  'For real presigned-URL behaviour, re-create it with Presigned URLs on (--set presigned=true).',
                 ],
       }),
     ],

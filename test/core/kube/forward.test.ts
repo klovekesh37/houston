@@ -554,6 +554,46 @@ describe('publishing a workspace', () => {
     // host:container, so the CONTAINER port is what it maps to.
     expect(argv).toContain(`${String(port)}:8080`);
   });
+
+  it('waits for the UI deployment to finish rolling out before it forwards to it', async () => {
+    // Live, k3s: an ldap workspace rebuilt onto new images forwarded :8082 to the pod being
+    // replaced -- still a ready endpoint mid-rollout -- and once it was gone every request
+    // got an empty reply until `houston ready` made the forward again.
+    installKubectl('listen');
+    const port = await freePort();
+    const asked: string[] = [];
+    let rolledOut = false;
+    cluster((joined) => {
+      asked.push(joined);
+      if (joined.includes('get svc')) return { stdout: `ldap-ui ${String(port)} 8080 ldap-ui\n` };
+      if (joined.includes('rollout status')) {
+        rolledOut = true;
+        return { stdout: 'deployment "ldap-ui" successfully rolled out\n' };
+      }
+      if (joined.includes('endpointslices')) {
+        return {
+          stdout: JSON.stringify({
+            items: [
+              {
+                metadata: { labels: { 'kubernetes.io/service-name': 'ldap-ui' } },
+                endpoints: [{ conditions: { ready: true } }],
+              },
+            ],
+          }),
+        };
+      }
+      return undefined;
+    });
+    await scenarioUiForwards('w', { namespace: 'houston-w', context: CONTEXT, sleep: settle });
+    const rollout = asked.find((call) => call.includes('rollout status')) ?? '';
+    expect(rollout).toContain('-n houston-w rollout status deployment/ldap-ui --timeout=120s');
+    expect(rolledOut).toBe(true);
+    // Asked BEFORE the endpoint read that lets the forward start.
+    expect(asked.indexOf(rollout)).toBeLessThan(
+      asked.findIndex((call) => call.includes('endpointslices')),
+    );
+    expect(spawned()[0]?.argv ?? []).toContain('deployment/ldap-ui');
+  });
 });
 
 describe('a forward whose kubectl exits on its own', () => {

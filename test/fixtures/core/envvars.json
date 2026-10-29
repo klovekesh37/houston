@@ -195,7 +195,7 @@
       "events": [
         { "message": "env updated on 'e': A", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -383,7 +383,7 @@
           "level": "info"
         },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -408,7 +408,7 @@
       "events": [
         { "message": "env updated on 'e': A", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -440,7 +440,7 @@
       "events": [
         { "message": "env updated on 'e': A, __proto__", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -476,7 +476,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -510,7 +510,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -541,7 +541,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -572,7 +572,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -695,7 +695,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -723,7 +723,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -751,7 +751,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }
@@ -828,7 +828,7 @@
       "events": [
         { "message": "env updated on 'e': KEEP, NEW", "phase": "config", "level": "info" },
         {
-          "message": "not restarting; the change applies next time the container is recreated (`houston up --name e`)",
+          "message": "not restarting; the change is written but not applied. To apply it, re-run the same `houston env` without --no-restart",
           "phase": "done",
           "level": "info"
         }

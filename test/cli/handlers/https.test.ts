@@ -21,6 +21,8 @@ import * as path from 'node:path';
 
 import type * as AppNS from '../../../src/cli/app';
 import type * as HandlersNS from '../../../src/cli/handlers';
+import type * as HttpsNS from '../../../src/cli/handlers/https';
+import type * as RecordNS from '../../../src/core/runner/record';
 import type * as ExecNS from '../../../src/seams/exec';
 
 /**
@@ -197,6 +199,8 @@ const SCENARIOS: [string, string[], World][] = [
   ],
   ['edge stop, compose fails', ['edge', 'stop'], { edge: { installed: true, down: 1 } }],
   ['edge stop, nothing installed', ['edge', 'stop'], {}],
+  // Every HTTPS name and a `serve --domain` GUI go with it, for everyone on the machine.
+  ['edge stop, installed', ['edge', 'stop'], { edge: { installed: true, down: 0 } }],
   ['edge start, installed', ['edge', 'start'], { edge: { installed: true } }],
   ['edge start, first ever', ['edge', 'start'], {}],
   ['edge restart, start fails', ['edge', 'restart'], { edge: { installed: true, down: 0, up: 1 } }],
@@ -677,5 +681,25 @@ describe('trust-ca --show', () => {
     expect(code).toBe(0);
     expect(out).toContain('no local CA yet');
     expect(fs.existsSync(caDir())).toBe(false);
+  });
+});
+
+describe('tls-status advice', () => {
+  it('names only commands that exist: the edge log, staging through config, this home', () => {
+    // It said `--acme-staging`, which no command has, sent Traefik's log to `houston logs`
+    // though Traefik is the edge, and named ~/.houston whatever HOUSTON_HOME was.
+    const https = jest.requireActual<typeof HttpsNS>('../../../src/cli/handlers/https');
+    const { metadata } = jest.requireActual<typeof RecordNS>('../../../src/core/runner/record');
+    let out = '';
+    const io = { writeOut: (v: string) => void (out += v), writeErr: () => undefined };
+    const meta = metadata({ name: 'w', rootUrl: 'http://localhost:3000', extra: { tls: 'acme' } });
+    https.tlsTroubleshoot(io, meta, 'acme', 't1.example.com', 443);
+    https.tlsTroubleshoot(io, meta, 'local', 't1.example.com', 443);
+    expect(out).not.toMatch(/--acme-staging|houston logs --name|~\/\.houston/u);
+    expect(out).toContain('houston edge logs | grep -i acme');
+    expect(out).toContain('houston edge status');
+    expect(out).toContain('`houston config set acme.staging true`, then re-create');
+    expect(out).toContain(path.join(home, 'acme', 'dns.env'));
+    expect(out).toContain('`houston ready --name w` checks Rocket.Chat');
   });
 });

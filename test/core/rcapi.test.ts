@@ -20,6 +20,7 @@ import {
   fetchSamlIdpCert,
   generatePat,
   getSetting,
+  licenseValid,
   login,
   methodSucceeded,
   newestMailStamp,
@@ -606,6 +607,22 @@ describe('the calls that answer 200 for something that did not work', () => {
     expect(
       await getSetting('http://x', { token: 't', userId: 'u' }, 'pw', 'Show_Setup_Wizard'),
     ).toBeNull();
+  });
+
+  it('reads whether Rocket.Chat accepted its license, and answers null when it cannot say', async () => {
+    const auth = { token: 't', userId: 'u' };
+    script([], { status: 200, text: '{"license":{"hasValidLicense":true,"activeModules":[]}}' });
+    expect(await licenseValid('http://x', auth)).toBe(true);
+    // Installed and refused ("Url validation failed"): the shape is the same, the answer no.
+    script([], { status: 200, text: '{"license":{"hasValidLicense":false,"activeModules":[]}}' });
+    expect(await licenseValid('http://x', auth)).toBe(false);
+    // A release whose licenses.info does not say, a refusal, a dead socket: not "no".
+    script([], { status: 200, text: '{"license":{"activeModules":[]}}' });
+    expect(await licenseValid('http://x', auth)).toBeNull();
+    script([], { status: 401, text: '{"success":false}' });
+    expect(await licenseValid('http://x', auth)).toBeNull();
+    script([], new RequestFailed('refused', 'http://x'));
+    expect(await licenseValid('http://x', auth)).toBeNull();
   });
 
   it('asks the workspace which names are settings, and says null when it could not', async () => {

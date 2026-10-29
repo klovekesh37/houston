@@ -951,6 +951,13 @@ describe('scaling', () => {
     await expect(stopWorkspace('x', { context: 'prod', sleep })).rejects.toBeInstanceOf(
       NotFoundError,
     );
+    // Saying how to bring it back, with the version `up` requires.
+    await expect(stopWorkspace('x', { context: 'prod', version: '8.5.1', sleep })).rejects.toThrow(
+      'houston up --version 8.5.1 --name x',
+    );
+    await expect(startWorkspace('x', { context: 'prod', version: '8.5.1' })).rejects.toThrow(
+      'houston up --version 8.5.1 --name x',
+    );
   });
 
   it('says MongoDB stays up when the operator keeps it, and does not wait for it to go', async () => {

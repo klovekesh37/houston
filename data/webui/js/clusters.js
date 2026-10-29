@@ -13,9 +13,12 @@ function runtimeLabel(name) { return RUNTIME_LABEL[name] || name; }
 // the server's refusal registry.
 const DEPLOYMENT_NOTE = {
   monolith: "One Rocket.Chat process.",
-  "multi-instance": "Several Rocket.Chat containers behind a load balancer.",
+  "multi-instance": "Several Rocket.Chat containers behind a load balancer. Live updates "
+    + "across them need an Enterprise license: without one, a message shows on the other "
+    + "instances only after a reload.",
   microservices: "Rocket.Chat plus presence, ddp-streamer, account, authorization "
-    + "and stream-hub, each its own deployment.",
+    + "and stream-hub, each its own deployment. Needs an Enterprise license: without one, "
+    + "every Rocket.Chat replica after the first stops.",
 };
 // The words on the Shape control. The VALUE is still the deployment name the CLI
 // takes; only what a person reads is plain.
@@ -120,7 +123,7 @@ function places({ inventory = false } = {}) {
   const repros = ctx.ALL_REPROS || [];
   if (!RUNTIMES.length || RUNTIMES.some((r) => r.name === "docker")) {
     const n = repros.filter((r) => (r.runtime || "docker") === "docker").length;
-    here.push({ key: "docker", runtime: "docker", context: "", ico: "docker", nm: "Docker", wh: "On this machine",
+    here.push({ key: "docker", runtime: "docker", context: "", ico: "docker", nm: "Docker", wh: "On this server",
       pill: ctx.DOCKER_OK === false ? ["warn", "Not answering"] : ["ok", "Ready"],
       ds: ctx.DOCKER_OK === false ? "Docker is not answering on the server. houston doctor says why."
         : "The quickest way to run Rocket.Chat. Right for most workspaces.",
@@ -139,10 +142,10 @@ function places({ inventory = false } = {}) {
     const day = perDay(st);
     return { key: (local ? "k8s:" : "eks:") + c.context, runtime: "kubernetes", context: c.context,
       ico: local ? "k8s" : "aws", nm: local ? "Kubernetes" : (c.short || c.context),
-      wh: local ? ["On this machine", dist, c.short || c.context].filter(Boolean).join(" · ")
+      wh: local ? ["On this server", dist, c.short || c.context].filter(Boolean).join(" · ")
         : `Amazon EKS · ${(st && st.region) || c.region || "?"}`,
       pill: placeState(st), cost: local ? null : day, costKnown: !local && !!st,
-      ds: local ? "Real pods and Helm charts on this computer. Use it when what you are testing depends on Kubernetes." : "",
+      ds: local ? "Real pods and Helm charts on this server. Use it when what you are testing depends on Kubernetes." : "",
       facts: [held, local ? roomFor("kubernetes") : clNodesText(st)].filter(Boolean),
       warn: local ? "" : placeWarn(st), usable: !st || (!!st.reachable && !st.gone), row: c };
   };
@@ -176,15 +179,15 @@ function places({ inventory = false } = {}) {
   // machine, and kind is not installed", while the server had sent the reason.
   const unreadable = !locals.length && ctx.CLUSTERS && ctx.CLUSTERS.unreadable;
   if (unreadable) {
-    here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this machine",
+    here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this server",
       pill: ["warn", "Unreadable"], facts: [], usable: false,
-      ds: `This machine's kubeconfig could not be read: ${unreadable}` });
+      ds: `This server's kubeconfig could not be read: ${unreadable}` });
   } else if (unread) {
     const why = ctx.CLSTATE && ctx.CLSTATE.listError;
-    here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this machine",
+    here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this server",
       pill: why ? ["warn", "Not answering"] : ["off", "Reading…"], facts: [], usable: false,
-      ds: why ? `This machine's Kubernetes contexts could not be read: ${why}. houston doctor says why.`
-        : "Reading this machine's Kubernetes contexts…" });
+      ds: why ? `This server's Kubernetes contexts could not be read: ${why}. houston doctor says why.`
+        : "Reading this server's Kubernetes contexts…" });
   } else if (!locals.length) {
     // AN EMPTY CONTEXT IS OFFERED ONLY WHEN IT CAN BE SAID WHERE IT GOES. The server
     // resolves "" to the box default first, so with a default set -- a remote cluster
@@ -192,17 +195,17 @@ function places({ inventory = false } = {}) {
     // a false sentence about a real workspace.
     const canMake = k && k.can_provision && !def;
     if (canMake) {
-      here.push({ key: "k8s-new", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this machine",
+      here.push({ key: "k8s-new", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this server",
         pill: ["off", "Not set up yet"], facts: [roomFor("kubernetes")].filter(Boolean), usable: true,
-        ds: "Houston sets up a local cluster the first time you create a Kubernetes workspace: about 3 minutes and 600 MB of memory." });
+        ds: "Houston sets up a cluster on this server the first time you create a Kubernetes workspace: about 3 minutes and 600 MB of memory." });
     } else {
       // Whether kind could make one is the probe's answer; before it, nothing is known.
       const reading = !def && !ctx.KUBE_READ;
-      here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this machine",
+      here.push({ key: "k8s-none", runtime: "kubernetes", context: "", ico: "k8s", nm: "Kubernetes", wh: "On this server",
         pill: ["off", reading ? "Reading…" : k === null ? "Not checked" : "Unavailable"], facts: [], usable: false,
-        ds: def ? "No cluster on this machine. This server's default cluster is set elsewhere, so a local one is not made from here."
-          : reading ? "Reading this machine's Kubernetes…"
-          : k && k.tools_ready ? "No cluster on this machine, and kind is not installed to make one. houston doctor shows what is missing."
+        ds: def ? "No cluster on this server. Its default cluster is set elsewhere, so houston does not make one here."
+          : reading ? "Reading this server's Kubernetes…"
+          : k && k.tools_ready ? "No cluster on this server, and kind is not installed to make one. houston doctor shows what is missing."
           : "Needs kubectl and helm on the server. houston doctor shows what is missing." });
     }
   }
@@ -261,7 +264,7 @@ function renderDestinations() {
     return ctx.el("label", { class: "pcard place", "data-dest": p.key }, input, ctx.el("span", { class: "radio" }), ...placeBody(p));
   };
   box.innerHTML = "";
-  box.append(zoneHead("On this machine", "Free"), ctx.el("div", { class: "places" }, ...here.map(pick)));
+  box.append(zoneHead("On this server", "Free"), ctx.el("div", { class: "places" }, ...here.map(pick)));
   const awsCards = aws.map(pick);
   if (ctx.canAdmin() && !limited) {
     awsCards.push(ctx.el("button", { type: "button", class: "pcard place add click", "data-dest": "add",
@@ -325,7 +328,7 @@ function applyDest() {
     note.hidden = false;
   } else if (p && p.key === "k8s-new") {
     note.classList.add("info");
-    note.append("Houston sets up a local Kubernetes cluster first (about 3 minutes), then creates the workspace on it.");
+    note.append("Houston sets up a Kubernetes cluster on this server first (about 3 minutes), then creates the workspace on it.");
     note.hidden = false;
   } else note.hidden = true;
 }
@@ -333,11 +336,11 @@ function applyDest() {
 function whereText(p) {
   if (!p) return "";
   if (p.ico === "aws") return `${p.nm} · Amazon EKS`;
-  if (p.key === "docker") return "Docker · this machine";
-  if (p.key === "k8s-new") return "Kubernetes · a new local cluster";
+  if (p.key === "docker") return "Docker · this server";
+  if (p.key === "k8s-new") return "Kubernetes · a new cluster on this server";
   if (p.key === "k8s-default") return "Kubernetes · this server's default";
-  const rest = p.wh.replace(/^On this machine( · )?/u, "");
-  return `Kubernetes${rest ? ` · ${rest}` : ""} · this machine`;
+  const rest = p.wh.replace(/^On this server( · )?/u, "");
+  return `Kubernetes${rest ? ` · ${rest}` : ""} · this server`;
 }
 
 // ---- Create a workspace: the steps ----------------------------------------------
@@ -412,7 +415,7 @@ function renderRuntimeAxes() {
   if (rt === "kubernetes") {
     const box = ctx.el("input", { type: "checkbox", name: "mongo_operator", id: "mongo-operator" });
     box.checked = ticked;
-    extra.append(ctx.el("label", {}, box, " MongoDB via the official operator (SCRAM)"));
+    extra.append(ctx.el("label", {}, box, " MongoDB with a password, via the official operator (MongoDB 6.0 or later)"));
   }
   syncAdvancedForRuntime(spec);
   syncDeploymentFields();
@@ -461,7 +464,7 @@ function syncLocalCaOption() {
     syncHttpsFields();
   } else if (here && !has) {
     mode.append(ctx.el("option", { value: "local" },
-      "Local certificate: no domain needed (run houston trust-ca once)"));
+      "Local certificate: a browser on this server only, no domain (run houston trust-ca once)"));
   }
 }
 
@@ -506,7 +509,7 @@ function syncZoneHttps(zone) {
     if (wasOther) { mode.value = "acme"; ZONE_CHOSE_ACME = true; }
     if (domain) domain.placeholder = `leave empty for <name>.${zone}`;
   } else {
-    if (!off) mode.prepend(OFF_OPTION || ctx.el("option", { value: "" }, "Off: plain http://localhost:PORT"));
+    if (!off) mode.prepend(OFF_OPTION || ctx.el("option", { value: "" }, "Off: plain http on a port of this server, no certificate"));
     if (ZONE_CHOSE_ACME) { mode.value = ""; ZONE_CHOSE_ACME = false; }
     if (domain) domain.placeholder = "rc1.example.com";
   }
@@ -535,8 +538,8 @@ function syncClusterNote() {
     note.append(ctx.el("br", {}), `Its public name is <name>.${zone} unless you type a domain below. `
       + "Let's Encrypt gives it a certificate, so it needs a contact email once.");
   } else if (!hasDomain) {
-    note.append(ctx.el("br", {}), "Without a domain it is reachable only by a port-forward from the "
-      + "server: tied to a pod, gone when it restarts, one person at a time. ");
+    note.append(ctx.el("br", {}), "Without a domain it opens only in a browser on the server itself, "
+      + "through a port-forward that ends when its pod restarts. ");
     note.append(ctx.el("button", { type: "button", class: "btn sm",
       onclick: () => {
         const mode = ctx.$("#https-mode");
@@ -562,7 +565,7 @@ function syncAdvancedForRuntime(spec) {
       [...mode.options].find((o) => o.value === "acme").remove();
       syncHttpsFields();
     } else if (!gone.has("domain") && !has) {
-      mode.append(ctx.el("option", { value: "acme" }, "Let's Encrypt: a domain that already points here"));
+      mode.append(ctx.el("option", { value: "acme" }, "Let's Encrypt: a public name that reaches this server"));
     }
     syncLocalCaOption();
   }
@@ -604,12 +607,12 @@ const TLS_LABEL = {
 };
 
 function doTlsStatus(name) {
-  return ctx.runAction(name, "Check TLS", async () => {
+  return ctx.runAction(name, "Check the certificate", async () => {
     const r = await ctx.api(`/api/repros/${name}/tls`);
     const lines = [`${r.public_url}`, ""];
     if (!r.serving) {
-      lines.push(`NOT serving TLS on this host's port ${r.port}`, `  ${r.error}`, "",
-                 "Rocket.Chat itself is fine on its plain http port — this is the TLS layer.");
+      lines.push(`NOT serving TLS on this server's port ${r.port}`, `  ${r.error}`, "",
+                 "This checks the TLS layer only, not Rocket.Chat itself.");
     } else {
       lines.push(`Issuer   ${r.issuer || "?"}`, `Subject  ${r.subject || "?"}`,
                  `Expires  ${(r.dates || "").replace("notAfter=", "")}`, "");
@@ -630,10 +633,10 @@ function doTlsStatus(name) {
       } else if (r.mode === "local") {
         lines.push(r.trusted_via_ca ? "Serving houston's local CA."
                                     : "WARNING: does not chain to houston's CA.");
-        lines.push(r.trusted ? "This machine trusts it — trust-ca has been run."
+        lines.push(r.trusted ? "This server trusts it — trust-ca has been run."
                              : "Not trusted here yet: run `houston trust-ca` once.");
       } else if (r.trusted) {
-        lines.push("Serving a certificate this machine trusts.");
+        lines.push("Serving a certificate this server trusts.");
       } else if (r.self_signed) {
         // NOT a failure, and it used to be reported as one — "does not trust —
         // normal for Let's Encrypt staging" on a workspace that was not using
@@ -642,10 +645,10 @@ function doTlsStatus(name) {
                    "On Kubernetes the ingress serves its own until cert-manager "
                  + "finishes, a minute or three after the workspace answers.");
       } else if (r.staging) {
-        lines.push("Serving a real certificate that this machine does not trust — "
+        lines.push("Serving a real certificate that this server does not trust — "
                  + "normal for Let's Encrypt staging.");
       } else {
-        lines.push(`Serving a certificate this machine does not trust, from `
+        lines.push(`Serving a certificate this server does not trust, from `
                  + `${r.issuer || "an unnamed issuer"}.`,
                    "That is neither staging nor a placeholder, so something else is "
                  + "answering for this name — a proxy in front is the usual cause.");
@@ -668,13 +671,14 @@ function doTlsStatus(name) {
 // Two modes, and only one of them asks for anything: a domain and an email, the
 // same pair the official Rocket.Chat compose takes as DOMAIN and LETSENCRYPT_EMAIL.
 const HTTPS_MODE_HINT = {
-  "": "",
-  acme: "Traefik obtains a real, publicly trusted certificate from Let's Encrypt."
-      + " The domain must already resolve to this host with port 443 reachable —"
-      + " Let's Encrypt validates by connecting to it.",
-  local: "A certificate signed by houston's own CA. Works offline, no domain, no rate"
-       + " limits. Browsers warn until `houston trust-ca` has been run once. A phone"
-       + " cannot use it — use Let's Encrypt for mobile.",
+  "": "Only a browser on this server opens it, unless this server publishes workspaces beyond "
+    + "loopback (Bind host).",
+  // What the name needs is said once, under the Domain field it is about.
+  acme: "Traefik obtains a real, publicly trusted certificate from Let's Encrypt.",
+  local: "A certificate signed by houston's own CA, for <name>.houston.localhost, which only"
+       + " a browser on this server reaches. Works offline, no domain, no rate limits."
+       + " Browsers warn until `houston trust-ca` has been run once. From your own computer,"
+       + " or for a phone, use Let's Encrypt.",
 };
 
 function syncHttpsFields() {
@@ -742,7 +746,7 @@ async function submitCreate() {
   const existing = f.existing ? f.existing.value : "reuse";
   if (existing === "force") req.force = true;
   if (existing === "fresh") {
-    if (!confirm(`This DELETES ${req.name || "the existing repro"}'s data volume — all users, `
+    if (!confirm(`This DELETES ${req.name || "the existing workspace"}'s data volume — all users, `
       + `channels, messages and uploads — then rebuilds it.\n\nContinue?`)) return;
     req.fresh = true;
   }
@@ -765,6 +769,8 @@ async function submitCreate() {
           label = name;
           title.textContent = `Creating ${label} on ${where}`;
           ctx.JOB.title = `Creating ${label}`;
+          // Now its job answers to the name: shown as Creating, as after a reload, not `down`.
+          ctx.adoptRunningJobs();
         },
         failed: (data) => {
           title.textContent = data && data.kind === "Stopped" ? `${label} was stopped` : `${label} could not be created`;
@@ -784,7 +790,7 @@ function renderCreateDone(r, label) {
   ctx.$("#create-progress-title").textContent = `${name} is ready`;
   const box = ctx.$("#create-result");
   box.innerHTML = "";
-  const url = (r && (r.public_url || r.root_url)) || "";
+  const url = (r && (r.open_url || r.root_url)) || "";
   if (url) {
     const call = ctx.el("div", { class: "callout info" }, "Open ", ctx.el("b", { class: "mono" }, url));
     if (r.login) call.append(" and sign in as ", ctx.el("b", {}, `${r.login.user} / ${r.login.password}`));

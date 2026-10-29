@@ -253,13 +253,13 @@ export function normalizeDomain(value: string): [string, string] {
   if (raw.includes('/')) {
     throw new ValidationError(
       `--domain '${value}' contains a path. Pass the hostname only ` +
-        `(${raw.split('/')[0] ?? ''}); serving a repro under a sub-path is not supported.`,
+        `(${raw.split('/')[0] ?? ''}); serving a workspace under a sub-path is not supported.`,
     );
   }
   if (raw.includes(':')) {
     throw new ValidationError(
       `--domain '${value}' contains a port. Pass the hostname only ` +
-        `(${raw.split(':')[0] ?? ''}) — a repro on a real domain is served on 443, so the ` +
+        `(${raw.split(':')[0] ?? ''}) — a workspace on a real domain is served on 443, so the ` +
         'URL carries no port.',
     );
   }
@@ -832,7 +832,26 @@ export async function probeServed(
     // ingress endpoint, asked with the name as SNI, is what the edge hands the bytes to.
     const origin = /^(.+):(\d+)$/u.exec(String(extra.ingress_endpoint ?? ''));
     if (isTruthy(extra.edge) && origin !== null) {
-      return await ask(String(origin[1]), { port: Number(origin[2]), sni: host, ...withCa });
+      const served = await ask(String(origin[1]), {
+        port: Number(origin[2]),
+        sni: host,
+        ...withCa,
+      });
+      if (!served.serving) return served;
+      // THE ORIGIN ANSWERING IS NOT THE NAME ANSWERING: with the edge down this said
+      // "✓ serving" for a URL that refused every connection. Any certificate at the name
+      // will do here -- a CDN's included -- the one reported stays the origin's.
+      const front = await ask(host, { port, ...withCa });
+      return front.serving
+        ? served
+        : {
+            ...served,
+            serving: false,
+            error:
+              `${host}:${String(port)} answers nothing from this machine (${front.error}); ` +
+              'the cluster does, so the edge in front of it is likely down — ' +
+              '`houston edge status`',
+          };
     }
     return await ask(host, { port, ...withCa });
   }
@@ -905,6 +924,6 @@ export function notes(spec: TlsSpec, name = '<name>'): string[] {
     'Traefik requests the certificate in the background. Confirm it issued:  houston ' +
       `tls-status --name ${name}`,
     'Certificate state lives in ~/.houston/acme/ and survives `down`, so re-creating this ' +
-      'repro reuses the cert instead of re-issuing it.',
+      'workspace reuses the cert instead of re-issuing it.',
   ];
 }

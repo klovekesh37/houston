@@ -697,6 +697,26 @@ export async function scenarioUiForwards(
     const listed = listedService(line);
     if (listed === null) continue;
     const [svc, hostPort, targetPort, deploy] = listed;
+    // AND FOR THE ROLLOUT TO FINISH. Mid-rollout the pod being replaced is still a ready
+    // endpoint, so a rebuild that changed an image forwarded to it, and once it was gone the
+    // forward stayed up answering every request empty (live, k3s: an ldap workspace rebuilt
+    // onto its new images, :8082 dead until `houston ready`). A rollout that does not finish
+    // in the bound falls through to the endpoint wait and its message, as before.
+    const bound = ENDPOINT_WAIT_TRIES * ENDPOINT_WAIT_INTERVAL;
+    await kube.run(
+      [
+        'kubectl',
+        '--context',
+        context,
+        '-n',
+        namespace,
+        'rollout',
+        'status',
+        `deployment/${deploy}`,
+        `--timeout=${String(bound)}s`,
+      ],
+      { timeout: bound + 30, own: isOurs(context) },
+    );
     // WAIT FOR A READY ENDPOINT FIRST. `kubectl port-forward svc/...` binds the local socket
     // immediately and only then dials a pod -- so a forward started while the workload is
     // still booting passes a TCP check on the local side, fails upstream, and exits. Keycloak

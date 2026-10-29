@@ -497,7 +497,7 @@ describe('the CLI performance option boundary', () => {
   it.each([
     [new RequestFailed('offline', 'http://127.0.0.1:19001'), NotReadyError, 5, 'not answering yet'],
     [new Error('HTTP 429 Too Many Requests'), NotReadyError, 5, 'rate-limiting token creation'],
-    [new Error('bad credentials'), ReproError, 1, 'this API call failed: bad credentials'],
+    [new Error('bad credentials'), ReproError, 1, 'the load test cannot sign in: bad credentials'],
   ] as const)(
     'preserves the authentication error class and exit semantics for %s',
     async (failure, kind, exitCode, message) => {

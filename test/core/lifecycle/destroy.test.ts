@@ -8,6 +8,7 @@ import * as paths from '../../../src/core/runner/paths';
 import type * as DestroyNS from '../../../src/core/lifecycle/destroy';
 import type * as RecordNS from '../../../src/core/runner/record';
 import type * as JournalNS from '../../../src/core/journal';
+import type * as HandlersNS from '../../../src/cli/handlers';
 
 it('Grafana public URL regression: destroying a TLS workspace removes its shared-namespace resources', async () => {
   jest.resetModules();
@@ -361,6 +362,38 @@ describe('tearing down a Kubernetes workspace that has the monitoring stack', ()
     await destroy.teardownKubernetes('mon', false, () => undefined);
     expect(called).toEqual({});
     expect(stopped).toContain(4242);
+  });
+
+  it("says a plain down leaves the preset's services running, which it does on purpose", async () => {
+    // Measured on k3s: after `down` (data kept) openldap and phpldapadmin stayed 1/1 Running
+    // while `list` said down, and nothing had said so.
+    const { destroy } = load();
+    // What the TERMINAL prints, through the CLI's own printer: emitted in phase `done`, the
+    // line reached houston.log and the GUI and was dropped from `houston down` (live, k3s).
+    const { emitOf } = require('../../../src/cli/handlers') as typeof HandlersNS;
+    const said = async (
+      preset: string,
+      volumes: boolean,
+      ports: number[] = [],
+    ): Promise<string> => {
+      const printed: string[] = [];
+      const io = { writeOut: (text: string) => printed.push(text), writeErr: () => undefined };
+      const own = { ...extra, ...(ports.length > 0 ? { sidecar_ports: ports } : {}) };
+      await writeRecord('mon', metadata({ name: 'mon', project: 'p', preset, extra: own }));
+      await destroy.teardownKubernetes(
+        'mon',
+        volumes,
+        emitOf({ events: null } as never, io as never),
+      );
+      return printed.join('');
+    };
+    expect(await said('ldap', false, [8082])).toContain(
+      'its ldap services keep running in houston-mon until `down --volumes`',
+    );
+    expect(await said('default', false)).not.toContain('keep running');
+    expect(await said('ldap', true, [8082])).not.toContain('keep running');
+    // A preset that is settings and users only runs nothing to keep running.
+    expect(await said('e2ee', false)).not.toContain('keep running');
   });
 });
 

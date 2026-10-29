@@ -256,17 +256,17 @@ function authenticationFailure(meta: runnerRecord.Metadata, error: unknown): nev
   const message = errorText(error);
   if (error instanceof Error && error.name === 'RequestFailed') {
     throw new NotReadyError(
-      `'${meta.name}' is not answering yet, so this API call cannot run — wait for it with ` +
+      `'${meta.name}' is not answering yet, so the load test cannot sign in — wait for it with ` +
         `\`houston ready --name ${meta.name}\``,
     );
   }
   if (message.includes('429') || message.includes('Too Many Requests')) {
     throw new NotReadyError(
-      `Rocket.Chat is rate-limiting token creation on '${meta.name}', so this API call ` +
-        'cannot run yet. Its limiter resets in about a minute — try again then.',
+      `Rocket.Chat is rate-limiting token creation on '${meta.name}', so the load test ` +
+        'cannot sign in yet. Its limiter resets in about a minute — try again then.',
     );
   }
-  throw new ReproError(`this API call failed: ${message}`);
+  throw new ReproError(`the load test cannot sign in: ${message}`);
 }
 
 async function performanceIdentity(
@@ -548,7 +548,7 @@ export async function runLoadtestCli(
       )
     ) {
       throw new ValidationError(
-        "--live needs Prometheus with remote-write enabled, but this repro's monitoring " +
+        "--live needs Prometheus with remote-write enabled, but this workspace's monitoring " +
           `predates it. Re-attach it: houston monitor --name ${meta.name} --off && ` +
           `houston monitor --name ${meta.name}`,
       );

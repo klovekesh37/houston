@@ -38,9 +38,12 @@ export function guide(name: string, parts: GuideParts): PresetGuide {
 
 /** The guides with nothing that needs the reader's own machine: a public URL serves every UI. */
 export function withoutLocalSetup(guides: readonly PresetGuide[]): PresetGuide[] {
+  const local = (line: string): boolean => /hosts entry/iu.test(line);
   return guides.map((one) => ({
     ...one,
     setup: null,
-    know: one.know.filter((line) => !/hosts entry/iu.test(line)),
+    // The steps too: "Add the hosts entry above." outlived the box it pointed at.
+    steps: one.steps.filter((line) => !local(line)),
+    know: one.know.filter((line) => !local(line)),
   }));
 }

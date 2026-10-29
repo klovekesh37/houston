@@ -8,7 +8,7 @@
 </head>
 <body class="shell">
   <header class="topbar">
-    <button class="brand" title="Back to this machine"><span class="dollar">$</span> houston</button>
+    <button class="brand" title="Back to Home"><span class="dollar">$</span> houston</button>
     <!-- Status on the left, account on the right. Both badges keep the position
          they have always had; only the ground under them changed. -->
     <!-- The DOCTOR button, named for what it does. It said "docker: up", which was
@@ -16,7 +16,7 @@
          of two -- and it made the one control that answers "is this box usable"
          look like a status label. What each engine is doing moved to the footer. -->
     <button id="doctor-badge" class="chip" title="Run the environment check">doctor</button>
-    <button id="edge-badge" class="chip" title="The shared Traefik serving every https name" hidden></button>
+    <button id="edge-badge" class="chip" title="The shared HTTPS front door serving every HTTPS name" hidden></button>
     <!-- The cluster ledger's at-a-glance half. Hidden when this box knows of no
          cluster at all; amber when one is past its date or would not answer, which
          is what amber MEANS here. Never red: red is for destroying something, and a
@@ -30,7 +30,7 @@
         <button id="btn-home" class="toplink">Home</button>
         <button id="btn-jobs" class="toplink">Activity</button>
         <button id="btn-clusters" class="toplink">Clusters</button>
-        <button id="btn-scenarios" class="toplink">Scenarios</button>
+        <button id="btn-scenarios" class="toplink">Presets</button>
         <button id="btn-backups" class="toplink">Backups</button>
         <button id="btn-refresh" class="toplink">Refresh</button>
       </div>
@@ -72,7 +72,7 @@
       </div>
       <div class="rail-controls">
         <button id="btn-new" class="btn solid block">+ New workspace</button>
-        <input id="filter" class="input" placeholder="Filter by ticket or version…" aria-label="Filter repros by name">
+        <input id="filter" class="input" placeholder="Filter by ticket or version…" aria-label="Filter workspaces by name">
         <div class="rail-two">
           <select id="scope-filter" class="input" aria-label="Whose workspaces" hidden>
             <option value="all">Everyone</option>
@@ -89,7 +89,7 @@
             <option value="dead">Dead</option>
             <option value="?">Unknown (docker down)</option>
           </select>
-          <select id="sort-by" class="input" aria-label="Sort repros">
+          <select id="sort-by" class="input" aria-label="Sort workspaces">
             <option value="name">Sort: name</option>
             <option value="state">Sort: state</option>
             <option value="port">Sort: port</option>
@@ -98,7 +98,7 @@
       </div>
       <section id="repros" class="rows"></section>
       <div class="rail-foot">
-        <button id="btn-prune" class="btn danger block small">Prune down repros</button>
+        <button id="btn-prune" class="btn danger block small">Delete taken-down workspaces</button>
       </div>
     </nav>
     <main id="detail" class="stage"></main>
@@ -206,9 +206,9 @@
             <div id="create-https-block">
               <label class="f">HTTPS
                 <select name="https_mode" id="https-mode">
-                  <option value="">Off: plain http://localhost:PORT</option>
-                  <option value="acme">Let's Encrypt: a domain that already points here</option>
-                  <option value="local">Local certificate: no domain needed (run houston trust-ca once)</option>
+                  <option value="">Off: plain http on a port of this server, no certificate</option>
+                  <option value="acme">Let's Encrypt: a public name that reaches this server</option>
+                  <option value="local">Local certificate: a browser on this server only, no domain (run houston trust-ca once)</option>
                 </select>
               </label>
               <p class="hint" id="https-mode-hint"></p>
@@ -216,9 +216,11 @@
                 <label class="f">Domain <input name="domain" placeholder="rc1.example.com"></label>
                 <label class="f">Contact email for Let's Encrypt <input name="acme_email" type="email" placeholder="you@example.com"></label>
               </div>
-              <p class="hint https-acme" hidden>The domain has to resolve to this host with port 443
-                reachable: Let's Encrypt validates by connecting to it. On a managed cluster, point
-                it at the load balancer <b>Prepare</b> reports. Check it with <b>Check TLS</b> once
+              <p class="hint https-acme" hidden>The domain has to resolve to this server with port 443
+                reachable: Let's Encrypt validates by connecting to it. If a wildcard DNS record
+                (<code>*.example.com</code>) already points here, any name under it works with no DNS
+                change; any other name needs its own record first. On a managed cluster, point
+                it at the load balancer <b>Prepare</b> reports. Check it with <b>Check the certificate</b> once
                 the workspace is up.</p>
             </div>
           </div></div>
@@ -251,7 +253,7 @@
             </div>
             <div class="checks">
               <label><input type="checkbox" name="wait" checked> Wait until ready</label>
-              <label><input type="checkbox" name="pin"> Keep (pin, and make it the default)</label>
+              <label><input type="checkbox" name="pin"> Keep: “Delete taken-down workspaces” skips it (on Docker it also becomes this server's default for CLI commands)</label>
               <span id="runtime-extra" class="checks-inline"></span>
             </div>
           </details>
@@ -280,11 +282,11 @@
   <!-- Seed dialog -->
   <dialog id="seed-dialog">
     <form id="seed-form" method="dialog">
-      <h2 id="seed-title">Seed data</h2>
+      <h2 id="seed-title">Add sample data</h2>
       <label>Mode
         <select name="mode" id="seed-mode">
-          <option value="profile">REST profile (real, loginable users)</option>
-          <option value="scale">Bulk --scale (fast Mongo prefill; no logins/hooks)</option>
+          <option value="profile">Realistic: users you can sign in as, rooms, messages (slower)</option>
+          <option value="scale">Bulk volume, fast: its users cannot sign in, no notifications</option>
         </select>
       </label>
       <label id="seed-profile-row">Profile
@@ -302,7 +304,7 @@
       <p class="hint" id="seed-hint"></p>
       <menu>
         <button type="button" id="seed-cancel" class="btn">Cancel</button>
-        <button type="button" id="seed-clear" class="btn danger">Clear scale data</button>
+        <button type="button" id="seed-clear" class="btn danger">Remove bulk test data</button>
         <button class="btn primary" id="seed-submit">Seed</button>
       </menu>
     </form>
@@ -405,7 +407,7 @@
   <!-- Config-import dialog -->
   <dialog id="import-dialog">
     <form id="import-form" method="dialog">
-      <h2 id="import-title">Import customer config</h2>
+      <h2 id="import-title">Import settings</h2>
       <label>Support-dump settings file (*-settings.json)
         <input type="file" name="file" id="import-file" accept=".json,application/json">
       </label>
@@ -544,10 +546,10 @@
        the doctor one, whose heading, hint and Re-check button all belong to a
        different question. -->
   <dialog id="edge-dialog">
-    <h2>Edge</h2>
-    <p class="hint">One Traefik holds <code>:80</code> and <code>:443</code> for every https
-      name on this box. It is not a workspace, so it never appears in the grid — manage it
-      with <code>houston edge</code>.</p>
+    <h2>HTTPS front door</h2>
+    <p class="hint">One shared HTTPS front door (Traefik) on ports 80 and 443 for every HTTPS
+      workspace on this server. It is not a workspace: an admin manages it with
+      <code>houston edge</code> in a shell on the server.</p>
     <div id="edge-body" class="plan"></div>
     <menu>
       <button type="button" id="edge-close" class="btn primary">Close</button>
@@ -614,7 +616,7 @@
   <dialog id="people-dialog">
     <h2>People</h2>
     <p class="hint">Everyone here can sign in to this server. Roles bound the
-      <b>GUI</b> only — anyone with a shell on this box is already in the docker
+      <b>GUI</b> only — anyone with a shell on this server is already in the docker
       group, so a readonly user with an ssh key is not readonly.</p>
     <div id="people-body" class="people"></div>
     <div class="row2" id="people-add">

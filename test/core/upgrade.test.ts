@@ -79,16 +79,19 @@ describe('planning an upgrade', () => {
     source: 'map (fallback)',
   };
 
+  // The way forward is named, with flags that exist: a dump restored into a new workspace.
   const SEVEN_TO_EIGHT =
     "Rocket.Chat 8.6.1 pairs with MongoDB 8.0, but 'w' runs MongoDB 7.0. MongoDB majors " +
-    'have to be stepped one at a time (7 -> 8) with a featureCompatibilityVersion bump at ' +
-    'each step; houston will not do that in a single move';
+    'have to be stepped one at a time (7 -> 8), which houston does not do in place. To carry ' +
+    'the data across: houston backup --name w, then houston up --version 8.6.1 --name w-new, ' +
+    'then houston restore <bundle> --name w-new --allow-upgrade';
   // Two majors away: the refusal spells out every step, because each needs its own fCV
   // bump and guessing loses data.
   const SIX_TO_EIGHT =
     "Rocket.Chat 8.6.1 pairs with MongoDB 8.0, but 'w' runs MongoDB 6.0. MongoDB majors " +
-    'have to be stepped one at a time (6 -> 7 -> 8) with a featureCompatibilityVersion bump ' +
-    'at each step; houston will not do that in a single move';
+    'have to be stepped one at a time (6 -> 7 -> 8), which houston does not do in place. To ' +
+    'carry the data across: houston backup --name w, then houston up --version 8.6.1 --name ' +
+    'w-new, then houston restore <bundle> --name w-new --allow-upgrade';
 
   it.each<[string, string, Partial<typeof BASE_META>, Record<string, unknown>]>([
     [
@@ -112,8 +115,7 @@ describe('planning an upgrade', () => {
         to_mongo: '7.0',
         mongo_blocked:
           "Rocket.Chat 7.4.1 pairs with MongoDB 7.0, but 'w' runs MongoDB 8.0. MongoDB " +
-          'majors have to be stepped one at a time () with a featureCompatibilityVersion ' +
-          'bump at each step; houston will not do that in a single move',
+          'majors have to be stepped one at a time (), which houston does not do in place',
         direction: 'downgrade',
         allowed: false,
         blocked_reason:
@@ -172,7 +174,7 @@ describe('planning an upgrade', () => {
       { extra: { tls: true } },
       {
         warnings: [
-          'this repro terminates TLS; its certificate and Traefik configuration are left ' +
+          'this workspace terminates TLS; its certificate and Traefik configuration are left ' +
             'exactly as they are',
         ],
       },
@@ -432,13 +434,13 @@ describe('when an upgrade cannot be offered', () => {
     const { NotFoundError } = require('../../src/lib/errors') as typeof ErrorsNS;
     jest.doMock('../../src/core/lifecycle/naming', () => ({
       resolveName: async () => {
-        throw new NotFoundError('no repro named');
+        throw new NotFoundError('no workspace named');
       },
     }));
     const upgrade = require('../../src/core/upgrade') as typeof UpgradeNS;
     const result = await upgrade.canUpgrade('nope');
     expect(result['can_upgrade']).toBe(false);
-    expect(String(result['reason'])).toContain('no repro named');
+    expect(String(result['reason'])).toContain('no workspace named');
     expect(result['current']).toBe('');
   });
 });
@@ -937,8 +939,9 @@ describe('the refusal-or-warning gate', () => {
 
   const CROSSING =
     "Rocket.Chat 8.6.1 pairs with MongoDB 8.0, but 'w' runs MongoDB 7.0. MongoDB majors " +
-    'have to be stepped one at a time (7 -> 8) with a featureCompatibilityVersion bump at ' +
-    'each step; houston will not do that in a single move';
+    'have to be stepped one at a time (7 -> 8), which houston does not do in place. To carry ' +
+    'the data across: houston backup --name w, then houston up --version 8.6.1 --name w-new, ' +
+    'then houston restore <bundle> --name w-new --allow-upgrade';
 
   it('refuses the same version unless forced', async () => {
     expect(await gate('8.5.1', '8.0', '8.5.1', false)).toEqual({
@@ -959,7 +962,11 @@ describe('the refusal-or-warning gate', () => {
 
   it('refuses a MongoDB major crossing unless forced', async () => {
     expect(await gate('8.5.1', '7.0', '8.6.1', false)).toEqual({
-      answer: { kind: 'ValidationError', message: `${CROSSING}. Pass --force to try anyway.` },
+      // Not "try anyway": --force does something else here, and says so.
+      answer: {
+        kind: 'ValidationError',
+        message: `${CROSSING}. \`--force\` upgrades Rocket.Chat only and leaves MongoDB where it is.`,
+      },
       events: [],
     });
   });
@@ -970,7 +977,7 @@ describe('the refusal-or-warning gate', () => {
       events: [
         {
           message:
-            `--force: upgrading Rocket.Chat ONLY. ${CROSSING} MongoDB stays at its current ` +
+            `--force: upgrading Rocket.Chat ONLY. ${CROSSING}. MongoDB stays at its current ` +
             'version and the record keeps naming it, so this workspace is a combination ' +
             'houston does not pair by itself.',
           level: 'warn',
@@ -1217,7 +1224,8 @@ describe('an upgrade against a real record', () => {
     containers = [];
     answer = await upgrade.canUpgrade('rc8-5-1');
     expect(answer.can_upgrade).toBe(false);
-    expect(String(answer.reason)).toContain('houston up');
+    // With the version: `up` requires one, so a bare `houston up --name` was a usage error.
+    expect(String(answer.reason)).toContain('houston up --version 8.5.1 --name rc8-5-1');
   });
 
   it('refuses a stopped workspace as not ready, pointing at start', async () => {

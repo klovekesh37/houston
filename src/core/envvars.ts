@@ -60,7 +60,7 @@ const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
  */
 const LOAD_BEARING: Readonly<Record<string, string>> = Object.freeze({
   MONGO_URL: "houston's Mongo connection; Rocket.Chat will not start if it is wrong",
-  PORT: 'the container port houston publishes; the repro becomes unreachable',
+  PORT: 'the container port houston publishes; the workspace becomes unreachable',
   ROOT_URL: 'set from --root-url/--https; overriding it here will fight those',
   TRANSPORTER: 'the multi-instance NATS mesh',
 });
@@ -530,10 +530,11 @@ export async function setEnvLocked(
   info(emit, `env updated on ${quotedText(target)}: ${changed}`, { phase: 'config' });
 
   if (!restart) {
+    // Not `up`: on a running workspace it recreates nothing. Re-running `env` forces it.
     info(
       emit,
-      'not restarting; the change applies next time the container is ' +
-        `recreated (\`houston up --name ${target}\`)`,
+      'not restarting; the change is written but not applied. To apply it, re-run the ' +
+        'same `houston env` without --no-restart',
       { phase: 'done' },
     );
     return { name: target, restarted: false, overrides: shown(overrides) };

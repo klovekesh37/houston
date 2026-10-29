@@ -203,7 +203,10 @@ describe('`tls-status`', () => {
       dialled.length = 0;
       sni.length = 0;
       await execute({ spec: spec as never, arguments: {}, options: { name: 'ke' }, events: null });
-      expect(dialled).toEqual(['172.16.0.2']);
+      // The origin first, for the certificate reported; then the name, only to learn whether
+      // anything answers it at all -- with the edge down this said "✓ serving" for a URL that
+      // refused every connection.
+      expect(dialled).toEqual(['172.16.0.2', 'kw.houston.localhost']);
       expect(sni).toEqual(['172.16.0.2:32023 kw.houston.localhost']);
     } finally {
       jest.dontMock('../../../src/core/tls');
@@ -279,11 +282,15 @@ describe('`tls-status` on a staging certificate', () => {
         }).catch(() => undefined);
         return out.join('');
       };
-      expect(await run()).toContain('without --acme-staging');
+      // Staging off in config now: re-running the same command is the way out. No command
+      // has an `--acme-staging` flag, so neither answer may name one.
+      const off = await run();
+      expect(off).toContain('`acme.staging` is off now, so re-run the SAME command');
+      expect(off).not.toContain('--acme-staging');
       fs.writeFileSync(configFile(), 'acme_staging: true\n');
       const fromConfig = await run();
       expect(fromConfig).toContain('houston config set acme.staging false');
-      expect(fromConfig).not.toContain('without --acme-staging');
+      expect(fromConfig).not.toContain('--acme-staging');
     } finally {
       jest.dontMock('../../../src/core/tls');
       jest.dontMock('../../../src/core/runner/record');

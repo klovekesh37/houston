@@ -548,9 +548,7 @@ describe('the create path end to end, stopped at the write seam', () => {
       ),
     ).rejects.toThrow('stopped at the write seam');
     const yaml = seen.yaml ?? '';
-    expect(yaml).toContain(
-      './ldap/certs/ldap.crt:/container/service/slapd/assets/certs/ldap.crt:ro',
-    );
+    expect(yaml).toContain('./ldap/certs/ldap.crt:/container/certs/ldap.crt:ro');
     // The PEM survives the document: parsed back, it is the CA houston signs with.
     const doc = YAML.parse(yaml) as {
       services: { rocketchat: { environment: Record<string, string> } };
@@ -897,6 +895,65 @@ describe('rebuilding an existing workspace', () => {
     });
     await createDocker.resolveAxesStep(plan);
     expect(plan.req.monitor).toBe(true);
+  });
+
+  describe('its --root-url', () => {
+    // `up --force` without --root-url wrote ROOT_URL=http://localhost:<port> over a proxied
+    // workspace's public address, without a word, and left Rocket.Chat's Site_Url on the old one.
+    const createDocker = (): typeof CreateDockerNS =>
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    const rebuild = async (
+      extra: Record<string, unknown>,
+      req: Partial<Parameters<typeof createReq>[0]> = {},
+      publicUrl = '',
+    ): Promise<string> => {
+      await writeRecord(
+        'proxied',
+        metadata({ name: 'proxied', project: 'houston-proxied', publicUrl, extra }),
+      );
+      const plan = createPlan({
+        req: createReq({ version: '8.5.1', name: 'proxied', force: true, ...req }),
+        emit: nullEmit,
+      });
+      await createDocker().resolveAxesStep(plan);
+      return plan.req.rootUrl;
+    };
+
+    it('is kept when the rebuild leaves it out', async () => {
+      expect(await rebuild({ advertised_url: 'https://rc.example.test' })).toBe(
+        'https://rc.example.test',
+      );
+    });
+
+    it('gives way to one typed on the rebuild', async () => {
+      expect(
+        await rebuild(
+          { advertised_url: 'https://rc.example.test' },
+          { rootUrl: 'https://other.example.test' },
+        ),
+      ).toBe('https://other.example.test');
+    });
+
+    it('is not carried from a workspace houston served over HTTPS', async () => {
+      // There the advertised URL IS the TLS name: carried into --root-url it would outrank
+      // whatever TLS this rebuild resolves.
+      const tls = 'https://proxied.houston.localhost';
+      expect(await rebuild({ advertised_url: tls }, {}, tls)).toBe('');
+    });
+
+    it('is not carried into a rebuild that asks for HTTPS', async () => {
+      expect(await rebuild({ advertised_url: 'https://rc.example.test' }, { https: true })).toBe(
+        '',
+      );
+      expect(
+        await rebuild({ advertised_url: 'https://rc.example.test' }, { domain: 'rc.example.com' }),
+      ).toBe('');
+      // `--email` asks for TLS too (on a recorded name: `resolveTls`), and the carried URL
+      // then outranked it.
+      expect(
+        await rebuild({ advertised_url: 'https://rc.example.test' }, { acmeEmail: 'a@b.test' }),
+      ).toBe('');
+    });
   });
   it('Grafana public URL regression: passes the TLS URL into the compose document and notes', async () => {
     const versions = require('../../../src/lib/versions') as typeof VersionsNS;
@@ -1334,6 +1391,49 @@ describe('a rebuild that names no preset', () => {
   });
 });
 
+describe('the edge a --domain create starts', () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    "asks a running Let's Encrypt edge to change only when its challenge is stale (%s)",
+    async (stale, calls) => {
+      // Measured behind a tunnel: `config set acme.challenge http`, then `up --domain` beside a
+      // running edge, and the edge kept TLS-ALPN: this gate never called `ensureRunning`.
+      jest.resetModules();
+      const ensureRunning = jest.fn(async () => ({ ok: true, why: '' }));
+      jest.doMock('../../../src/core/edge/engine', () => ({
+        ...jest.requireActual('../../../src/core/edge/engine'),
+        running: async () => true,
+      }));
+      jest.doMock('../../../src/core/edge/acme', () => ({
+        ...jest.requireActual('../../../src/core/edge/acme'),
+        hasAcme: () => true,
+      }));
+      jest.doMock('../../../src/core/edge/runtime', () => ({
+        ...jest.requireActual('../../../src/core/edge/runtime'),
+        ensureRunning,
+        challengeStale: () => stale,
+      }));
+      const createDocker =
+        require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+      const plan = createPlan({ req: createReq({ version: '8.5.1' }), emit: nullEmit });
+      plan.tlsspec = tlsSpec({
+        mode: MODE_ACME,
+        host: 'rc.example.test',
+        port: 443,
+        acmeEmail: 'ops@example.com',
+      });
+      await createDocker.startTheEdge(plan, false);
+      expect(ensureRunning).toHaveBeenCalledTimes(calls);
+    },
+  );
+});
+
 describe('a create whose name a workspace on the other runtime holds', () => {
   it('refuses a Kubernetes create over a Docker workspace, and leaves its record alone', async () => {
     // Seen in production: 8.5.1 on Docker, then 8.5.1 on Kubernetes from the GUI, derived
@@ -1528,7 +1628,7 @@ describe('an Enterprise licence', () => {
     const refused = createDocker.createRepro(
       createReq({ version: '8.5.1', name: 'badlic', license: bad, offline: true }),
     );
-    await expect(refused).rejects.toThrow('does not hold a Rocket.Chat licence');
+    await expect(refused).rejects.toThrow('does not hold a Rocket.Chat license');
     await expect(
       createDocker.createRepro(
         createReq({ version: '8.5.1', name: 'badlic', license: bad, offline: true }),
@@ -1538,8 +1638,8 @@ describe('an Enterprise licence', () => {
 });
 
 describe('a name the HTTPS edge could not reach', () => {
-  // The TLS the create DECIDED, as `resolveTls` leaves it: `--https`, `--email` alone and
-  // a record of an HTTPS workspace all come out as a spec, and none of them as a flag here.
+  // The TLS the create DECIDED, as `resolveTls` leaves it: `--https`, `--email` on a recorded
+  // name and a record of an HTTPS workspace all come out as a spec, none of them as a flag here.
   const planOf = (name: string, preset: string, https = true, actor = '') => {
     const plan = createPlan({
       req: createReq({ version: '8.5.1', name, preset, actor }),
@@ -1552,18 +1652,23 @@ describe('a name the HTTPS edge could not reach', () => {
   };
 
   it('is refused before anything is made, naming the container and the room left', async () => {
-    // `houston-<name>-phpldapadmin-1` must be a 63-character DNS label: at 41 characters it
-    // is 64, does not resolve, and /phpldapadmin/ answered Bad Gateway.
+    // Every container the edge routes to must be a 63-character DNS label: once 64, it does
+    // not resolve and its path answers Bad Gateway (/phpldapadmin/ did, at 41 characters).
+    // The longest is livechat's demo page, `houston-<name>-widget-site-1`.
     const createDocker = jest.requireActual<typeof CreateDockerNS>(
       '../../../src/core/lifecycle/create-docker',
     );
     await expect(
-      createDocker.refuseNamesTheEdgeCannotReach(planOf('a'.repeat(41), 'ldap')),
+      createDocker.refuseNamesTheEdgeCannotReach(planOf('a'.repeat(42), 'livechat')),
     ).rejects.toThrow(
-      /reaches phpldapadmin as houston-a{41}-phpldapadmin-1, 64 characters.*at most 40/u,
+      /reaches widget-site as houston-a{42}-widget-site-1, 64 characters.*at most 41/u,
     );
     await expect(
-      createDocker.refuseNamesTheEdgeCannotReach(planOf('a'.repeat(40), 'ldap')),
+      createDocker.refuseNamesTheEdgeCannotReach(planOf('a'.repeat(41), 'livechat')),
+    ).resolves.toBeUndefined();
+    // phpLDAPadmin is reached through its `ldap-ui` nginx now, shorter than Rocket.Chat.
+    await expect(
+      createDocker.refuseNamesTheEdgeCannotReach(planOf('a'.repeat(42), 'ldap')),
     ).resolves.toBeUndefined();
     // Rocket.Chat itself is the limit without a preset UI, and plain http routes nothing.
     await expect(
@@ -1574,9 +1679,9 @@ describe('a name the HTTPS edge could not reach', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('is refused however the create came to HTTPS: --email alone, or the record', async () => {
-    // Keyed on the TLS `resolveTls` decided, not on --https/--domain: `--email` alone means
-    // a local certificate, and an existing HTTPS workspace gets its TLS back from its record.
+  it('is refused however the create came to HTTPS: --email, or the record', async () => {
+    // Keyed on the TLS `resolveTls` decided, not on --https/--domain: `--email` brings back a
+    // recorded name, and an existing HTTPS workspace gets its TLS back from its record.
     jest.resetModules();
     jest.doMock('../../../src/core/lifecycle/ports', () => ({
       ...jest.requireActual('../../../src/core/lifecycle/ports'),
@@ -1590,23 +1695,23 @@ describe('a name the HTTPS edge could not reach', () => {
     }));
     jest.doMock('../../../src/core/lifecycle/tlsplan', () => ({
       ...jest.requireActual('../../../src/core/lifecycle/tlsplan'),
-      resolveTls: async () => tlsSpec({ host: `${'a'.repeat(41)}.houston.localhost` }),
+      resolveTls: async () => tlsSpec({ host: `${'a'.repeat(42)}.houston.localhost` }),
     }));
     const createDocker =
       require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
     const plan = createPlan({
       req: createReq({
         version: '8.5.1',
-        name: 'a'.repeat(41),
-        preset: 'ldap',
+        name: 'a'.repeat(42),
+        preset: 'livechat',
         acmeEmail: 'a@b.c',
       }),
       emit: nullEmit,
     });
     plan.cfg = config.loadConfig();
-    plan.reproName = 'a'.repeat(41);
-    plan.pre = presets.load('ldap', {});
-    await expect(createDocker.claimPorts(plan)).rejects.toThrow(/phpldapadmin-1, 64 characters/u);
+    plan.reproName = 'a'.repeat(42);
+    plan.pre = presets.load('livechat', {});
+    await expect(createDocker.claimPorts(plan)).rejects.toThrow(/widget-site-1, 64 characters/u);
     jest.resetModules();
   });
 
@@ -1614,12 +1719,12 @@ describe('a name the HTTPS edge could not reach', () => {
     const createDocker = jest.requireActual<typeof CreateDockerNS>(
       '../../../src/core/lifecycle/create-docker',
     );
-    // alice typed 36 characters; the workspace is `alice-<36>`, 42, one container 65.
+    // alice typed 36 characters; the workspace is `alice-<36>`, 42, its demo page's container 64.
     await expect(
       createDocker.refuseNamesTheEdgeCannotReach(
-        planOf(`alice-${'a'.repeat(36)}`, 'ldap', true, 'alice'),
+        planOf(`alice-${'a'.repeat(36)}`, 'livechat', true, 'alice'),
       ),
-    ).rejects.toThrow(/at most 34 characters, as houston puts 'alice-' in front of it/u);
+    ).rejects.toThrow(/at most 35 characters, as houston puts 'alice-' in front of it/u);
   });
 });
 
@@ -1692,6 +1797,52 @@ describe('up --pin on a workspace that exists', () => {
     expect((await record.readMeta('kept')).pinned).toBe(true);
     const cfg = require('../../../src/lib/config') as typeof config;
     expect(cfg.loadConfig().default_repro).toBe('kept');
+  });
+
+  it('points a different version at upgrade, and keeps --force for a preset change', async () => {
+    // "Use --force to rebuild it" for a version skipped the upgrade's backup and let a
+    // downgrade through; `upgrade` backs up first and refuses one.
+    jest.resetModules();
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual('../../../src/core/runner/queries'),
+      rcState: async () => 'running',
+    }));
+    jest.doMock('../../../src/core/lifecycle/ready', () => ({
+      ...jest.requireActual('../../../src/core/lifecycle/ready'),
+      restoreRoute: async () => undefined,
+    }));
+    jest.doMock('../../../src/core/lifecycle/inspect', () => ({
+      ...jest.requireActual('../../../src/core/lifecycle/inspect'),
+      summary: async () => ({}),
+    }));
+    const record = require('../../../src/core/runner/record') as {
+      writeRecord: typeof writeRecord;
+      metadata: typeof metadata;
+    };
+    await record.writeRecord(
+      'old',
+      record.metadata({ name: 'old', project: 'houston-old', rcVersion: '8.5.1', preset: 'ldap' }),
+    );
+    const createDocker =
+      require('../../../src/core/lifecycle/create-docker') as typeof CreateDockerNS;
+    const said = async (presetName: string): Promise<string> => {
+      const lines: string[] = [];
+      await createDocker.reuse(
+        'old',
+        false,
+        createReq({ version: '8.6.1', name: 'old' }),
+        (event) => void lines.push(event.message),
+        { streamOutput: false, resolved: { rcVersion: '8.6.1' } as Resolved, presetName },
+      );
+      return lines.join('\n');
+    };
+    const version = await said('');
+    expect(version).toContain('houston upgrade --name old --to 8.6.1 (it backs up first');
+    expect(version).toContain('--fresh rebuilds it empty.');
+    expect(version).not.toContain('--force');
+    expect(await said('email')).toContain(
+      "Use --force to rebuild it (a --force rebuild as 'email' removes the data 'ldap' kept).",
+    );
   });
 });
 

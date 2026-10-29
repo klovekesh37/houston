@@ -113,28 +113,28 @@ describe('workspace naming', () => {
     const recorded = [
       {
         kind: 'ValidationError',
-        message: "invalid repro name 'UPPER' (lowercase letters, digits and '-' only)",
+        message: "invalid workspace name 'UPPER' (lowercase letters, digits and '-' only)",
       },
       {
         kind: 'ValidationError',
-        message: "invalid repro name '-lead' (lowercase letters, digits and '-' only)",
+        message: "invalid workspace name '-lead' (lowercase letters, digits and '-' only)",
       },
       {
         kind: 'ValidationError',
-        message: "invalid repro name 'space here' (lowercase letters, digits and '-' only)",
+        message: "invalid workspace name 'space here' (lowercase letters, digits and '-' only)",
       },
       {
         kind: 'ValidationError',
-        message: "invalid repro name 'a.re' (lowercase letters, digits and '-' only)",
+        message: "invalid workspace name 'a.re' (lowercase letters, digits and '-' only)",
       },
       {
         kind: 'ValidationError',
-        message: "invalid repro name 'tab\\tchar' (lowercase letters, digits and '-' only)",
+        message: "invalid workspace name 'tab\\tchar' (lowercase letters, digits and '-' only)",
       },
       {
         kind: 'ValidationError',
         message:
-          'repro name is 65 characters; the limit is 64 (it becomes a directory and a set of container names)',
+          'workspace name is 65 characters; the limit is 64 (it becomes a directory and a set of container names)',
       },
     ];
     const ours = invalid.map((value) => {
@@ -158,7 +158,7 @@ describe('workspace naming', () => {
     );
     expect(await resolveName('TICKET-1234', 'alice')).toBe('alice-ticket-1234');
     expect(await resolveName('alice-ticket-1234')).toBe('alice-ticket-1234');
-    await expect(resolveName('ticket-1234')).rejects.toThrow(/no repro named/);
+    await expect(resolveName('ticket-1234')).rejects.toThrow(/no workspace named/);
   });
 
   it("refuses a typed name that could be somebody else's workspace or the caller's own", async () => {

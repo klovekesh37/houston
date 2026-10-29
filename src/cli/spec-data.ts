@@ -5,7 +5,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'up',
     path: 'up',
-    description: 'Create and start a version-matched Rocket.Chat repro.',
+    description: 'Create and start a version-matched Rocket.Chat workspace.',
     arguments: [],
     options: [
       {
@@ -29,7 +29,7 @@ export const COMMAND_SPECS = [
         repeatable: true,
         defaultValue: 'default',
         description:
-          'scenario to apply: ldap, saml, oidc, email, s3_minio, livechat, airgapped, e2ee, voice (repeat to combine)',
+          'preset to apply: ldap, saml, oidc, email, s3_minio, livechat, airgapped, e2ee, voice (repeat to combine)',
         hidden: false,
         negatablePair: false,
       },
@@ -52,7 +52,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: '',
         description:
-          'how RC is arranged. docker: monolith (default) | multi-instance. kubernetes: microservices (default) | monolith',
+          'how Rocket.Chat runs. docker: monolith (default) | multi-instance. kubernetes: microservices (default) | monolith. Microservices, and live updates across multi-instance, need an Enterprise license (--license); monolith needs none',
         hidden: false,
         negatablePair: false,
       },
@@ -99,7 +99,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: 'repro name (default: derived)',
+        description:
+          'workspace name (default: rc<version>[-<preset>]), prefixed with your houston account when you have one. On a shared server give it a ticket name',
         hidden: false,
         negatablePair: false,
       },
@@ -133,7 +134,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: '',
         description:
-          'host interface for published ports (default 127.0.0.1 — local only). 0.0.0.0 exposes RC AND sidecars with well-known credentials to your whole network — use deliberately',
+          'host interface for published ports (default 127.0.0.1, or `config set bind_host`): on 127.0.0.1 only a browser on the machine running houston opens it. 0.0.0.0 exposes Rocket.Chat AND its sidecars, with their fixed logins, to anyone who can reach its ports — on a cloud server possibly the internet. Use deliberately',
         hidden: false,
         negatablePair: false,
       },
@@ -166,7 +167,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: 'cloud registration token (EE license)',
+        description: 'cloud registration token, for an Enterprise license',
         hidden: false,
         negatablePair: false,
       },
@@ -178,7 +179,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: '',
         description:
-          'Enterprise licence FILE, or - to read it from stdin (never the licence itself: ps shows argv)',
+          'Enterprise license FILE, or - to read it from stdin (never the license itself: ps shows argv)',
         hidden: false,
         negatablePair: false,
       },
@@ -223,7 +224,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: true,
         defaultValue: null,
-        description: 'with --seed: room-states | permissions (repeatable)',
+        description:
+          'with --seed: extra sample rooms, room-states | permissions (repeatable; not a preset)',
         hidden: false,
         negatablePair: false,
       },
@@ -256,7 +258,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: false,
-        description: 'mark persistent + set as default',
+        description:
+          'keep it from `houston prune`, and make it the default: for everyone using this houston home, commands without --name act on it',
         hidden: false,
         negatablePair: false,
       },
@@ -300,7 +303,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: false,
-        description: "wipe this repro's volume first",
+        description: "wipe this workspace's data first",
         hidden: false,
         negatablePair: false,
       },
@@ -311,7 +314,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: false,
-        description: 'overwrite an existing repro',
+        description:
+          "rebuild an existing workspace with the flags given now; its data is kept (--fresh wipes it). Also overrides the free-memory refusal, which on a shared server can get a colleague's workspace killed",
         hidden: false,
         negatablePair: false,
       },
@@ -345,7 +349,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: '',
         description:
-          "serve HTTPS at this hostname with a Let's Encrypt certificate. The domain must already point at this host and 443 must be reachable",
+          "serve HTTPS at this full hostname (ticket-1234.rc.example.com) with a Let's Encrypt certificate. It must already resolve to the machine running houston, and 443 must be reachable; a wildcard DNS record (*.rc.example.com) covers every name under it, with nothing to add per workspace",
         hidden: false,
         negatablePair: false,
       },
@@ -357,7 +361,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: '',
         description:
-          "contact email for Let's Encrypt. Remembered after the first use (`houston config set acme.email`)",
+          "contact email for the Let's Encrypt certificate of --domain (or of the name the workspace or its cluster's zone already has); refused with no name, as --https needs none. Remembered after the first use (`houston config set acme.email`)",
         hidden: false,
         negatablePair: false,
       },
@@ -369,7 +373,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: false,
         description:
-          'serve HTTPS with a local certificate instead — no domain needed (run `houston trust-ca` once)',
+          'serve HTTPS with a local certificate instead — no domain needed, at <name>.houston.localhost, which opens only in a browser on the machine running houston (run `houston trust-ca` once there). For other computers use --domain',
         hidden: false,
         negatablePair: false,
       },
@@ -436,7 +440,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -465,7 +469,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'down',
     path: 'down',
-    description: "Remove a repro's containers. Keeps data (and the record) unless --volumes.",
+    description: "Remove a workspace's containers. Keeps data (and the record) unless --volumes.",
     arguments: [],
     options: [
       {
@@ -476,7 +480,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -487,7 +491,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: false,
-        description: 'also delete the data volume and forget the repro',
+        description: 'also delete the data volume and forget the workspace',
         hidden: false,
         negatablePair: false,
       },
@@ -517,7 +521,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'monitor',
     path: 'monitor',
-    description: 'Attach (or --off to detach) Prometheus + Grafana on a running repro.',
+    description: 'Attach (or --off to detach) Prometheus + Grafana on a running workspace.',
     arguments: [],
     options: [
       {
@@ -528,7 +532,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -553,7 +557,7 @@ export const COMMAND_SPECS = [
     id: 'prune',
     path: 'prune',
     description:
-      'Delete every `down` repro — INCLUDING its data volume and record. Skips pinned and running ones.',
+      "Delete every workspace taken down with `down` — INCLUDING its data volume and record. Skips pinned, running and stopped ones. An admin's prune covers everyone's workspaces; anyone else's, only their own.",
     arguments: [],
     options: [
       {
@@ -600,7 +604,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'start',
     path: 'start',
-    description: 'Resume a stopped repro (fast, no rebuild).',
+    description: 'Resume a stopped workspace (fast, no rebuild).',
     arguments: [],
     options: [
       {
@@ -611,7 +615,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -624,7 +628,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'stop',
     path: 'stop',
-    description: 'Pause a repro, keeping its containers and data.',
+    description: 'Pause a workspace, keeping its containers and data.',
     arguments: [],
     options: [
       {
@@ -635,7 +639,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -648,7 +652,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'restart',
     path: 'restart',
-    description: 'Restart a repro.',
+    description: 'Restart a workspace.',
     arguments: [],
     options: [
       {
@@ -659,7 +663,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -672,14 +676,15 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'use',
     path: 'use',
-    description: 'Set the default repro for name-less commands.',
+    description:
+      'Set the default workspace: for everyone using this houston home, commands run without --name act on it.',
     arguments: [
       {
         name: 'name',
         value: 'string',
         required: true,
         defaultValue: null,
-        description: 'repro to make the default',
+        description: 'the workspace to make the default',
       },
     ],
     options: [],
@@ -691,7 +696,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'list',
     path: 'list',
-    description: 'List all repros with version, port, status and URL.',
+    description: 'List all workspaces with version, port, status and URL.',
     arguments: [],
     options: [],
     json: {
@@ -707,7 +712,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'info',
     path: 'info',
-    description: "Show a repro's URL, admin credentials and a curl snippet.",
+    description: "Show a workspace's URL, admin credentials and a curl snippet.",
     arguments: [],
     options: [
       {
@@ -718,7 +723,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -737,7 +742,7 @@ export const COMMAND_SPECS = [
     id: 'users',
     path: 'users',
     description:
-      'Manage who can sign in to the web GUI.\n\nA shared `houston serve` needs named accounts rather than one session token:\nthe token is handed to everybody, changes on every restart, and cannot answer\n"who tore down TICKET-1234?". With users, every job records who ran it.\n\n\b\n`add` and `passwd` GENERATE the password and show it once:\n    houston users add bob\n    houston users add bob readonly          # with a role; member by default\n    houston users add bob --ask-password    # type one instead\n\nThe GUI has always minted them, and for two reasons that apply just as much at\na terminal. An admin who types a colleague\'s password also knows it, which\nmakes every audit line signed with that name deniable. And a generated one is\n~96 bits, where a typed one clears a twelve-character minimum and is otherwise\nwhatever somebody thought of — which is the only thing standing between an\naccount and a distributed guessing attack, because the sign-in throttle bounds\none address and nothing bounds a thousand.\n\nEither way the password is never an ARGUMENT: `ps` shows command lines to every\nuser on the machine.\n\nWith Okta sign-in on (`houston config set sso.issuer ...`), an Okta person signs\nin as the account their Okta username names (`first.last` is `first-last`), and\none is created when `sso.provision` allows it. A different name is never linked.\nAn admin account links only once an admin approves it, and a link can be turned\noff, keeping the account and its password:\n    houston users link-sso alice\n    houston users unlink-sso alice',
+      'Manage who can sign in to the web GUI.\n\n`houston serve` signs people in with named accounts, so every job records who\nran it ("who tore down TICKET-1234?"). The first account comes from the\none-time /setup link `serve` prints on its first run; add the rest here.\n\n\b\n`add` and `passwd` GENERATE the password and show it once:\n    houston users add bob\n    houston users add bob readonly          # with a role; member by default\n    houston users add bob --ask-password    # type one instead\n\nThe GUI has always minted them, and for two reasons that apply just as much at\na terminal. An admin who types a colleague\'s password also knows it, which\nmakes every audit line signed with that name deniable. And a generated one is\n~96 bits, where a typed one clears a twelve-character minimum and is otherwise\nwhatever somebody thought of — which is the only thing standing between an\naccount and a distributed guessing attack, because the sign-in throttle bounds\none address and nothing bounds a thousand.\n\nEither way the password is never an ARGUMENT: `ps` shows command lines to every\nuser on the machine.\n\nWith Okta sign-in on (`houston config set sso.issuer ...`), an Okta person signs\nin as the account their Okta username names (`first.last` is `first-last`), and\none is created when `sso.provision` allows it. A different name is never linked.\nAn admin account links only once an admin approves it, and a link can be turned\noff, keeping the account and its password:\n    houston users link-sso alice\n    houston users unlink-sso alice',
     arguments: [
       {
         name: 'action',
@@ -783,7 +788,7 @@ export const COMMAND_SPECS = [
     id: 'edge',
     path: 'edge',
     description:
-      "The shared Traefik that serves every HTTPS name on this box.\n\nIt is not a workspace, so it never appears in `list` and `prune`/`down` cannot\ntouch it — but something holding :443 and routing your traffic should be\nanswerable, and this is where it answers.\n\nIt starts by itself when the first workspace needs a name. `stop` frees :80\nand :443 for something else; routes are files, so starting it again restores\nevery name with no re-registration.\n\n`delete <host>` forgets a name completely — its route, its certificate, its\nprivate key and its Let's Encrypt entry. `down --volumes` removes the route\nand stops there, so the certificate material for a name you are finished with\noutlives the workspace it was issued for; this is how it goes.",
+      "The shared Traefik that serves every HTTPS name on this box.\n\nIt is not a workspace, so it never appears in `list` and `prune`/`down` cannot\ntouch it — but something holding :443 and routing your traffic should be\nanswerable, and this is where it answers.\n\nIt starts by itself when the first workspace needs a name. `stop` frees :80\nand :443 for something else, and takes every HTTPS workspace on this machine,\nand a `serve --domain` GUI, offline for everyone until `houston edge start`.\nRoutes are files, so starting it again restores every name with no\nre-registration.\n\n`delete <host>` forgets a name completely — its route, its certificate, its\nprivate key and its Let's Encrypt entry. `down --volumes` removes the route\nand stops there, so the certificate material for a name you are finished with\noutlives the workspace it was issued for; this is how it goes.",
     arguments: [
       {
         name: 'action',
@@ -846,7 +851,7 @@ export const COMMAND_SPECS = [
     id: 'config',
     path: 'config',
     description:
-      'Read or write remembered settings, so they need not be retyped every run.\n\nKeys: kubernetes.context, cluster.approved_accounts, acme.email, acme.staging,\nacme.challenge (http | tlsalpn | dns), acme.dns_provider,\nbind_host, gui.create_policy, gui.destroy_policy, sso.issuer, sso.client_id,\nsso.public_url, sso.email_domains, sso.provision (off | member | readonly). Stored\nin ~/.houston/config.yaml.\n\n\b\nMembers may set --rc-image/--reg-token/--bind by default. Where an account is\nnot the same thing as trust, narrow it:\n    houston config set gui.create_policy admin\n\b\nAnd to publish every workspace on this box beyond loopback, one decision\ninstead of one per create:\n    houston config set bind_host 0.0.0.0\n\b\nOkta sign-in for the GUI: the issuer goes last, because setting it turns Okta\non. The client secret is never a key here: it goes in ~/.houston/sso.env\n(HOUSTON_SSO_CLIENT_SECRET=<secret>, mode 0600) or that environment variable.\n    houston config set sso.client_id <client id>\n    houston config set sso.public_url https://houston.example.com\n    houston config set sso.email_domains example.com\n    houston config set sso.provision member\n    houston config set sso.issuer https://login.example.com',
+      'Read or write remembered settings, so they need not be retyped every run.\n\nKeys: kubernetes.context, cluster.approved_accounts, acme.email, acme.staging,\nacme.challenge (http | tlsalpn | dns), acme.dns_provider,\nbind_host, gui.create_policy, gui.destroy_policy, sso.issuer, sso.client_id,\nsso.public_url, sso.email_domains, sso.provision (off | member | readonly). Stored\nin ~/.houston/config.yaml.\n\n\b\nMembers may set --rc-image/--reg-token/--bind by default. Where an account is\nnot the same thing as trust, narrow it:\n    houston config set gui.create_policy admin\n\b\nAnd to publish every workspace on the machine running houston beyond loopback,\none decision instead of one per create. It opens each Rocket.Chat and its\nsidecars, fixed logins and all, to anyone who can reach their ports:\n    houston config set bind_host 0.0.0.0\n\b\nOkta sign-in for the GUI: the issuer goes last, because setting it turns Okta\non. The client secret is never a key here: it goes in ~/.houston/sso.env\n(HOUSTON_SSO_CLIENT_SECRET=<secret>, mode 0600) or that environment variable.\n    houston config set sso.client_id <client id>\n    houston config set sso.public_url https://houston.example.com\n    houston config set sso.email_domains example.com\n    houston config set sso.provision member\n    houston config set sso.issuer https://login.example.com',
     arguments: [
       {
         name: 'action',
@@ -880,7 +885,7 @@ export const COMMAND_SPECS = [
     id: 'env',
     path: 'env',
     description:
-      "Show or change a repro's Rocket.Chat environment variables.\n\nWith no --set/--unset, lists the effective environment (credentials masked) and\nmarks which keys you have overridden.\n\nAn env var cannot be changed inside a running container, so applying a change\nrecreates the Rocket.Chat container. MongoDB keeps running and its volume is\nuntouched, so no data is lost and it takes seconds.",
+      "Show or change a workspace's Rocket.Chat environment variables.\n\nWith no --set/--unset, lists the effective environment (credentials masked) and\nmarks which keys you have overridden.\n\nAn env var cannot be changed inside a running container, so applying a change\nrecreates the Rocket.Chat container. MongoDB keeps running and its volume is\nuntouched, so no data is lost and it takes seconds.",
     arguments: [],
     options: [
       {
@@ -891,7 +896,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -950,7 +955,7 @@ export const COMMAND_SPECS = [
     id: 'tls-status',
     path: 'tls-status',
     description:
-      'Report what is ACTUALLY being served over HTTPS for a repro.\n\n`up --wait` only proves Rocket.Chat booted -- it polls the internal http port.\nTraefik obtains certificates in the background AFTER it starts and falls back\nto a self-signed dummy when ACME fails, so a repro can look ready while HTTPS\nserves nothing usable. This makes the real TLS connection and says so.',
+      'Report what is ACTUALLY being served over HTTPS for a workspace.\n\n`up --wait` only proves Rocket.Chat booted -- it polls the internal http port.\nTraefik obtains certificates in the background AFTER it starts and falls back\nto a self-signed dummy when ACME fails, so a workspace can look ready while HTTPS\nserves nothing usable. This makes the real TLS connection and says so.',
     arguments: [],
     options: [
       {
@@ -961,7 +966,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -975,7 +980,7 @@ export const COMMAND_SPECS = [
     id: 'trust-ca',
     path: 'trust-ca',
     description:
-      "Install houston's local CA so `--https` repros are trusted without warnings.\n\nOnly needed for `up --https` on its own (the local-CA mode). A Let's Encrypt\nor self-supplied certificate is already trusted, so this does nothing for those.",
+      "Install houston's local CA so `--https` workspaces are trusted without warnings.\n\nIt goes into the trust store of the machine running houston (with sudo), so it\nhelps a browser there only. It cannot help a browser on another computer,\nwhich never opens a .houston.localhost name anyway: --domain is for that.\n\nOnly needed for `up --https` on its own (the local-CA mode). A Let's Encrypt\nor self-supplied certificate is already trusted, so this does nothing for those.",
     arguments: [],
     options: [
       {
@@ -1020,7 +1025,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1034,7 +1039,7 @@ export const COMMAND_SPECS = [
     id: 'api',
     path: 'api',
     description:
-      'Make an authenticated REST call against a repro and print the response.\n\nExamples:\n  houston api GET  /api/v1/me\n  houston api POST /api/v1/users.update --pat -d \'{"userId":"ID","data":{"name":"X"}}\'\n  houston api POST /api/v1/users.update --2fa -d \'{"userId":"ID","data":{"name":"X"}}\'',
+      'Make an authenticated REST call against a workspace and print the response.\n\nExamples:\n  houston api GET  /api/v1/me\n  houston api POST /api/v1/users.update --pat -d \'{"userId":"ID","data":{"name":"X"}}\'\n  houston api POST /api/v1/users.update --2fa -d \'{"userId":"ID","data":{"name":"X"}}\'',
     arguments: [
       {
         name: 'method',
@@ -1060,7 +1065,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1118,7 +1123,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1154,7 +1159,7 @@ export const COMMAND_SPECS = [
     id: 'seed',
     path: 'seed',
     description:
-      'Populate a repro with sample users, channels, DMs and messages.\n\n--scale bulk-inserts users/messages straight into MongoDB (orders of\nmagnitude faster than the REST seed) to reproduce SCALE/perf behaviour.\nBulk users are credential-less and messages fire no app hooks; use the\ndefault REST seed when you need real, loginable users.',
+      'Populate a workspace with sample users, channels, DMs and messages.\n\n--scale bulk-inserts users/messages straight into MongoDB (orders of\nmagnitude faster than the REST seed) to reproduce SCALE/perf behaviour.\nBulk users are credential-less and messages fire no app hooks; use the\ndefault REST seed when you need real, loginable users.',
     arguments: [],
     options: [
       {
@@ -1165,7 +1170,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1187,7 +1192,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: true,
         defaultValue: null,
-        description: 'room-states | permissions (repeatable)',
+        description: 'extra sample rooms: room-states | permissions (repeatable; not a preset)',
         hidden: false,
         negatablePair: false,
       },
@@ -1254,7 +1259,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: null,
         description:
-          'bulk Mongo prefill for scale repros, e.g. users=50000,messages=800000@team-chat',
+          'bulk Mongo prefill for scale and performance tests, e.g. users=50000,messages=800000@team-chat',
         hidden: false,
         negatablePair: false,
       },
@@ -1291,7 +1296,7 @@ export const COMMAND_SPECS = [
     id: 'config-import',
     path: 'config-import',
     description:
-      "Apply a customer's exported settings (from a support dump) to a repro.\n\nImports only settings the customer CHANGED from default, skipping secrets the\ndump redacts and identity/environment settings (license, Site_Url, assets)\nthat would break or pollute a local repro.",
+      "Apply a customer's exported settings (from a support dump) to a workspace.\n\nImports only settings the customer CHANGED from default, skipping secrets the\ndump redacts and identity/environment settings (license, Site_Url, assets)\nthat would break or pollute a local workspace.",
     arguments: [
       {
         name: 'settings_file',
@@ -1310,7 +1315,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1346,7 +1351,7 @@ export const COMMAND_SPECS = [
     id: 'backup',
     path: 'backup',
     description:
-      "Back up a repro's Rocket.Chat database into a restorable bundle.\n\nRocket.Chat is stopped for the dump so it is consistent, then started again;\nMongoDB keeps running throughout and its data volume is untouched.\n\nThe bundle carries the database alongside the repro's version, preset and\nparameters, so `houston restore --new` can rebuild the whole workspace from\nit — on this machine or somebody else's.",
+      "Back up a workspace's Rocket.Chat database into a restorable bundle.\n\nRocket.Chat is stopped for the dump so it is consistent, then started again;\nMongoDB keeps running throughout and its data volume is untouched.\n\nThe bundle carries the database alongside the workspace's version, preset and\nparameters, so `houston restore --new` can rebuild the whole workspace from\nit — on this machine or somebody else's.",
     arguments: [],
     options: [
       {
@@ -1357,7 +1362,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1414,7 +1419,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: 'only bundles from this repro',
+        description: 'only bundles from this workspace',
         hidden: false,
         negatablePair: false,
       },
@@ -1428,7 +1433,7 @@ export const COMMAND_SPECS = [
     id: 'restore',
     path: 'restore',
     description:
-      "Restore a backup bundle into a repro.\n\nThree targets:\n\n  houston restore B                  in place — the repro it came from\n  houston restore B --new            a fresh repro built from the bundle\n  houston restore B --name other     an existing, different repro\n\nExisting collections are DROPPED, so the result is the backup's data and not a\nmerge of the two. Downgrading (newer data into an older workspace) is refused:\nRocket.Chat does not migrate a database backwards.",
+      "Restore a backup bundle into a workspace.\n\nThree targets:\n\n  houston restore B                  in place — the workspace it came from\n  houston restore B --new            a fresh workspace built from the bundle\n  houston restore B --name other     an existing, different workspace\n\nExisting collections are DROPPED, so the result is the backup's data and not a\nmerge of the two. Downgrading (newer data into an older workspace) is refused:\nRocket.Chat does not migrate a database backwards.",
     arguments: [
       {
         name: 'bundle',
@@ -1447,7 +1452,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: 'restore into this repro (default: the one it came from)',
+        description: 'restore into this workspace (default: the one it came from)',
         hidden: false,
         negatablePair: false,
       },
@@ -1459,7 +1464,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: false,
         description:
-          'create a fresh repro from the bundle instead of restoring into an existing one',
+          'create a fresh workspace from the bundle instead of restoring into an existing one',
         hidden: false,
         negatablePair: false,
       },
@@ -1496,7 +1501,7 @@ export const COMMAND_SPECS = [
     id: 'upgrade',
     path: 'upgrade',
     description:
-      'Upgrade a RUNNING repro to another Rocket.Chat version.\n\nRocket.Chat runs its database migrations on boot, so this is the honest way to\nreproduce "it broke after we upgraded": real data, real migrations. A\npre-upgrade backup is taken automatically and `--rollback` restores it.\n\nThe repro has to be running — the backup needs MongoDB up, and the migrations\nonly happen when Rocket.Chat boots.',
+      'Upgrade a RUNNING workspace to another Rocket.Chat version.\n\nRocket.Chat runs its database migrations on boot, so this is the honest way to\nreproduce "it broke after we upgraded": real data, real migrations. A\npre-upgrade backup is taken automatically and `--rollback` restores it.\n\nThe workspace has to be running — the backup needs MongoDB up, and the migrations\nonly happen when Rocket.Chat boots.',
     arguments: [],
     options: [
       {
@@ -1518,7 +1523,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1609,7 +1614,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'stats',
     path: 'stats',
-    description: "Sample a repro's container CPU/RAM (peak over a window, or --watch live).",
+    description: "Sample a workspace's container CPU/RAM (peak over a window, or --watch live).",
     arguments: [],
     options: [
       {
@@ -1620,7 +1625,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1657,7 +1662,7 @@ export const COMMAND_SPECS = [
     id: 'loadtest',
     path: 'loadtest',
     description:
-      "Drive real HTTP load at a repro with k6 and check it against an SLO.\n\nLoad is spread across seeded users when available (--users, default 10) so\nit carries real per-user identity; the journey scenario times each step of a\nrealistic session. --save/--compare give before/after deltas across runs.\nk6 runs on the repro's docker network (works with loopback-only binds); the\nREST rate limiter is disabled for the run and restored after. Exits non-zero\nif a --slo rule is not met — usable as a CI gate.",
+      "Drive real HTTP load at a workspace with k6 and check it against an SLO.\n\nLoad is spread across seeded users when available (--users, default 10) so\nit carries real per-user identity; the journey scenario times each step of a\nrealistic session. --save/--compare give before/after deltas across runs.\nk6 runs on the workspace's docker network (works with loopback-only binds); the\nREST rate limiter is disabled for the run and restored after. Exits non-zero\nif a --slo rule is not met — usable as a CI gate.",
     arguments: [],
     options: [
       {
@@ -1668,7 +1673,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -1679,7 +1684,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: 'messages',
-        description: 'messages | login | read | mixed | journey | webhook | badbot | custom',
+        description:
+          'the load to drive (not a preset): messages | login | read | mixed | journey | webhook | badbot | custom',
         hidden: false,
         negatablePair: false,
       },
@@ -1890,7 +1896,7 @@ export const COMMAND_SPECS = [
     id: 'capacity',
     path: 'capacity',
     description:
-      'Find how much concurrency a repro sustains before the SLO breaks.\n\nDoubles VUs (start, 2x, 4x, …) running the scenario at each step until a\nrule fails, then bisects between the last pass and first fail — ending with\n"handles ~N concurrent VUs" plus why it broke (event-loop lag at the wall).',
+      'Find how much concurrency a workspace sustains before the SLO breaks.\n\nDoubles VUs (start, 2x, 4x, …) running the scenario at each step until a\nrule fails, then bisects between the last pass and first fail — ending with\n"handles ~N concurrent VUs" plus why it broke (event-loop lag at the wall).',
     arguments: [],
     options: [
       {
@@ -1901,7 +1907,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -2018,7 +2024,7 @@ export const COMMAND_SPECS = [
   defineCommand({
     id: 'logs',
     path: 'logs',
-    description: "Tail a repro's logs.",
+    description: "Tail a workspace's logs.",
     arguments: [],
     options: [
       {
@@ -2029,7 +2035,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -2094,7 +2100,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: false,
-        description: '',
+        description: 'answer from the version table shipped with houston, skipping the live lookup',
         hidden: false,
         negatablePair: false,
       },
@@ -2200,7 +2206,7 @@ export const COMMAND_SPECS = [
     id: 'chown',
     path: 'chown',
     description:
-      'Hand a workspace over to somebody else.\n\nTicket handover is the workflow the shared box is built around, and the record\nonly ever knew who typed `up` -- so "belongs to alice" kept warning the wrong\nperson, which is how people learn to click through warnings. Who CREATED it\nstays in the record; who owns it now is what moves.',
+      'Hand a workspace over to somebody else.\n\nIts owner or an admin may run it, and --to must be a houston account\n(`houston users list` lists them).\n\nTicket handover is the workflow the shared box is built around, and the record\nonly ever knew who typed `up` -- so "belongs to alice" kept warning the wrong\nperson, which is how people learn to click through warnings. Who CREATED it\nstays in the record; who owns it now is what moves.',
     arguments: [],
     options: [
       {
@@ -2211,7 +2217,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: '',
+        description: 'the workspace (default: the one `houston use` set)',
         hidden: false,
         negatablePair: false,
       },
@@ -2333,7 +2339,7 @@ export const COMMAND_SPECS = [
     id: 'cluster',
     path: 'cluster',
     description:
-      "Inspect and manage the Kubernetes clusters that hold workspaces.\n\nNEW TO EKS? Build a cluster houston manages, or find one it already built:\n  houston cluster create <name> --zone <dns-zone>   # about 20 minutes; bills by the hour\n  houston cluster list --force                      # EKS clusters in every enabled region\n  houston cluster connect <full-eks-arn>\n  houston up --version <version> --name <ticket> --context <full-eks-arn>\n\n`create` ends with the one DNS record (a CNAME) to add so workspaces get public names;\n`houston cluster overview` repeats it until it answers. `connect` checks the AWS account\nand adds the cluster to this server's kubeconfig. It does not create a cluster. `up` creates a workspace, never a cloud cluster.\nThe GUI uses the Houston server's AWS identity; a CLI command uses the identity\nfrom its own shell. See `houston cluster guide` for SSO, roles, keys and access.\n\n`status` also works for local and other Kubernetes contexts. `create` builds a new\nEKS cluster and starts an AWS bill; `delete` stops one only after checking ownership.\nAn unreadable cost or resource is shown as `?`, never as zero.",
+      "Inspect and manage the Kubernetes clusters that hold workspaces.\n\nNEW TO EKS? Build a cluster houston manages, or find one it already built:\n  houston cluster create <name> --zone <dns-zone>   # about 20 minutes; bills by the hour\n  houston cluster list --force                      # every EKS cluster, not only houston's\n  houston cluster connect <full-eks-arn>\n  houston up --version <version> --name <ticket> --context <full-eks-arn>\n\n`create` ends with the one DNS record (a CNAME) to add so workspaces get public names;\n`houston cluster overview` repeats it until it answers. `connect` checks the AWS account\nand adds the cluster to this server's kubeconfig. It does not create a cluster. `up` creates a workspace, never a cloud cluster.\nThe GUI uses the Houston server's AWS identity; a CLI command uses the identity\nfrom its own shell. See `houston cluster guide` for SSO, roles, keys and access.\n\n`status` also works for local and other Kubernetes contexts. `create` builds a new\nEKS cluster and starts an AWS bill; `delete` stops one only after checking ownership.\nAn unreadable cost or resource is shown as `?`, never as zero.",
     arguments: [
       {
         name: 'action',
@@ -2384,7 +2390,7 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: 3,
-        description: 'how many nodes (create). Launchpad sizes 5 for a production workspace',
+        description: 'how many nodes (create). 5 is the size for a production-like workspace',
         hidden: false,
         negatablePair: false,
       },
@@ -2456,7 +2462,7 @@ export const COMMAND_SPECS = [
         repeatable: false,
         defaultValue: false,
         description:
-          "delete without reading what the cluster holds; on `list`, show every cluster and not only houston's",
+          'on `delete`, delete the cluster without first reading what it holds, so any workspace still on it goes with it; on `list`, show every EKS cluster, not only the ones houston built',
         hidden: false,
         negatablePair: false,
       },
@@ -2515,7 +2521,7 @@ export const COMMAND_SPECS = [
     id: 'serve',
     path: 'serve',
     description:
-      'Launch the web GUI.\n\n\b\nTRYING IT OUT? There is nothing to learn:\n    houston serve\n\nBinds localhost — nothing crosses a network, and none of the options below\napply. The first run prints a one-time link ending in /setup#k=... ; open the\nwhole url, including the part after #, to make the first account.\n\n(On a box already set up with --domain, plain `serve` keeps serving that name.\nAdd --no-domain for a local session.)\n\nThe rest is only about letting OTHER machines reach it:\n\n\b\n    your team, over HTTPS    --domain rc.example.com --email you@example.com\n    a lab or proxy in front  --bind 0.0.0.0 --allow-host <name> --trust-proxy <ip>\n    a plain IP, no TLS       --bind 0.0.0.0 --allow-host <ip>\n\n--bind decides whether anything off this machine can reach it; --allow-host\nsays which names may be used to. Whatever you type in the address bar must be\nlisted there or every request is a 403, and either flag alone does nothing.\n\n--trust-proxy names whatever already terminates TLS (a lab url, ngrok, a load\nbalancer) so the session cookie can be marked Secure. Address or CIDR — a bare\n0.0.0.0 is one address and matches nothing; 0.0.0.0/0 is anywhere.\n\nThe third row is refused until you say what protects the password. `serve`\nprints the flag to add, and why, at the point it stops.\n\nBinding anything but localhost exposes docker control — creating and deleting\nrepros and their volumes — to whoever can reach the port.',
+      'Launch the web GUI.\n\n\b\nTRYING IT OUT? There is nothing to learn:\n    houston serve\n\nBinds localhost, which is the machine running it — nothing crosses a network,\nand none of the options below apply. The first run prints a one-time link\nending in /setup#k=... ; open the whole url, including the part after #, to\nmake the first account. From your computer, forward the port first (7070\nunless --port says otherwise), then open the link there:\n    ssh -L 7070:localhost:7070 <you>@<this server>\n\n(On a box already set up with --domain, plain `serve` keeps serving that name.\nAdd --no-domain for a local session.)\n\nThe rest is only about letting OTHER machines reach it:\n\n\b\n    your team, over HTTPS    --domain rc.example.com --email you@example.com\n    a lab or proxy in front  --bind 0.0.0.0 --allow-host <name> --trust-proxy <ip>\n    a plain IP, no TLS       --bind 0.0.0.0 --allow-host <ip>\n\n--bind decides whether anything off the machine running it can reach it;\n--allow-host says which names may be used to. Whatever you type in the address\nbar must be listed there or every request is a 403, and either flag alone does\nnothing.\n\n--trust-proxy names whatever already terminates TLS (a lab url, ngrok, a load\nbalancer) so the session cookie can be marked Secure. Address or CIDR — a bare\n0.0.0.0 is one address and matches nothing; 0.0.0.0/0 is anywhere.\n\nThe third row is refused until you say what protects the password. `serve`\nprints the flag to add, and why, at the point it stops.\n\nBinding anything but localhost exposes docker control — creating and deleting\nrepros and their volumes — to whoever can reach the port.',
     arguments: [],
     options: [
       {
@@ -2536,7 +2542,8 @@ export const COMMAND_SPECS = [
         required: false,
         repeatable: false,
         defaultValue: '',
-        description: "serve the GUI over HTTPS on this hostname, via houston's shared front door",
+        description:
+          "serve the GUI over HTTPS on this full hostname, via houston's shared front door. It and every workspace's <ticket>.<hostname> must resolve to the machine running houston: a DNS record for it, and one wildcard record (*.<hostname>) for every workspace",
         hidden: false,
         negatablePair: false,
       },
@@ -2582,7 +2589,7 @@ export const COMMAND_SPECS = [
         repeatable: true,
         defaultValue: null,
         description:
-          "extra Host header to accept, e.g. a reverse-proxy domain (repeatable; '*' = any host). Needed for iximiuz/Codespaces/remote access",
+          "extra Host header to accept, e.g. a reverse-proxy domain (repeatable; '*' = any host). Needed behind a proxy, a lab URL or Codespaces",
         hidden: false,
         negatablePair: false,
       },

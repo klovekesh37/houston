@@ -36,8 +36,8 @@ export const NAME_MAX = 64;
 
 /**
  * The longest name `deriveName` makes for a composed set. Over HTTPS the edge resolves
- * `houston-<name>-phpldapadmin-1`, the longest container it routes to, and a DNS label
- * holds 63 characters; 40 also fits `<name>.houston.localhost` in a certificate's
+ * `houston-<name>-widget-site-1`, the longest container it routes to (41 fits), and a DNS
+ * label holds 63 characters; 40 also fits `<name>.houston.localhost` in a certificate's
  * 64-character common name and `houston-<name>` in a Kubernetes namespace.
  */
 export const DERIVED_MAX = 40;
@@ -45,12 +45,12 @@ export const DERIVED_MAX = 40;
 export function requireValidName(name: string): void {
   if (!VALID_NAME_RE.test(name)) {
     throw new ValidationError(
-      `invalid repro name ${quotedText(name)} (lowercase letters, digits and '-' only)`,
+      `invalid workspace name ${quotedText(name)} (lowercase letters, digits and '-' only)`,
     );
   }
   if (name.length > NAME_MAX) {
     throw new ValidationError(
-      `repro name is ${String(name.length)} characters; the limit is ${String(NAME_MAX)} ` +
+      `workspace name is ${String(name.length)} characters; the limit is ${String(NAME_MAX)} ` +
         '(it becomes a directory and a set of container names)',
     );
   }
@@ -239,17 +239,19 @@ export async function resolveName(name: string | null | undefined, actor = ''): 
     // more use than "not found" for `--name 'my repro!'` -- and otherwise say what was
     // looked for, in the form it would have been made.
     requireValidName(sanitize(name) || name);
-    throw new NotFoundError(`no repro named ${quotedText(name)} (run \`houston list\`)`);
+    throw new NotFoundError(`no workspace named ${quotedText(name)} (run \`houston list\`)`);
   }
   const fallback = config.loadConfig().default_repro;
   if (!truthy(fallback)) {
-    throw new ValidationError('no name given and no default repro set (use `houston use <name>`)');
+    throw new ValidationError(
+      'no name given and no default workspace set (use `houston use <name>`)',
+    );
   }
   const defaultName = String(fallback);
   requireValidName(defaultName);
   if (!(await paths.exists(defaultName))) {
     throw new NotFoundError(
-      `default repro ${quotedText(defaultName)} no longer exists; set another with \`houston use\``,
+      `default workspace ${quotedText(defaultName)} no longer exists; set another with \`houston use\``,
     );
   }
   return defaultName;

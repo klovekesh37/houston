@@ -669,7 +669,7 @@ async function prVoiceUsers(
     warn(
       emit,
       `could not give ${refused.join(', ')} their extensions: Rocket.Chat sets one only while ` +
-        'Voice is licensed. Apply the licence in Administration → Subscription, then run ' +
+        'Voice is licensed. Apply the license in Administration → Subscription, then run ' +
         `houston ready --name ${meta.name}.`,
       { phase: 'post_ready' },
     );

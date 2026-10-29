@@ -87,7 +87,42 @@ const JOB_RESULT_RENDERER = {
   "cluster-delete": (r) => ctx.renderClusterDeleteResult(r),
   "cluster-sweep": (r) => ctx.renderClusterSweepResult(r),
 };
-const jobTitle = (j) => (j.label ? `${j.kind}: ${j.label}` : j.kind);
+// A job named with the GUI's own verbs, not its kind (`teardown`, `state`). A take down and
+// a delete are one kind, and Stop, Start and Restart another: the job's `verb` says which,
+// and a job from a server without it says both, rather than guess.
+const VERB_NAME = { delete: "Delete", "take down": "Take down", stop: "Stop", start: "Start",
+  restart: "Restart" };
+const JOB_NAME = {
+  create: "Create", up: "Bring up", state: "Stop, start or restart",
+  teardown: "Take down or delete", ready: "Wait until ready", env: "Change env vars",
+  backup: "Back up", restore: "Restore", upgrade: "Upgrade", rollback: "Roll back",
+  seed: "Add sample data", scale: "Add bulk test data", "clear-scale": "Remove bulk test data",
+  "config-import": "Import settings", loadtest: "Load test", capacity: "Find capacity",
+  monitor: "Attach monitoring", "monitor-off": "Detach monitoring",
+  prune: "Delete taken-down workspaces", "cluster-create": "Build cluster",
+  "cluster-delete": "Delete cluster", "cluster-prepare": "Prepare cluster",
+  "cluster-sweep": "Look for clusters",
+};
+// An audit line's kind in the same words: the job kinds above, and what the service records
+// itself. A kind not listed here (an older release's) shows as it was written. `up` is only
+// ever the GUI's Bring up; the CLI records none.
+const AUDIT_NAME = {
+  down: "Take down", "down-volumes": "Delete", "up-fresh": "Re-create with empty data",
+  "volumes-removed": "Delete a dropped preset's data", "upgrade-rollback": "Roll back an upgrade",
+  chown: "Hand over", pat: "Create an API token", "api-call": "Call the REST API",
+  "logs-open": "Open logs", "job-stop": "Stop a job", "edge-delete-host": "Delete an HTTPS name",
+  "me-passwd": "Change own password", "user-add": "Add person", "user-passwd": "Reset a password",
+  "user-remove": "Remove person", "user-role": "Change a role", signin: "Sign in",
+  "first-run": "Create the first account", "sso-link": "Link Okta sign-in",
+  "sso-provision": "Create an account from Okta", "sso-approve": "Approve an Okta link",
+  "sso-unlink": "Turn off an Okta link", "cluster-connect": "Connect an EKS cluster",
+  "cluster-approve": "Approve an AWS account for spending", denied: "Refused",
+};
+const auditName = (kind) => AUDIT_NAME[kind] || JOB_NAME[kind] || kind;
+const jobTitle = (j) => {
+  const what = VERB_NAME[j.verb] || JOB_NAME[j.kind] || j.kind;
+  return j.label ? `${what}: ${j.label}` : what;
+};
 function jobAge(j) {
   const end = j.finished_at || Date.now() / 1000;
   const s = Math.max(0, Math.round(end - j.started_at));
@@ -105,7 +140,7 @@ async function openJobs(tab) {
   const panel = ctx.$("#detail");
   panel.innerHTML = "";
   const head = ctx.el("div", { class: "home-head" }, ctx.el("h1", {}, "Activity"),
-    ctx.el("p", {}, "What is running right now, and everything that has happened on this box."));
+    ctx.el("p", {}, "What is running right now, and everything that has happened on this server."));
   const tabs = ctx.el("div", { class: "tabs", id: "act-tabs" },
     ctx.el("button", { class: "tab" + (ACT_TAB === "running" ? " active" : ""), id: "act-tab-running",
                    onclick: () => openJobs("running") }, "In progress"),
@@ -119,8 +154,8 @@ async function openJobs(tab) {
     ? "Jobs keep running on the server after you leave this page — including across "
       + "a refresh. Click one to reopen its output."
     : (ctx.canAdmin()
-        ? "Everything anyone has done on this box. Refusals are recorded too."
-        : "Everything you have done on this box. Admins see everyone's.")));
+        ? "Everything anyone has done on this server. Refusals are recorded too."
+        : "Everything you have done on this server. Admins see everyone's.")));
   const filter = ctx.el("div", { id: "jobs-filter", class: "row2" },
     ctx.el("input", { id: "act-grep", class: "input", placeholder: "filter by action or target…",
                   "aria-label": "filter activity",
@@ -186,7 +221,7 @@ async function renderHistory(box) {
   catch (e) { box.innerHTML = ""; box.append(ctx.el("p", { class: "empty" }, e.message)); return; }
   const rows = (res.lines || []).filter((r) => !denied || r.outcome === "denied");
   const finished = denied ? [] : (jobs.jobs || []).filter((j) => !ctx.jobActive(j.status)
-    && (!q || `${j.kind} ${j.label}`.toLowerCase().includes(q.toLowerCase())));
+    && (!q || `${j.kind} ${jobTitle(j)}`.toLowerCase().includes(q.toLowerCase())));
   box.innerHTML = "";
   if (finished.length) {
     box.append(ctx.el("div", { class: "section-label" }, "Recent job output"));
@@ -220,9 +255,11 @@ async function renderHistory(box) {
     }
     const outcome = ["accepted", "done", "error", "stopped", "denied"].includes(r.outcome) ? r.outcome : null;
     const tone = outcome === "error" || outcome === "denied" ? "error" : outcome === "accepted" ? "queued" : "done";
+    // A line with no outcome (`ok`, and every line earlier releases wrote) says it was recorded:
+    // for a job that was its acceptance, not that it finished.
     box.append(ctx.el("div", { class: "jobrow" + (r.outcome === "denied" ? " denied" : "") },
-      ctx.el("span", { class: "jstatus " + tone }, outcome === "error" ? "failed" : outcome || r.kind),
-      ctx.el("span", { class: "jkind" }, outcome ? `${r.kind}: ${r.label}` : r.label),
+      ctx.el("span", { class: "jstatus " + tone }, outcome === "error" ? "failed" : outcome || "recorded"),
+      ctx.el("span", { class: "jkind" }, `${auditName(r.kind)}: ${r.label}`),
       who,
       ctx.el("span", { class: "jage" }, (r.ts || "").slice(0, 19).replace("T", " "))));
   }
@@ -367,16 +404,14 @@ function syncBindHint() {
   const wide = ctx.WIDE_BINDS.includes(String(DEFAULT_BIND_HOST || ""));
   if (!remote || wide) { hint.hidden = true; hint.textContent = ""; return; }
   hint.hidden = false;
-  // ONE LINE. This was four sentences explaining loopback, and it sits above a form
-  // somebody is already filling in -- so it restated what the reader could infer and
-  // buried the only part that is a decision. It also led with `0.0.0.0`, which on a
-  // public box publishes admin/admin123 to the internet; the hostname it can have
-  // instead goes through the same front door as this GUI and was never mentioned.
+  // ONE LINE, above a form somebody is already filling in: only the decision. HTTPS
+  // first -- it goes through the same front door as this GUI -- and 0.0.0.0 second, with
+  // what it exposes: the workspace and its scenario's consoles, to anyone.
   hint.textContent =
-    `Workspaces bind ${DEFAULT_BIND_HOST}, so they will not answer from here — give it a `
+    `Workspaces bind ${DEFAULT_BIND_HOST}, so they will not answer from your browser: choose `
     + (MAY_SET_PRIVILEGED
-        ? `hostname below, or Bind host 0.0.0.0 (which publishes admin/admin123).`
-        : `hostname below, or ask an admin to set bind_host.`);
+        ? `HTTPS with Let's Encrypt below, or Bind host 0.0.0.0 (open to anyone who can reach the server).`
+        : `HTTPS with Let's Encrypt below, or ask an admin to set bind_host.`);
 }
 
 Object.defineProperties(ctx, {

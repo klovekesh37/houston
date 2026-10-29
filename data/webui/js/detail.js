@@ -88,7 +88,8 @@ async function renderEnv(body, d) {
       + "chart sets as well as what houston asked for. * = an override houston "
       + "recorded."));
     list.append(ctx.el("p", { class: "hint pre" },
-      "Changing one is a Helm operation, not a container recreate:\n"
+      "Changing one needs a Helm upgrade, run by someone with a shell on the server "
+      + "(there is no button for it here):\n"
       + `  helm -n houston-${d.name} upgrade rocketchat --reuse-values --set extraEnv[0].name=KEY --set extraEnv[0].value=VALUE\n`
       + "For a Rocket.Chat SETTING, use Send an API call instead — that takes effect "
       + "without restarting anything."));
@@ -146,8 +147,9 @@ const shortName = (p) => String(p || "").split("/").pop();
 
 async function renderBackups(body, d) {
   body.append(ctx.el("p", { class: "hint" },
-    "Backups hold this workspace's Rocket.Chat database plus the version and preset "
-    + "that produced it. Sidecar data (uploads, IdP state) is not included."));
+    "Backups hold this workspace's Rocket.Chat database (messages, users, settings, and files "
+    + "stored in it) plus its version and preset. Data held by the preset's extra services "
+    + "(MinIO files, LDAP or Keycloak users, Mailpit mail) is not included."));
   if (ctx.canChange(d)) {
     const attrs = ctx.SERVER_ONLINE ? {} : { disabled: "" };
     body.append(ctx.el("div", { class: "row2" },
@@ -216,7 +218,7 @@ function backupTable(rows, here, mine = false) {
   return t;
 }
 
-// ---- every backup on this machine -----------------------------------------------
+// ---- every backup on this server ------------------------------------------------
 // Bundles OUTLIVE the workspace they came from, and the Backups tab lives on that
 // workspace's panel: once it was deleted, nothing in the GUI listed its bundles, and
 // restoring one as new -- the one way back -- could not be reached. Read from the same
@@ -229,19 +231,20 @@ async function openBackups() {
   panel.innerHTML = "";
   const body = ctx.el("div", { class: "home-body" }, ctx.el("p", { class: "empty" }, "loading…"));
   panel.append(ctx.el("div", { class: "home-head" }, ctx.el("h1", {}, "Backups"),
-    ctx.el("p", {}, "Every backup on this machine, deleted workspaces' included. Restoring "
-      + "one as new rebuilds its workspace: the version, the scenario and the data.")), body);
+    ctx.el("p", {}, "Every backup on this server, deleted workspaces' included. Restoring "
+      + "one as new rebuilds its workspace: the version, the preset and the data.")), body);
   let rows;
   try { rows = (await ctx.api("/api/backups")).backups || []; }
   catch (e) { body.innerHTML = ""; body.append(ctx.el("p", { class: "empty" }, String(e.message || e))); return; }
   if (ctx.VIEW !== "backups") return;                   // a newer view won the race
   body.innerHTML = "";
   body.append(rows.length ? backupTable(rows, "")
-    : ctx.el("p", { class: "empty" }, "No backups on this machine yet. Back one up from its workspace's panel."));
+    : ctx.el("p", { class: "empty" }, "No backups on this server yet. Back one up from its workspace's panel."));
 }
 
 async function doBackup(name) {
-  const note = prompt(`Back up ${name}\n\nOptional note stored in the bundle:`, "");
+  const note = prompt(`Back up ${name}\n\nRocket.Chat is stopped while its database is copied, `
+    + "then started again.\n\nOptional note stored in the bundle:", "");
   if (note === null) return;
   try {
     const { job_id } = await ctx.api(`/api/repros/${encodeURIComponent(name)}/backup`,
@@ -290,11 +293,13 @@ async function doRestore(b, into) {
 // from a job that had already started.
 let RESTORE = null;
 async function openRestoreNew(b) {
-  let held = null;
+  let held = null, refusal = "";
   try {
-    held = (await ctx.api("/api/backups/compatibility", {
+    const answer = await ctx.api("/api/backups/compatibility", {
       method: "POST", body: JSON.stringify({ bundle: b.path }),
-    })).held || null;
+    });
+    held = answer.held || null;
+    refusal = answer.refusal || "";       // the server's own answer: only the owner or an admin
   } catch (e) { ctx.toast(String(e.message || e), "bad"); return; }
   RESTORE = b;
   ctx.$("#restore-what").textContent = `A new workspace from ${shortName(b.path)}: `
@@ -305,14 +310,26 @@ async function openRestoreNew(b) {
   into.hidden = !held || !source;
   ctx.$("#restore-go").disabled = !!held;
   if (held) {
-    // AMBER: it wants you to choose another way, and nothing has been destroyed.
-    const ways = [source && `restore into ${source}, which replaces its data`,
-      `delete ${held.name}, then restore this backup as new from Backups`].filter(Boolean);
+    // AMBER: it wants you to choose another way, and nothing has been destroyed. On a
+    // shared server the holder is often a colleague's: name them, and never advise
+    // deleting what is not the reader's.
+    const holder = ctx.ALL_REPROS.find((r) => r.name === held.name);
+    const owner = (holder && (holder.owner || holder.created_by)) || "";
+    const mine = !!owner && owner === ctx.ME;
+    const drop = `delete ${held.name} (that deletes its data), then restore this backup as new from Backups`;
+    const ways = [source && !refusal && `restore into ${source}, which replaces its data`,
+      !owner ? `if it is yours, ${drop}` : mine ? drop
+        : `ask ${owner} whether ${held.name} is still needed`].filter(Boolean);
     box.textContent = `${held.name} already publishes port${held.ports.length > 1 ? "s" : ""} `
-      + `${held.ports.join(", ")}, which the ${b.preset} scenario needs too. One machine `
-      + `publishes each port once, so this restore would be refused. Instead: ${ways.join("; or ")}.`;
+      + `${held.ports.join(", ")}, which the ${b.preset} preset needs too. On this server a `
+      + `port serves one workspace at a time, so this restore would be refused.`
+      + (owner ? ` ${held.name} belongs to ${mine ? "you" : owner}.` : "")
+      + ` Instead: ${ways.join("; or ")}.`;
     into.textContent = `Restore into ${source} instead`;
   }
+  // Shown but not offered to someone the server would refuse, saying who can.
+  into.disabled = !!refusal;
+  into.title = refusal ? `${refusal[0].toUpperCase()}${refusal.slice(1)}.` : "";
   ctx.$("#restore-dialog").showModal();
 }
 
@@ -388,7 +405,8 @@ async function openHandOver(d) {
   ctx.$("#owner-title").textContent = `Hand over ${d.name}`;
   ctx.$("#owner-now").textContent = (d.owner
     ? `It belongs to ${d.owner === ctx.ME ? "you" : d.owner}. ` : "Nobody owns it yet. ")
-    + "The new owner is the one who may delete it, roll it back or hand it on; who made it, "
+    + "After this, only the new owner and admins can change it: start, stop, logs, login, "
+    + "delete or hand it on. Unless you are an admin, you can then only look. Who made it, "
     + "and who held it before, stay in its history.";
   const pick = ctx.$("#owner-pick");
   pick.innerHTML = "";

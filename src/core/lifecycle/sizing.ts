@@ -11,7 +11,8 @@ import { formatFixed } from '../../lib/format';
 import { type Emit, nullEmit, warn } from '../../lib/events';
 import * as topology from '../topology';
 import * as host from '../runner/host';
-import { listMeta } from '../runner/record';
+import { projectStates } from '../runner/queries';
+import { listMeta, recordedOwner } from '../runner/record';
 
 import * as request from './request';
 import { type CreateReq } from './types';
@@ -290,7 +291,22 @@ export async function refuseForCapacity(
   swapMb: number,
   totalMb: number,
 ): Promise<void> {
-  const running = (await listMeta()).map((meta) => meta.name);
+  // Running ones first, and marked: those are what stopping frees. ONE `compose ls` for every
+  // workspace, never a docker call each; when it cannot be asked, none is marked. Anywhere in
+  // the status: a running workspace reads `exited(1), running(2)`, its setup container first.
+  const states = (await projectStates()) ?? {};
+  const isRunning = (meta: { project: string }): boolean =>
+    (states[meta.project] ?? '').includes('running(');
+  const metas = await listMeta();
+  const existing = [...metas.filter(isRunning), ...metas.filter((meta) => !isRunning(meta))].map(
+    (meta) => {
+      const owner = recordedOwner(meta);
+      const marks = [owner === '' ? '' : `${owner}'s`, isRunning(meta) ? 'running' : ''].filter(
+        Boolean,
+      );
+      return marks.length === 0 ? meta.name : `${meta.name} (${marks.join(', ')})`;
+    },
+  );
   const swapNote =
     swapMb === 0
       ? '\n  This host has NO SWAP, so there is no buffer at all: memory ' +
@@ -315,11 +331,14 @@ export async function refuseForCapacity(
       `${String(Math.max(0, headroom))} MB is free to use ` +
       `(${String(availableMb)} MB available, ${String(reserve)} MB kept for the OS, Docker and ` +
       `the page cache, ${String(totalMb)} MB total).${swapNote}\n` +
-      `  ${String(running.length)} workspace(s) exist: ${running.slice(0, 6).join(', ') || 'none'}` +
-      `${running.length > 6 ? ' …' : ''}\n` +
-      '  Free some memory first — `houston stop --name <it>` keeps the data:\n' +
-      '    houston list\n' +
-      '  Or override this check if you are sure:  --force',
+      `  ${String(existing.length)} workspace(s) on the machine running houston, running ones ` +
+      'first: ' +
+      `${existing.slice(0, 6).join(', ') || 'none'}${existing.length > 6 ? ' …' : ''}\n` +
+      '  Free some memory first: stop one of YOUR running ones (`houston list` shows which); ' +
+      "ask the owner before stopping anyone else's.\n" +
+      '    houston stop --name <it>      (keeps its data)\n' +
+      "  Or override this check if you are sure:  --force (if memory runs out, a colleague's " +
+      'workspace may be the one killed)',
   );
 }
 

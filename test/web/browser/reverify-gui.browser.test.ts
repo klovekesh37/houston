@@ -22,11 +22,15 @@ const initialWorkspace = {
   preset: 'default',
   host_port: 3301,
   root_url: 'http://localhost:3301',
+  open_url: 'http://localhost:3301',
+  licensed: false,
+  license_refused: false,
   owner: 'admin',
   created_by: 'admin',
   uptime: '2 minutes',
   containers: [],
   notes: [],
+  note_groups: [] as unknown[],
   links: [],
   may_destroy: true,
 };
@@ -48,13 +52,19 @@ describe('live re-verification GUI regressions', () => {
   let accounts = true;
   let edgeInstalled = false;
   let workspace = { ...initialWorkspace };
+  // Other workspaces on the box, beside `workspace`, as the list answers them.
+  let others: Record<string, unknown>[] = [];
+  // What a restore as new is told holds the side ports its preset needs.
+  let held: { name: string; ports: number[] } | null = null;
+  // Why the server would refuse this viewer the bundle ('' when it would not).
+  let refusal = '';
   let listReads = 0;
   let connections = 0;
   let mutations = 0;
   let clustersGate: Promise<void> | null = null;
   // Holds the next list read open until released: a reply that never comes.
   let listGate: Promise<void> | null = null;
-  let jobs: { id: string; kind: string; label: string; status: string }[] = [];
+  let jobs: { id: string; kind: string; label: string; status: string; verb?: string }[] = [];
   const sockets = new Set<LogSocket>();
   const pageErrors: string[] = [];
 
@@ -67,6 +77,9 @@ describe('live re-verification GUI regressions', () => {
     accounts = true;
     edgeInstalled = false;
     workspace = { ...initialWorkspace };
+    others = [];
+    held = null;
+    refusal = '';
     listReads = 0;
     connections = 0;
     mutations = 0;
@@ -106,7 +119,7 @@ describe('live re-verification GUI regressions', () => {
           listGate = null;
           await gate;
         }
-        return { repros: [workspace] };
+        return { repros: [workspace, ...others] };
       }
       if (pathname.endsWith('/detail'))
         // As the server answers: with no accounts there is nobody to refuse.
@@ -148,13 +161,17 @@ describe('live re-verification GUI regressions', () => {
               path: '/fixture/ticket.rcbak',
               repro: workspace.name,
               rc_version: '8.5.1',
+              preset: 'email',
               bytes: 1024,
             },
           ],
         };
       return {};
     });
-    app.post('/api/*', async (_request, reply) => {
+    app.post('/api/*', async (request, reply) => {
+      // A read the GUI makes by POST: whether a restore as new could start.
+      if (new URL(request.url, 'http://localhost').pathname === '/api/backups/compatibility')
+        return { compatibility: null, held, refusal };
       mutations += 1;
       return role === 'readonly'
         ? reply.code(403).send({ error: 'Your role is readonly.' })
@@ -182,7 +199,7 @@ describe('live re-verification GUI regressions', () => {
 
   async function dashboard(expectedUser = 'admin'): Promise<void> {
     await page.goto('/');
-    await page.locator('.wrow').waitFor();
+    await page.locator('.wrow').first().waitFor();
     await page.waitForFunction(
       (name) => document.querySelector('#whoami')?.textContent.startsWith(name) === true,
       expectedUser,
@@ -219,6 +236,217 @@ describe('live re-verification GUI regressions', () => {
     expect(await page.locator('.wrow').getAttribute('data-state')).toBe('running');
   });
 
+  test('home does not ask about a workspace whose create is still running', async () => {
+    // Measured live: during a create Home said "<name> is down. It still holds port and its
+    // data volume. [Review]" -- `down` is only what an unfinished create looks like.
+    workspace = { ...initialWorkspace, state: 'down', health: '', uptime: '' };
+    jobs = [{ id: 'job-create', kind: 'create', label: workspace.name, status: 'running' }];
+    await dashboard();
+    await page.waitForFunction(
+      () => document.querySelector('.wrow .wstate')?.textContent === 'Creating',
+    );
+    await page.locator('#btn-home').click();
+    await page.locator('#detail', { hasText: 'Good' }).waitFor({ state: 'visible' });
+    expect(await page.locator('#detail').textContent()).not.toContain(`${workspace.name} is down`);
+  });
+
+  test("restore as new names who holds the port, and advises deleting only the reader's own", async () => {
+    // On a shared server the workspace holding a preset's side port is often a colleague's,
+    // and the refusal named nobody and told whoever read it to delete it.
+    others = [
+      { ...initialWorkspace, name: 'bob-mail', host_port: 3302, owner: 'bob', created_by: 'bob' },
+      { ...initialWorkspace, name: 'old-mail', host_port: 3303, owner: '', created_by: '' },
+    ];
+    await dashboard();
+    await page.locator('#btn-backups').click();
+    const said = async (holder: string): Promise<string> => {
+      held = { name: holder, ports: [8025] };
+      await page.locator('#detail button', { hasText: 'restore as new' }).click();
+      await page.locator('#restore-dialog[open]').waitFor({ state: 'visible' });
+      const text = (await page.locator('#restore-held').textContent()) ?? '';
+      await page.locator('#restore-cancel').click();
+      return text;
+    };
+    const colleague = await said('bob-mail');
+    expect(colleague).toContain('On this server a port serves one workspace at a time');
+    expect(colleague).toContain('bob-mail belongs to bob.');
+    expect(colleague).toContain('ask bob whether bob-mail is still needed');
+    expect(colleague).not.toContain('delete bob-mail');
+    const own = await said('admin-ticket');
+    expect(own).toContain('admin-ticket belongs to you.');
+    expect(own).toContain('delete admin-ticket (that deletes its data)');
+    const nobody = await said('old-mail');
+    expect(nobody).not.toContain('belongs to');
+    expect(nobody).toContain('if it is yours, delete old-mail (that deletes its data)');
+    expect(mutations).toBe(0);
+  });
+
+  test('deleting taken-down workspaces says whose, and that stopped ones are kept', async () => {
+    // "Prune down repros" asked "Delete every 'down' repro?": not whose, nor what "down" is.
+    await dashboard();
+    expect(await page.locator('#btn-prune').textContent()).toBe('Delete taken-down workspaces');
+    const asked = new Promise<string>((resolve) => {
+      page.once('dialog', (dialog) => {
+        resolve(dialog.message());
+        void dialog.dismiss();
+      });
+    });
+    await page.locator('#btn-prune').click();
+    const said = await asked;
+    expect(said).toContain('every taken-down workspace you are allowed to delete');
+    expect(said).toContain("(an admin: everyone's)");
+    expect(said).toContain('Stopped ones');
+    expect(said).toContain('This cannot be undone.');
+    expect(mutations).toBe(0);
+  });
+
+  test("a running job is named with the GUI's verbs, not its job kind", async () => {
+    // Activity said "teardown: admin-ticket" and "state: other-ws". A take down and a delete
+    // are one kind, as are Stop, Start and Restart, and the record says neither which.
+    workspace = { ...initialWorkspace, state: 'down', health: '', uptime: '' };
+    jobs = [
+      { id: 'job-teardown', kind: 'teardown', label: workspace.name, status: 'running' },
+      { id: 'job-state', kind: 'state', label: 'other-ws', status: 'running' },
+    ];
+    await dashboard();
+    await page.waitForFunction(
+      () => document.querySelector('.wrow .wstate')?.textContent === 'Taking down or deleting',
+    );
+    await page.locator('#btn-jobs').click();
+    await page.locator('#jobs-list .jkind').first().waitFor();
+    expect(await page.locator('#jobs-list .jkind').allTextContents()).toEqual([
+      'Take down or delete: admin-ticket',
+      'Stop, start or restart: other-ws',
+    ]);
+  });
+
+  test('a running job says which of its kind it is once its record carries the verb', async () => {
+    // The record now says it (`verb`): a Delete and a Take down read apart, as do Stop, Start
+    // and Restart, in the rail and in Activity.
+    workspace = { ...initialWorkspace, state: 'down', health: '', uptime: '' };
+    jobs = [
+      {
+        id: 'job-teardown',
+        kind: 'teardown',
+        label: workspace.name,
+        status: 'running',
+        verb: 'delete',
+      },
+      { id: 'job-state', kind: 'state', label: 'other-ws', status: 'running', verb: 'stop' },
+    ];
+    await dashboard();
+    await page.waitForFunction(
+      () => document.querySelector('.wrow .wstate')?.textContent === 'Deleting',
+    );
+    await page.locator('#btn-jobs').click();
+    await page.locator('#jobs-list .jkind').first().waitFor();
+    expect(await page.locator('#jobs-list .jkind').allTextContents()).toEqual([
+      'Delete: admin-ticket',
+      'Stop: other-ws',
+    ]);
+  });
+
+  test("restore into a colleague's workspace is shown disabled, saying who can", async () => {
+    // The server refuses anyone but the bundle's owner or an admin; the dialog offered the
+    // button and the advice anyway, and the click was refused.
+    role = 'member';
+    user = 'carol';
+    workspace = { ...initialWorkspace, name: 'bob-ticket', owner: 'bob', created_by: 'bob' };
+    others = [{ ...initialWorkspace, name: 'bob-mail', host_port: 3302, owner: 'bob' }];
+    await dashboard('carol');
+    await page.locator('#btn-backups').click();
+    held = { name: 'bob-mail', ports: [8025] };
+    refusal = "this backup is bob's data — only bob or an admin can use or delete it";
+    await page.locator('#detail button', { hasText: 'restore as new' }).click();
+    await page.locator('#restore-dialog[open]').waitFor({ state: 'visible' });
+    const into = page.locator('#restore-into');
+    expect(await into.isVisible()).toBe(true);
+    expect(await into.isDisabled()).toBe(true);
+    expect(await into.getAttribute('title')).toBe(
+      "This backup is bob's data — only bob or an admin can use or delete it.",
+    );
+    expect(await page.locator('#restore-held').textContent()).not.toContain('restore into');
+    await page.locator('#restore-cancel').click();
+    // The server's answer for the bundle's owner or an admin: offered as before.
+    refusal = '';
+    await page.locator('#detail button', { hasText: 'restore as new' }).click();
+    await page.locator('#restore-dialog[open]').waitFor({ state: 'visible' });
+    expect(await into.isDisabled()).toBe(false);
+    expect(await page.locator('#restore-held').textContent()).toContain(
+      'restore into bob-ticket',
+    );
+    expect(mutations).toBe(0);
+  });
+
+  test('a workspace behind a tunnel opens at the address it advertises, not localhost', async () => {
+    // Measured live: `--root-url https://testin6.kestron.org` served Rocket.Chat on that name,
+    // and Home's Open and the panel's Open RC both led to http://localhost:3014 -- the
+    // reader's own machine.
+    workspace = { ...initialWorkspace, open_url: 'https://ticket.example.test' };
+    await dashboard();
+    await page.locator('#btn-home').click();
+    const home = page.locator('#detail .drow a', { hasText: 'Open' });
+    await home.waitFor({ state: 'visible' });
+    expect(await home.getAttribute('href')).toBe('https://ticket.example.test');
+    await selectWorkspace();
+    const open = page.locator('#detail .d-actions a', { hasText: 'Open RC' });
+    expect(await open.getAttribute('href')).toBe('https://ticket.example.test');
+  });
+
+  test('a license Rocket.Chat refused is said in amber, not badged Licensed', async () => {
+    // Measured live: a license bound to another URL was installed and refused ("Url
+    // validation failed"), and the panel still showed "Licensed".
+    workspace = { ...initialWorkspace, licensed: true, license_refused: true };
+    await dashboard();
+    await selectWorkspace();
+    expect(await page.locator('#detail .d-sub .pill').allInnerTexts()).toEqual(['License refused']);
+    expect(await page.locator('#detail .d-sub .pill.warn').count()).toBe(1);
+  });
+
+  test("a guide's <workspace-url> on an https workspace names its public address", async () => {
+    // The placeholder read `d.url`, which no payload carries, so it fell back to root_url:
+    // over HTTPS the livechat step sent a remote reader to http://localhost:3301/livechat.
+    const guide = {
+      name: 'livechat',
+      summary: 'Livechat with a widget.',
+      signIn: [],
+      steps: ['Open the built-in widget at <workspace-url>/livechat, and start a chat.'],
+      know: [],
+      setup: null,
+    };
+    workspace = {
+      ...initialWorkspace,
+      preset: 'livechat',
+      open_url: 'https://ticket.example.test',
+      note_groups: [
+        {
+          title: 'Preset · livechat',
+          kind: 'scenario',
+          rows: [],
+          body: ['A livechat department is set up.'],
+          commands: [],
+          guides: [guide],
+        },
+      ],
+    };
+    await dashboard();
+    await selectWorkspace();
+    const step = page.locator('#d-body .guide-pane li', { hasText: 'built-in widget' });
+    await step.waitFor({ state: 'visible' });
+    expect(await step.innerText()).toContain('https://ticket.example.test/livechat');
+  });
+
+  test('a refused license says Bring up asks again, not Restart', async () => {
+    // The title said "restart the workspace, and houston ready asks again", but the GUI's
+    // Restart on Docker never re-checks the license: only Bring up asks Rocket.Chat again.
+    workspace = { ...initialWorkspace, licensed: true, license_refused: true };
+    await dashboard();
+    await selectWorkspace();
+    const title = (await page.locator('#detail .d-sub .pill.warn').getAttribute('title')) ?? '';
+    expect(title).toContain('Bring up asks Rocket.Chat again');
+    expect(title).not.toMatch(/restart/iu);
+  });
+
   test('a list read that never answers is given up, and the rail carries on', async () => {
     // `api()` had no deadline, and the list poll queues each read behind the last one: a
     // single read that never answered froze the rail until the page was reloaded.
@@ -252,7 +480,7 @@ describe('live re-verification GUI regressions', () => {
       ['#btn-clusters', 'clusters', 'Clusters'],
       ['#btn-backups', 'backups', 'Backups'],
       ['#btn-jobs', 'activity', 'Activity'],
-      ['#btn-scenarios', 'scenarios', 'Scenarios'],
+      ['#btn-scenarios', 'scenarios', 'Presets'],
       ['#btn-home', 'home', 'Good'],
     ]) {
       await page.locator(button ?? '').click();

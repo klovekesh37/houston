@@ -197,6 +197,24 @@ afterEach(() => {
   aws.prepareCluster = realPrepare;
 });
 
+describe('the node count a cluster is built with', () => {
+  it('refuses a count outside 1..100 before asking AWS anything', async () => {
+    // `--nodes 0` built 3 nodes without a word, and -1 or 250 reached eksctl as the managed
+    // group's desiredCapacity. Only the GUI's cost estimate checked the range.
+    let asked = 0;
+    aws.preflight = () => {
+      asked += 1;
+      return Promise.resolve(READY);
+    };
+    for (const nodes of [0, -1, 101, 2.5, Number.NaN]) {
+      await expect(aws.createCluster('support', { region: 'eu-west-1', nodes })).rejects.toThrow(
+        /from 1 to 100 nodes/u,
+      );
+    }
+    expect(asked).toBe(0);
+  });
+});
+
 describe('connect to an existing EKS cluster', () => {
   const arn = 'arn:aws:eks:eu-west-1:111122223333:cluster/support';
 
@@ -654,6 +672,26 @@ describe('deleting, which is worse than creating', () => {
     await expect(deleteCluster('support', { region: 'eu-west-1' })).rejects.toThrow(
       /a read that failed/u,
     );
+  });
+
+  it('names a missing kubectl, rather than calling a healthy cluster unreachable', async () => {
+    // A delete reads what the cluster holds with kubectl. Without it the refusal said
+    // "nothing answered: it may be stopped, deleted, or unreachable" about an ACTIVE cluster
+    // -- and steered toward --force.
+    aws.preflight = () =>
+      Promise.resolve({
+        ...READY,
+        tools: { ...READY.tools, kubectl: makeTool({ name: 'kubectl' }) },
+      });
+    let read = 0;
+    aws.describeCluster = () => {
+      read += 1;
+      return Promise.resolve(owned);
+    };
+    const refused = deleteCluster('support', { region: 'eu-west-1' });
+    await expect(refused).rejects.toThrow(/kubectl is not installed/u);
+    await expect(refused).rejects.toThrow(/--force/u);
+    expect(read).toBe(0);
   });
 
   it('looks in the region the cluster was built in when none is typed', async () => {

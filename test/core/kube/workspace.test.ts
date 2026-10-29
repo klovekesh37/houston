@@ -591,6 +591,6 @@ describe('the values the release is installed with', () => {
       },
       emit: (event) => said.push(event.message),
     });
-    expect(said).toContain('applying the e2ee+ldap+livechat scenario — 1 resource');
+    expect(said).toContain('applying the e2ee+ldap+livechat preset — 1 resource');
   });
 });

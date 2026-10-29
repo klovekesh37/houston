@@ -25,6 +25,10 @@ for (const name of Object.keys(process.env)) {
     delete process.env[name];
   }
 }
+// And an SSH session's: the CLI reads them to say how to open a localhost URL from another
+// computer, so a run over SSH printed a line a local run did not.
+delete process.env.SSH_CONNECTION;
+delete process.env.SSH_CLIENT;
 process.env.HOUSTON_HOME = home;
 
 afterAll(() => {

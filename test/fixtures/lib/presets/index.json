@@ -509,7 +509,7 @@
   },
   "email@9f10228f": {
    "name": "email",
-   "description": "Mailpit mailcatcher wired to RC's SMTP. Every email RC sends — password resets, invites, verification, notification and 2FA mail — is captured at http://localhost:8025 (at /mailpit/ on an HTTPS workspace) instead of leaving the machine. Pair with --seed for users with verified emails.",
+   "description": "A web inbox (Mailpit) that catches every email Rocket.Chat sends; nothing is delivered and nothing can be sent in. Password resets, invites, verification, notification and 2FA mail all land there: at <workspace URL>/mailpit/ over HTTPS, otherwise at http://localhost:8025 on the machine running houston. Pair with --seed for users with verified emails.",
    "env": {
     "OVERWRITE_SETTING_SMTP_Host": "mailpit",
     "OVERWRITE_SETTING_SMTP_Port": "1025",
@@ -573,7 +573,7 @@
   },
   "email@f1ccbbfb": {
    "name": "email",
-   "description": "Mailpit mailcatcher wired to RC's SMTP. Every email RC sends — password resets, invites, verification, notification and 2FA mail — is captured at http://localhost:8025 (at /mailpit/ on an HTTPS workspace) instead of leaving the machine. Pair with --seed for users with verified emails.",
+   "description": "A web inbox (Mailpit) that catches every email Rocket.Chat sends; nothing is delivered and nothing can be sent in. Password resets, invites, verification, notification and 2FA mail all land there: at <workspace URL>/mailpit/ over HTTPS, otherwise at http://localhost:8025 on the machine running houston. Pair with --seed for users with verified emails.",
    "env": {
     "OVERWRITE_SETTING_SMTP_Host": "mailpit",
     "OVERWRITE_SETTING_SMTP_Port": "1025",
@@ -710,7 +710,7 @@
   },
   "ldap@7653f059": {
    "name": "ldap",
-   "description": "OpenLDAP (osixia) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
+   "description": "OpenLDAP (v2.6.x) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
    "env": {
     "OVERWRITE_SETTING_LDAP_Enable": "true",
     "OVERWRITE_SETTING_LDAP_Server_Type": "",
@@ -729,10 +729,7 @@
    },
    "services": {
     "openldap": {
-     "image": "osixia/openldap:1.5.0",
-     "command": [
-      "--copy-service"
-     ],
+     "image": "ghcr.io/intechcore/openldap:2.6.16-1@sha256:04a95ae6131d8f21ee15b025c2dc7318c2922c9249fa469c7a780cceddba06f1",
      "environment": {
       "LDAP_ORGANISATION": "Houston",
       "LDAP_DOMAIN": "example.com",
@@ -740,18 +737,23 @@
       "LDAP_ADMIN_PASSWORD": "admin"
      },
      "volumes": [
-      "./ldap/50-rc-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-rc-users.ldif:ro"
+      "./ldap/50-rc-users.ldif:/bootstrap/50-rc-users.ldif:ro"
      ],
      "restart": "unless-stopped"
     },
     "phpldapadmin": {
-     "image": "osixia/phpldapadmin:0.9.0",
+     "image": "phpldapadmin/phpldapadmin:2.3.12",
      "environment": {
-      "PHPLDAPADMIN_LDAP_HOSTS": "openldap",
-      "PHPLDAPADMIN_HTTPS": "false"
+      "LDAP_HOST": "openldap",
+      "LDAP_BASE_DN": "dc=example,dc=com",
+      "LDAP_USERNAME": "cn=admin,dc=example,dc=com",
+      "LDAP_PASSWORD": "admin",
+      "LDAP_LOGIN_ATTR": "dn",
+      "LDAP_LOGIN_ATTR_DESC": "Login DN",
+      "LDAP_LOGIN_OBJECTCLASS": "organizationalRole"
      },
      "ports": [
-      "8082:80"
+      "8082:8080"
      ],
      "depends_on": [
       "openldap"
@@ -768,7 +770,7 @@
    "files": [
     [
      "ldap/50-rc-users.ldif",
-     "dn: ou=Users,dc=example,dc=com\nobjectClass: organizationalUnit\nou: Users\n\ndn: ou=groups,dc=example,dc=com\nobjectClass: organizationalUnit\nou: groups\n\ndn: uid=user1,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 1\nsn: 1\nuid: user1\nuidNumber: 1001\ngidNumber: 5000\nhomeDirectory: /home/user1\nmail: user1@example.com\nuserPassword: user1\n\ndn: uid=user2,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 2\nsn: 2\nuid: user2\nuidNumber: 1002\ngidNumber: 5000\nhomeDirectory: /home/user2\nmail: user2@example.com\nuserPassword: user2\n\ndn: uid=user3,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 3\nsn: 3\nuid: user3\nuidNumber: 1003\ngidNumber: 5000\nhomeDirectory: /home/user3\nmail: user3@example.com\nuserPassword: user3\n\ndn: uid=user4,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 4\nsn: 4\nuid: user4\nuidNumber: 1004\ngidNumber: 5000\nhomeDirectory: /home/user4\nmail: user4@example.com\nuserPassword: user4\n\ndn: uid=user5,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 5\nsn: 5\nuid: user5\nuidNumber: 1005\ngidNumber: 5000\nhomeDirectory: /home/user5\nmail: user5@example.com\nuserPassword: user5\n\ndn: cn=rc-users,ou=groups,dc=example,dc=com\nobjectClass: top\nobjectClass: posixGroup\ncn: rc-users\ngidNumber: 5000\nmemberUid: user1\nmemberUid: user2\nmemberUid: user3\nmemberUid: user4\nmemberUid: user5\n\n"
+     "dn: cn=admin,dc=example,dc=com\nobjectClass: simpleSecurityObject\nobjectClass: organizationalRole\ncn: admin\nuserPassword: admin\n\ndn: ou=people,dc=example,dc=com\nchangetype: delete\n\ndn: ou=Users,dc=example,dc=com\nobjectClass: organizationalUnit\nou: Users\n\ndn: ou=groups,dc=example,dc=com\nobjectClass: organizationalUnit\nou: groups\n\ndn: uid=user1,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 1\nsn: 1\nuid: user1\nuidNumber: 1001\ngidNumber: 5000\nhomeDirectory: /home/user1\nmail: user1@example.com\nuserPassword: user1\n\ndn: uid=user2,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 2\nsn: 2\nuid: user2\nuidNumber: 1002\ngidNumber: 5000\nhomeDirectory: /home/user2\nmail: user2@example.com\nuserPassword: user2\n\ndn: uid=user3,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 3\nsn: 3\nuid: user3\nuidNumber: 1003\ngidNumber: 5000\nhomeDirectory: /home/user3\nmail: user3@example.com\nuserPassword: user3\n\ndn: uid=user4,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 4\nsn: 4\nuid: user4\nuidNumber: 1004\ngidNumber: 5000\nhomeDirectory: /home/user4\nmail: user4@example.com\nuserPassword: user4\n\ndn: uid=user5,ou=Users,dc=example,dc=com\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 5\nsn: 5\nuid: user5\nuidNumber: 1005\ngidNumber: 5000\nhomeDirectory: /home/user5\nmail: user5@example.com\nuserPassword: user5\n\ndn: cn=rc-users,ou=groups,dc=example,dc=com\nobjectClass: top\nobjectClass: posixGroup\ncn: rc-users\ngidNumber: 5000\nmemberUid: user1\nmemberUid: user2\nmemberUid: user3\nmemberUid: user4\nmemberUid: user5\n\n"
     ]
    ],
    "params_help": {
@@ -807,7 +809,7 @@
   },
   "ldap@93ca67b6": {
    "name": "ldap",
-   "description": "OpenLDAP (osixia) seeded with 2 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
+   "description": "OpenLDAP (v2.6.x) seeded with 2 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
    "env": {
     "OVERWRITE_SETTING_LDAP_Enable": "true",
     "OVERWRITE_SETTING_LDAP_Server_Type": "",
@@ -826,10 +828,7 @@
    },
    "services": {
     "openldap": {
-     "image": "osixia/openldap:1.5.0",
-     "command": [
-      "--copy-service"
-     ],
+     "image": "ghcr.io/intechcore/openldap:2.6.16-1@sha256:04a95ae6131d8f21ee15b025c2dc7318c2922c9249fa469c7a780cceddba06f1",
      "environment": {
       "LDAP_ORGANISATION": "Houston",
       "LDAP_DOMAIN": "a.b.c",
@@ -837,18 +836,23 @@
       "LDAP_ADMIN_PASSWORD": "admin"
      },
      "volumes": [
-      "./ldap/50-rc-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-rc-users.ldif:ro"
+      "./ldap/50-rc-users.ldif:/bootstrap/50-rc-users.ldif:ro"
      ],
      "restart": "unless-stopped"
     },
     "phpldapadmin": {
-     "image": "osixia/phpldapadmin:0.9.0",
+     "image": "phpldapadmin/phpldapadmin:2.3.12",
      "environment": {
-      "PHPLDAPADMIN_LDAP_HOSTS": "openldap",
-      "PHPLDAPADMIN_HTTPS": "false"
+      "LDAP_HOST": "openldap",
+      "LDAP_BASE_DN": "dc=a,dc=b,dc=c",
+      "LDAP_USERNAME": "cn=admin,dc=a,dc=b,dc=c",
+      "LDAP_PASSWORD": "admin",
+      "LDAP_LOGIN_ATTR": "dn",
+      "LDAP_LOGIN_ATTR_DESC": "Login DN",
+      "LDAP_LOGIN_OBJECTCLASS": "organizationalRole"
      },
      "ports": [
-      "8082:80"
+      "8082:8080"
      ],
      "depends_on": [
       "openldap"
@@ -865,7 +869,7 @@
    "files": [
     [
      "ldap/50-rc-users.ldif",
-     "dn: ou=Users,dc=a,dc=b,dc=c\nobjectClass: organizationalUnit\nou: Users\n\ndn: ou=groups,dc=a,dc=b,dc=c\nobjectClass: organizationalUnit\nou: groups\n\ndn: uid=user1,ou=Users,dc=a,dc=b,dc=c\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 1\nsn: 1\nuid: user1\nuidNumber: 1001\ngidNumber: 5000\nhomeDirectory: /home/user1\nmail: user1@a.b.c\nuserPassword: user1\n\ndn: uid=user2,ou=Users,dc=a,dc=b,dc=c\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 2\nsn: 2\nuid: user2\nuidNumber: 1002\ngidNumber: 5000\nhomeDirectory: /home/user2\nmail: user2@a.b.c\nuserPassword: user2\n\ndn: cn=rc-users,ou=groups,dc=a,dc=b,dc=c\nobjectClass: top\nobjectClass: posixGroup\ncn: rc-users\ngidNumber: 5000\nmemberUid: user1\nmemberUid: user2\n\n"
+     "dn: cn=admin,dc=a,dc=b,dc=c\nobjectClass: simpleSecurityObject\nobjectClass: organizationalRole\ncn: admin\nuserPassword: admin\n\ndn: ou=people,dc=a,dc=b,dc=c\nchangetype: delete\n\ndn: ou=Users,dc=a,dc=b,dc=c\nobjectClass: organizationalUnit\nou: Users\n\ndn: ou=groups,dc=a,dc=b,dc=c\nobjectClass: organizationalUnit\nou: groups\n\ndn: uid=user1,ou=Users,dc=a,dc=b,dc=c\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 1\nsn: 1\nuid: user1\nuidNumber: 1001\ngidNumber: 5000\nhomeDirectory: /home/user1\nmail: user1@a.b.c\nuserPassword: user1\n\ndn: uid=user2,ou=Users,dc=a,dc=b,dc=c\nobjectClass: inetOrgPerson\nobjectClass: posixAccount\ncn: User 2\nsn: 2\nuid: user2\nuidNumber: 1002\ngidNumber: 5000\nhomeDirectory: /home/user2\nmail: user2@a.b.c\nuserPassword: user2\n\ndn: cn=rc-users,ou=groups,dc=a,dc=b,dc=c\nobjectClass: top\nobjectClass: posixGroup\ncn: rc-users\ngidNumber: 5000\nmemberUid: user1\nmemberUid: user2\n\n"
     ]
    ],
    "params_help": {
@@ -904,7 +908,7 @@
   },
   "ldap@f8dc919c": {
    "name": "ldap",
-   "description": "OpenLDAP (osixia) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
+   "description": "OpenLDAP (v2.6.x) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
    "env": {
     "OVERWRITE_SETTING_LDAP_Enable": "true",
     "OVERWRITE_SETTING_LDAP_Server_Type": "",
@@ -959,7 +963,7 @@
     "base_dn": "dc=example,dc=com"
    },
    "kubernetes_manifests": [
-    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: openldap-bootstrap\n  labels:\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\ndata:\n  50-rc-users.ldif: 'dn: ou=Users,dc=example,dc=com\n\n    objectClass: organizationalUnit\n\n    ou: Users\n\n\n    dn: ou=groups,dc=example,dc=com\n\n    objectClass: organizationalUnit\n\n    ou: groups\n\n\n    dn: uid=user1,ou=Users,dc=example,dc=com\n\n    objectClass: inetOrgPerson\n\n    objectClass: posixAccount\n\n    cn: User 1\n\n    sn: 1\n\n    uid: user1\n\n    uidNumber: 1001\n\n    gidNumber: 5000\n\n    homeDirectory: /home/user1\n\n    mail: user1@example.com\n\n    userPassword: user1\n\n\n    dn: uid=user2,ou=Users,dc=example,dc=com\n\n    objectClass: inetOrgPerson\n\n    objectClass: posixAccount\n\n    cn: User 2\n\n    sn: 2\n\n    uid: user2\n\n    uidNumber: 1002\n\n    gidNumber: 5000\n\n    homeDirectory: /home/user2\n\n    mail: user2@example.com\n\n    userPassword: user2\n\n\n    dn: uid=user3,ou=Users,dc=example,dc=com\n\n    objectClass: inetOrgPerson\n\n    objectClass: posixAccount\n\n    cn: User 3\n\n    sn: 3\n\n    uid: user3\n\n    uidNumber: 1003\n\n    gidNumber: 5000\n\n    homeDirectory: /home/user3\n\n    mail: user3@example.com\n\n    userPassword: user3\n\n\n    dn: uid=user4,ou=Users,dc=example,dc=com\n\n    objectClass: inetOrgPerson\n\n    objectClass: posixAccount\n\n    cn: User 4\n\n    sn: 4\n\n    uid: user4\n\n    uidNumber: 1004\n\n    gidNumber: 5000\n\n    homeDirectory: /home/user4\n\n    mail: user4@example.com\n\n    userPassword: user4\n\n\n    dn: uid=user5,ou=Users,dc=example,dc=com\n\n    objectClass: inetOrgPerson\n\n    objectClass: posixAccount\n\n    cn: User 5\n\n    sn: 5\n\n    uid: user5\n\n    uidNumber: 1005\n\n    gidNumber: 5000\n\n    homeDirectory: /home/user5\n\n    mail: user5@example.com\n\n    userPassword: user5\n\n\n    dn: cn=rc-users,ou=groups,dc=example,dc=com\n\n    objectClass: top\n\n    objectClass: posixGroup\n\n    cn: rc-users\n\n    gidNumber: 5000\n\n    memberUid: user1\n\n    memberUid: user2\n\n    memberUid: user3\n\n    memberUid: user4\n\n    memberUid: user5\n\n\n    '\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: openldap\n  labels: &id001\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: houston-openldap\n  template:\n    metadata:\n      labels: *id001\n    spec:\n      containers:\n      - name: openldap\n        image: osixia/openldap:1.5.0\n        args:\n        - --copy-service\n        env:\n        - name: LDAP_ORGANISATION\n          value: Houston\n        - name: LDAP_DOMAIN\n          value: example.com\n        - name: LDAP_BASE_DN\n          value: dc=example,dc=com\n        - name: LDAP_ADMIN_PASSWORD\n          value: admin\n        ports:\n        - name: ldap\n          containerPort: 389\n        readinessProbe:\n          tcpSocket:\n            port: 389\n          initialDelaySeconds: 5\n          periodSeconds: 3\n          failureThreshold: 40\n        volumeMounts:\n        - name: bootstrap\n          mountPath: /container/service/slapd/assets/config/bootstrap/ldif/custom/50-rc-users.ldif\n          subPath: 50-rc-users.ldif\n      volumes:\n      - name: bootstrap\n        configMap:\n          name: openldap-bootstrap\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: openldap\n  labels:\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\nspec:\n  selector:\n    app: houston-openldap\n  ports:\n  - name: ldap\n    port: 389\n    targetPort: 389\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: phpldapadmin\n  labels: &id001\n    app: houston-phpldapadmin\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\n    houston.io/ui-port: '8082'\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: houston-phpldapadmin\n  template:\n    metadata:\n      labels: *id001\n    spec:\n      containers:\n      - name: phpldapadmin\n        image: osixia/phpldapadmin:0.9.0\n        env:\n        - name: PHPLDAPADMIN_LDAP_HOSTS\n          value: openldap\n        - name: PHPLDAPADMIN_HTTPS\n          value: 'false'\n        ports:\n        - containerPort: 80\n        readinessProbe:\n          httpGet:\n            path: /\n            port: 80\n          initialDelaySeconds: 3\n          periodSeconds: 3\n          failureThreshold: 30\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: phpldapadmin\n  labels:\n    app: houston-phpldapadmin\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\n    houston.io/ui-port: '8082'\nspec:\n  selector:\n    app: houston-phpldapadmin\n  ports:\n  - name: http\n    port: 80\n    targetPort: 80\n"
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: openldap-bootstrap\n  labels:\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\ndata:\n  50-rc-users.ldif: |+\n    dn: cn=admin,dc=example,dc=com\n    objectClass: simpleSecurityObject\n    objectClass: organizationalRole\n    cn: admin\n    userPassword: admin\n\n    dn: ou=people,dc=example,dc=com\n    changetype: delete\n\n    dn: ou=Users,dc=example,dc=com\n    objectClass: organizationalUnit\n    ou: Users\n\n    dn: ou=groups,dc=example,dc=com\n    objectClass: organizationalUnit\n    ou: groups\n\n    dn: uid=user1,ou=Users,dc=example,dc=com\n    objectClass: inetOrgPerson\n    objectClass: posixAccount\n    cn: User 1\n    sn: 1\n    uid: user1\n    uidNumber: 1001\n    gidNumber: 5000\n    homeDirectory: /home/user1\n    mail: user1@example.com\n    userPassword: user1\n\n    dn: uid=user2,ou=Users,dc=example,dc=com\n    objectClass: inetOrgPerson\n    objectClass: posixAccount\n    cn: User 2\n    sn: 2\n    uid: user2\n    uidNumber: 1002\n    gidNumber: 5000\n    homeDirectory: /home/user2\n    mail: user2@example.com\n    userPassword: user2\n\n    dn: uid=user3,ou=Users,dc=example,dc=com\n    objectClass: inetOrgPerson\n    objectClass: posixAccount\n    cn: User 3\n    sn: 3\n    uid: user3\n    uidNumber: 1003\n    gidNumber: 5000\n    homeDirectory: /home/user3\n    mail: user3@example.com\n    userPassword: user3\n\n    dn: uid=user4,ou=Users,dc=example,dc=com\n    objectClass: inetOrgPerson\n    objectClass: posixAccount\n    cn: User 4\n    sn: 4\n    uid: user4\n    uidNumber: 1004\n    gidNumber: 5000\n    homeDirectory: /home/user4\n    mail: user4@example.com\n    userPassword: user4\n\n    dn: uid=user5,ou=Users,dc=example,dc=com\n    objectClass: inetOrgPerson\n    objectClass: posixAccount\n    cn: User 5\n    sn: 5\n    uid: user5\n    uidNumber: 1005\n    gidNumber: 5000\n    homeDirectory: /home/user5\n    mail: user5@example.com\n    userPassword: user5\n\n    dn: cn=rc-users,ou=groups,dc=example,dc=com\n    objectClass: top\n    objectClass: posixGroup\n    cn: rc-users\n    gidNumber: 5000\n    memberUid: user1\n    memberUid: user2\n    memberUid: user3\n    memberUid: user4\n    memberUid: user5\n\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: openldap\n  labels: &a1\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: houston-openldap\n  template:\n    metadata:\n      labels: *a1\n    spec:\n      containers:\n        - name: openldap\n          image: ghcr.io/intechcore/openldap:2.6.16-1@sha256:04a95ae6131d8f21ee15b025c2dc7318c2922c9249fa469c7a780cceddba06f1\n          env:\n            - name: LDAP_ORGANISATION\n              value: Houston\n            - name: LDAP_DOMAIN\n              value: example.com\n            - name: LDAP_BASE_DN\n              value: dc=example,dc=com\n            - name: LDAP_ADMIN_PASSWORD\n              value: admin\n          ports:\n            - name: ldap\n              containerPort: 389\n          readinessProbe:\n            tcpSocket:\n              port: 389\n            initialDelaySeconds: 5\n            periodSeconds: 3\n            failureThreshold: 40\n          volumeMounts:\n            - name: bootstrap\n              mountPath: /bootstrap/50-rc-users.ldif\n              subPath: 50-rc-users.ldif\n      volumes:\n        - name: bootstrap\n          configMap:\n            name: openldap-bootstrap\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: openldap\n  labels:\n    app: houston-openldap\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\nspec:\n  selector:\n    app: houston-openldap\n  ports:\n    - name: ldap\n      port: 389\n      targetPort: 389\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: phpldapadmin\n  labels: &a1\n    app: houston-phpldapadmin\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\n    houston.io/ui-port: \"8082\"\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: houston-phpldapadmin\n  template:\n    metadata:\n      labels: *a1\n    spec:\n      containers:\n        - name: phpldapadmin\n          image: phpldapadmin/phpldapadmin:2.3.12\n          env:\n            - name: LDAP_HOST\n              value: openldap\n            - name: LDAP_BASE_DN\n              value: dc=example,dc=com\n            - name: LDAP_USERNAME\n              value: cn=admin,dc=example,dc=com\n            - name: LDAP_PASSWORD\n              value: admin\n            - name: LDAP_LOGIN_ATTR\n              value: dn\n            - name: LDAP_LOGIN_ATTR_DESC\n              value: Login DN\n            - name: LDAP_LOGIN_OBJECTCLASS\n              value: organizationalRole\n          ports:\n            - containerPort: 8080\n          readinessProbe:\n            httpGet:\n              path: /up\n              port: 8080\n            initialDelaySeconds: 3\n            periodSeconds: 3\n            failureThreshold: 30\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: phpldapadmin\n  labels:\n    app: houston-phpldapadmin\n    app.kubernetes.io/managed-by: houston\n    houston.io/component: ldap\n    houston.io/repro: __HOUSTON_NAME__\n    houston.io/ui-port: \"8082\"\nspec:\n  selector:\n    app: houston-phpldapadmin\n  ports:\n    - name: http\n      port: 80\n      targetPort: 8080\n"
    ],
    "error": ""
   },
@@ -1013,12 +1017,13 @@
    ],
    "notes": [
     "Customer website (widget embedded, cross-origin): http://localhost:8090",
-    "Built-in standalone widget (same-origin): <repro-url>/livechat",
+    "Built-in standalone widget (same-origin): <workspace-url>/livechat",
     "admin is an available Omnichannel agent, assigned to the 'support'",
     "  department. Visitors see 'agents online' once you're logged into RC",
     "  (that gives you presence); answer chats in RC's Omnichannel area.",
-    "Business hours & canned responses are Enterprise features — pass",
-    "  --reg-token to enable them, else configure manually."
+    "Business hours & canned responses are Enterprise features — a registration",
+    "  token (--reg-token, or More options when creating) enables them, else",
+    "  configure them by hand."
    ],
    "instances": 1,
    "entry_service": "",
@@ -1085,12 +1090,13 @@
    ],
    "notes": [
     "Customer website (widget embedded, cross-origin): http://localhost:8090",
-    "Built-in standalone widget (same-origin): <repro-url>/livechat",
+    "Built-in standalone widget (same-origin): <workspace-url>/livechat",
     "admin is an available Omnichannel agent, assigned to the 'support'",
     "  department. Visitors see 'agents online' once you're logged into RC",
     "  (that gives you presence); answer chats in RC's Omnichannel area.",
-    "Business hours & canned responses are Enterprise features — pass",
-    "  --reg-token to enable them, else configure manually."
+    "Business hours & canned responses are Enterprise features — a registration",
+    "  token (--reg-token, or More options when creating) enables them, else",
+    "  configure them by hand."
    ],
    "instances": 1,
    "entry_service": "",
@@ -1271,7 +1277,7 @@
    ],
    "params_help": {
     "users": "number of Keycloak test users (default 5)",
-    "idp_host": "hostname BOTH your browser and Rocket.Chat reach Keycloak on (default 'keycloak', which needs a hosts entry and only works on this machine)"
+    "idp_host": "hostname BOTH your browser and Rocket.Chat reach Keycloak on (default 'keycloak', which needs a hosts entry and works only for a browser on the machine running houston; from another computer create the workspace with HTTPS on a domain instead)"
    },
    "post_ready": [
     {
@@ -1308,9 +1314,8 @@
     "OIDC needs one host entry so your browser can reach Keycloak at the",
     "same URL RC's backend uses. Add this line to /etc/hosts (needs sudo):",
     "    127.0.0.1  keycloak",
-    "  That entry points at THIS machine, so the browser has to be on it. From",
-    "  another machine, re-create with:  --bind 0.0.0.0 --set idp_host=<this host>",
-    "  which needs no hosts entry at all.",
+    "  It points at the machine running houston, so the browser has to be on it.",
+    "From another computer, create the workspace with HTTPS on a domain: Keycloak is then at <workspace URL>/keycloak, with no hosts entry. Or re-create with --bind 0.0.0.0 --set idp_host=<server address>, which opens Rocket.Chat and Keycloak, fixed logins and all, to anyone who can reach their ports.",
     "Then log in via 'Keycloak (OIDC)' as user1 / user1.",
     "Keycloak admin console: http://keycloak:8085  (admin/admin, realm 'houston')."
    ],
@@ -1371,7 +1376,7 @@
    ],
    "params_help": {
     "users": "number of Keycloak test users (default 5)",
-    "idp_host": "hostname BOTH your browser and Rocket.Chat reach Keycloak on (default 'keycloak', which needs a hosts entry and only works on this machine)"
+    "idp_host": "hostname BOTH your browser and Rocket.Chat reach Keycloak on (default 'keycloak', which needs a hosts entry and works only for a browser on the machine running houston; from another computer create the workspace with HTTPS on a domain instead)"
    },
    "post_ready": [
     {
@@ -1838,7 +1843,7 @@
   },
   "s3_minio@15fee594": {
    "name": "s3_minio",
-   "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'my.bucket', console :9001). Default proxies downloads through RC; --set presigned=true for real presigned URLs.",
+   "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'my.bucket', console :9001). Default proxies downloads through RC; turn on Presigned URLs (--set presigned=true) for real ones.",
    "env": {
     "OVERWRITE_SETTING_FileUpload_Storage_Type": "AmazonS3",
     "OVERWRITE_SETTING_FileUpload_S3_Bucket": "my.bucket",
@@ -1896,7 +1901,7 @@
    "params_help": {
     "presigned": "browser fetches presigned MinIO URLs (default false; needs /etc/hosts line)",
     "bucket": "bucket name (default houston-uploads)",
-    "s3_host": "hostname the BROWSER reaches MinIO on in presigned mode (default 'minio', which needs a hosts entry and only works on this machine)"
+    "s3_host": "hostname the BROWSER reaches MinIO on in presigned mode (default 'minio', which needs a hosts entry and only works for a browser on the machine running houston)"
    },
    "post_ready": [],
    "notes": [
@@ -1906,8 +1911,8 @@
     "PRESIGNED MODE: the browser fetches files straight from MinIO, so add",
     "this line to /etc/hosts (needs sudo):",
     "    127.0.0.1  minio",
-    "  That entry points at THIS machine, so the browser has to be on it. From",
-    "  another machine, re-create with:  --bind 0.0.0.0 --set s3_host=<this host>",
+    "  That entry works only for a browser on the machine running houston. From",
+    "  another computer, re-create with:  --bind 0.0.0.0 --set s3_host=<this host>",
     "Remove the line to reproduce the classic 'presigned URL unreachable'",
     "ticket symptom (uploads work, previews/downloads break)."
    ],
@@ -1934,7 +1939,7 @@
   },
   "s3_minio@8346d99e": {
    "name": "s3_minio",
-   "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'houston-uploads', console :9001). Default proxies downloads through RC; --set presigned=true for real presigned URLs.",
+   "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'houston-uploads', console :9001). Default proxies downloads through RC; turn on Presigned URLs (--set presigned=true) for real ones.",
    "env": {
     "OVERWRITE_SETTING_FileUpload_Storage_Type": "AmazonS3",
     "OVERWRITE_SETTING_FileUpload_S3_Bucket": "houston-uploads",
@@ -1992,7 +1997,7 @@
    "params_help": {
     "presigned": "browser fetches presigned MinIO URLs (default false; needs /etc/hosts line)",
     "bucket": "bucket name (default houston-uploads)",
-    "s3_host": "hostname the BROWSER reaches MinIO on in presigned mode (default 'minio', which needs a hosts entry and only works on this machine)"
+    "s3_host": "hostname the BROWSER reaches MinIO on in presigned mode (default 'minio', which needs a hosts entry and only works for a browser on the machine running houston)"
    },
    "post_ready": [],
    "notes": [
@@ -2075,7 +2080,7 @@
    ],
    "params_help": {
     "users": "number of Keycloak test users (default 5)",
-    "idp_host": "hostname YOUR BROWSER reaches Keycloak on (default localhost; set it when the browser is not on this machine)"
+    "idp_host": "hostname YOUR BROWSER reaches Keycloak on (default localhost: a browser on the machine running houston only; from another computer create the workspace with HTTPS on a domain instead, and Keycloak is at <workspace URL>/keycloak)"
    },
    "post_ready": [
     {
@@ -2092,8 +2097,8 @@
    "notes": [
     "SAML sends your BROWSER to http://localhost:8081 — that address has",
     "  to resolve and be reachable from wherever the browser is running.",
-    "  It is 'localhost', so the browser must be on THIS machine. From another",
-    "  machine, re-create with:  --bind 0.0.0.0 --set idp_host=<this host>",
+    "  It is 'localhost', so the browser must be on the machine running houston.",
+    "From another computer, create the workspace with HTTPS on a domain: Keycloak is then at <workspace URL>/keycloak, with no hosts entry. Or re-create with --bind 0.0.0.0 --set idp_host=<server address>, which opens Rocket.Chat and Keycloak, fixed logins and all, to anyone who can reach their ports.",
     "  (Keycloak refuses a request that arrives on any other name.)",
     "Keycloak admin console: http://localhost:8081  (admin / admin)",
     "  Your SAML users live in the 'houston' realm, NOT 'master' (the",
@@ -2168,7 +2173,7 @@
    ],
    "params_help": {
     "users": "number of Keycloak test users (default 5)",
-    "idp_host": "hostname YOUR BROWSER reaches Keycloak on (default localhost; set it when the browser is not on this machine)"
+    "idp_host": "hostname YOUR BROWSER reaches Keycloak on (default localhost: a browser on the machine running houston only; from another computer create the workspace with HTTPS on a domain instead, and Keycloak is at <workspace URL>/keycloak)"
    },
    "post_ready": [
     {
@@ -2185,8 +2190,8 @@
    "notes": [
     "SAML sends your BROWSER to http://localhost:8081 — that address has",
     "  to resolve and be reachable from wherever the browser is running.",
-    "  It is 'localhost', so the browser must be on THIS machine. From another",
-    "  machine, re-create with:  --bind 0.0.0.0 --set idp_host=<this host>",
+    "  It is 'localhost', so the browser must be on the machine running houston.",
+    "From another computer, create the workspace with HTTPS on a domain: Keycloak is then at <workspace URL>/keycloak, with no hosts entry. Or re-create with --bind 0.0.0.0 --set idp_host=<server address>, which opens Rocket.Chat and Keycloak, fixed logins and all, to anyone who can reach their ports.",
     "  (Keycloak refuses a request that arrives on any other name.)",
     "Keycloak admin console: http://localhost:8081  (admin / admin)",
     "  Your SAML users live in the 'houston' realm, NOT 'master' (the",

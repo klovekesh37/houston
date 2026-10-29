@@ -165,6 +165,13 @@ export function systemdUnit(
  * le", so the name 404'd while looking perfectly configured from the outside. The first
  * workspace that needs Let's Encrypt therefore teaches the edge how to ask.
  */
+/** Whether the edge asks Let's Encrypt with a challenge `acme.challenge` no longer names. */
+export function challengeStale(): boolean {
+  const now = edgeSpec.current();
+  if (now === null || !hasAcme()) return false;
+  return resolveEdge(now.domain, now.acmeEmail).acmeChallenge !== now.acmeChallenge;
+}
+
 async function prepareEdge(acmeEmail: string, acmeStaging: boolean): Promise<void> {
   // Repair a GUI route left by an older houston. That version wrote one even with no
   // domain, producing ``Host(``)`` -- which Traefik rejects at every reload with "empty
@@ -184,6 +191,25 @@ async function prepareEdge(acmeEmail: string, acmeStaging: boolean): Promise<voi
     // Upgrade in place: keep whatever domain `serve` gave it, add the resolver.
     await edgeSpec.write(resolveEdge(edgeSpec.servedDomain(), acmeEmail, { acmeStaging }));
     await down(); // so the new flags are actually applied
+  } else if (wantAcme && challengeStale()) {
+    // A CHANGED `acme.challenge` reached the container only through `edge restart`: `up
+    // --domain` rebuilt the edge from the spec it was made with, so behind a tunnel (where
+    // only http-01 can validate) the next certificate failed on TLS-ALPN again, measured.
+    // Re-resolved as `edge start` does; staging as this request asks (config included), as
+    // the two branches above build it.
+    const now = edgeSpec.current();
+    if (now !== null) {
+      await edgeSpec.write(
+        resolveEdge(now.domain, now.acmeEmail, {
+          acmeStaging,
+          guiHost: now.guiHost,
+          guiPort: now.guiPort,
+          httpPort: now.httpPort,
+          httpsPort: now.httpsPort,
+        }),
+      );
+      await down();
+    }
   }
   // A container of ours that is UP but holds no ports cannot be repaired by the `compose
   // up -d` below: its resolved configuration has not changed, so compose leaves it exactly

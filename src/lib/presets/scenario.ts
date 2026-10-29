@@ -68,7 +68,7 @@ export class Scenario<Intent = unknown> {
     if (adapter === undefined) {
       const supported = Object.keys(this.adapters).sort().join(', ') || 'none';
       throw new Error(
-        `scenario '${this.name}' does not support deployment type ` +
+        `preset '${this.name}' does not support deployment type ` +
           `'${deploymentType}'; supported: ${supported}`,
       );
     }

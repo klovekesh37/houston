@@ -165,7 +165,7 @@ describe("the backup and restore lines, against earlier releases'", () => {
   });
   // [the argv, what the service returned]
   const CASES: [string[], Bag][] = [
-    // Every backup's hint, two spaces after `restore it:`.
+    // Every backup's hint, two spaces after `roll back to it:`.
     [['backup', '--name', 'alpha', '--out', 'b.rcbak'], made('b.rcbak', [])],
     // A preset with named volumes, warned without a `⚠`.
     [
@@ -209,7 +209,9 @@ describe("the backup and restore lines, against earlier releases'", () => {
     // All at once, so a failure shows every case that differs rather than the first.
     expect(ours).toEqual(recorded);
     // What an earlier version printed differently, named so a failure says which line regressed.
-    expect(recorded[0]?.stdout).toContain('\n  restore it:  houston restore b.rcbak\n');
+    expect(recorded[0]?.stdout).toContain(
+      "\n  roll back to it:  houston restore b.rcbak   (replaces alpha's data; add --new",
+    );
     expect(recorded[1]?.stdout).toContain('\n  sidecar data is NOT included: grafana_data, ');
     expect(recorded[2]?.stdout).toContain("✓ restored 'alpha' from b.rcbak in 2.5s\n");
     expect(recorded[3]?.stdout).toContain(
@@ -319,7 +321,7 @@ describe("the upgrade command's lines, against earlier releases'", () => {
     // A forced plan keeps its reason, on stdout.
     [TO('8.5.1', '--dry-run', '--force'), plan(ALREADY), ran()],
     // The panel BEFORE a real upgrade, and the way back after it.
-    [TO('8.6.1'), plan({ warnings: ['this repro terminates TLS'] }), ran()],
+    [TO('8.6.1'), plan({ warnings: ['this workspace terminates TLS'] }), ran()],
     // The version Rocket.Chat answers with disagrees, and no backup was taken.
     [TO('8.6.1', '--no-backup'), plan(), ran({ running_version: '8.5.1', backup: '' })],
     // Migration errors under the header that counts them.

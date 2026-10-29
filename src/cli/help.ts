@@ -6,7 +6,8 @@ import { reportsDir } from '../lib/config';
 import { COMMAND_SPECS } from './spec-data';
 import type { ArgumentSpec, CommandSpec, OptionSpec } from './spec-types';
 
-const ROOT_DESCRIPTION = 'Launch version-matched Rocket.Chat reproduction environments.';
+const ROOT_DESCRIPTION =
+  'Launch throwaway, version-matched Rocket.Chat workspaces to reproduce an issue.';
 const SKILL_DESCRIPTION = 'Install the agent skill that teaches a caller to drive houston.';
 const WIDTH = 96;
 

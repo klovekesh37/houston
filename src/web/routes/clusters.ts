@@ -93,8 +93,10 @@ export function register(app: FastifyInstance): void {
     } catch {
       throw new ValidationError('`nodes` wants a whole number');
     }
-    if (nodes < 1 || nodes > 100) throw new ValidationError('`nodes` wants a number from 1 to 100');
     const eks = eksModule();
+    if (nodes < 1 || nodes > eks.MAX_NODES) {
+      throw new ValidationError(`\`nodes\` wants a number from 1 to ${String(eks.MAX_NODES)}`);
+    }
     const cost = clusterModule().estimateUsdHr(
       'eks',
       { [eks.NODE_INSTANCE_TYPE]: nodes },
@@ -231,9 +233,17 @@ export function register(app: FastifyInstance): void {
     }
     let nodes: number;
     try {
-      nodes = isTruthy(body.nodes) ? toInt(body.nodes) : 0;
+      // Absent takes the default; a typed 0 is refused by `createCluster`, not replaced.
+      nodes =
+        body.nodes === undefined || body.nodes === null || body.nodes === ''
+          ? eks.DEFAULT_NODES
+          : toInt(body.nodes);
     } catch {
       throw new ValidationError('`nodes` wants a whole number');
+    }
+    // Here as well as in `createCluster`: there it failed inside an accepted, audited job.
+    if (nodes < 1 || nodes > eks.MAX_NODES) {
+      throw new ValidationError(`\`nodes\` wants a number from 1 to ${String(eks.MAX_NODES)}`);
     }
     const region = stripText(orText(body.region));
     const subnets = Object.keys(rawSubnets as Record<string, string>).length
@@ -245,7 +255,7 @@ export function register(app: FastifyInstance): void {
       (emit) =>
         eks.createCluster(name, {
           region,
-          nodes: nodes || eks.DEFAULT_NODES,
+          nodes,
           expiresDays,
           zone: stripText(orText(body.zone)),
           ...(subnets === undefined ? {} : { subnets }),

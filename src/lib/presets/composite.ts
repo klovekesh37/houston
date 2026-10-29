@@ -181,22 +181,25 @@ const COMBINED_NOTES: readonly (readonly [readonly string[], readonly string[]])
   [
     ['email', 'ldap'],
     [
-      "LDAP + email: email two-factor is ON, and Rocket.Chat marks LDAP users' emails as",
-      '  verified, so an LDAP login asks for a code: read it in Mailpit.',
+      // `info` wraps a first line at 78 columns and prints a continuation as given.
+      "LDAP + email: email two-factor is ON, and Rocket.Chat marks LDAP users' emails",
+      '  as verified, so an LDAP login asks for a code: read it in Mailpit.',
     ],
   ],
   [
     ['ldap', 'saml'],
     [
-      'LDAP + SAML: two separate user stores. Directory users are user1..N; Keycloak users',
-      '  are sso-user1..N (sso-userN@example.com), so SAML never merges into an LDAP account.',
+      'LDAP + SAML: two separate user stores. Directory users are user1..N; Keycloak',
+      '  users are sso-user1..N (sso-userN@example.com), so SAML never merges into',
+      '  an LDAP account.',
     ],
   ],
   [
     ['ldap', 'oidc'],
     [
-      'LDAP + OIDC: two separate user stores. Directory users are user1..N; Keycloak users',
-      '  are sso-user1..N (sso-userN@example.com), so OIDC never collides with an LDAP account.',
+      'LDAP + OIDC: two separate user stores. Directory users are user1..N; Keycloak',
+      '  users are sso-user1..N (sso-userN@example.com), so OIDC never collides with',
+      '  an LDAP account.',
     ],
   ],
 ];

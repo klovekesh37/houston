@@ -166,6 +166,16 @@ function isLoopbackHost(h) {
 function remoteHost() {
   return isLoopbackHost(location.hostname) ? "" : location.hostname;
 }
+// A link that, read from another computer, opens on THAT computer rather than the server.
+// *.localhost is loopback in every browser (a local-certificate workspace's name).
+function remoteLoopback(url) {
+  if (!remoteHost()) return false;
+  let h = "";
+  try { h = new URL(url).hostname; } catch (_) { return false; }
+  return isLoopbackHost(h) || h.endsWith(".localhost");
+}
+const LOOPBACK_TITLE = "Opens localhost on YOUR computer; only a browser on this server can open it. "
+  + "A workspace created with HTTPS gets a public address.";
 // A workspace bound to one of these is reachable from another machine; bound to
 // anything else it answers only on the box that runs it. "" means the workspace
 // predates the metadata key, so nothing is claimed either way.
@@ -537,6 +547,8 @@ Object.defineProperties(ctx, {
   "LOOPBACK_HOSTS": { enumerable: true, get: () => LOOPBACK_HOSTS },
   "isLoopbackHost": { enumerable: true, get: () => isLoopbackHost },
   "remoteHost": { enumerable: true, get: () => remoteHost },
+  "remoteLoopback": { enumerable: true, get: () => remoteLoopback },
+  "LOOPBACK_TITLE": { enumerable: true, get: () => LOOPBACK_TITLE },
   "WIDE_BINDS": { enumerable: true, get: () => WIDE_BINDS },
   "ALL_REPROS": { enumerable: true, get: () => ALL_REPROS, set: value => { ALL_REPROS = value; } },
   "SELECTED": { enumerable: true, get: () => SELECTED, set: value => { SELECTED = value; } },
@@ -558,4 +570,4 @@ Object.defineProperties(ctx, {
   "refreshKube": { enumerable: true, get: () => refreshKube },
   "paintEngines": { enumerable: true, get: () => paintEngines },
 });
-export { $, el, toast, ACCOUNTS, MY_ROLE, canWrite, canAdmin, canChange, ownerOf, READONLY_WHY, SIGNING_OUT, toSignIn, api, apiForm, LOOPBACK_HOSTS, isLoopbackHost, remoteHost, WIDE_BINDS, ALL_REPROS, SELECTED, VIEW, setView, goHome, view, stateClass, HEALTH_TONE, healthClass, ME, jobActive, dstate, RESTARTS_SEEN, restartsClimbing, loadRepros, KUBE, refreshKube, paintEngines };
+export { $, el, toast, ACCOUNTS, MY_ROLE, canWrite, canAdmin, canChange, ownerOf, READONLY_WHY, SIGNING_OUT, toSignIn, api, apiForm, LOOPBACK_HOSTS, isLoopbackHost, remoteHost, remoteLoopback, LOOPBACK_TITLE, WIDE_BINDS, ALL_REPROS, SELECTED, VIEW, setView, goHome, view, stateClass, HEALTH_TONE, healthClass, ME, jobActive, dstate, RESTARTS_SEEN, restartsClimbing, loadRepros, KUBE, refreshKube, paintEngines };

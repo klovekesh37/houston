@@ -267,7 +267,7 @@
    },
    "ldap": {
     "name": "ldap",
-    "description": "OpenLDAP (osixia) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
+    "description": "OpenLDAP (v2.6.x) seeded with 5 user(s) + group 'rc-users'; RC wired for LDAP login. Log in as user1 / user1.",
     "env": {
      "OVERWRITE_SETTING_LDAP_Enable": "true",
      "OVERWRITE_SETTING_LDAP_Server_Type": "",
@@ -286,10 +286,7 @@
     },
     "services": {
      "openldap": {
-      "image": "osixia/openldap:1.5.0",
-      "command": [
-       "--copy-service"
-      ],
+      "image": "ghcr.io/intechcore/openldap:2.6.16-1@sha256:04a95ae6131d8f21ee15b025c2dc7318c2922c9249fa469c7a780cceddba06f1",
       "environment": {
        "LDAP_ORGANISATION": "Houston",
        "LDAP_DOMAIN": "example.com",
@@ -297,18 +294,23 @@
        "LDAP_ADMIN_PASSWORD": "admin"
       },
       "volumes": [
-       "./ldap/50-rc-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-rc-users.ldif:ro"
+       "./ldap/50-rc-users.ldif:/bootstrap/50-rc-users.ldif:ro"
       ],
       "restart": "unless-stopped"
      },
      "phpldapadmin": {
-      "image": "osixia/phpldapadmin:0.9.0",
+      "image": "phpldapadmin/phpldapadmin:2.3.12",
       "environment": {
-       "PHPLDAPADMIN_LDAP_HOSTS": "openldap",
-       "PHPLDAPADMIN_HTTPS": "false"
+       "LDAP_HOST": "openldap",
+       "LDAP_BASE_DN": "dc=example,dc=com",
+       "LDAP_USERNAME": "cn=admin,dc=example,dc=com",
+       "LDAP_PASSWORD": "admin",
+       "LDAP_LOGIN_ATTR": "dn",
+       "LDAP_LOGIN_ATTR_DESC": "Login DN",
+       "LDAP_LOGIN_OBJECTCLASS": "organizationalRole"
       },
       "ports": [
-       "8082:80"
+       "8082:8080"
       ],
       "depends_on": [
        "openldap"
@@ -404,7 +406,7 @@
     ],
     "notes": [
      "Customer website (widget embedded, cross-origin): http://localhost:8090",
-     "Built-in standalone widget (same-origin): <repro-url>/livechat",
+     "Built-in standalone widget (same-origin): <workspace-url>/livechat",
      "admin is an available Omnichannel agent, assigned to the 'support'",
      "  department. Visitors see 'agents online' once you're logged into RC",
      "  (that gives you presence); answer chats in RC's Omnichannel area.",
@@ -589,7 +591,7 @@
    },
    "s3_minio": {
     "name": "s3_minio",
-    "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'houston-uploads', console :9001). Default proxies downloads through RC; --set presigned=true for real presigned URLs.",
+    "description": "MinIO S3-compatible storage wired as RC's file upload backend (bucket 'houston-uploads', console :9001). Default proxies downloads through RC; turn on Presigned URLs (--set presigned=true) for real ones.",
     "env": {
      "OVERWRITE_SETTING_FileUpload_Storage_Type": "AmazonS3",
      "OVERWRITE_SETTING_FileUpload_S3_Bucket": "houston-uploads",
@@ -1069,8 +1071,8 @@
      "preset": "ldap"
     },
     "rc": "rocketchat",
-    "text_sha256": "7b7a9743f9ac002dc39b6e0de35c1ef790d292e2edff47d86fb84c9c1dc4f4dc",
-    "rewritten_sha256": "894e8ea60fac17b98c16753dc434a8c8e4ed0b2ddee0404ff2c7eee13f9e10c7"
+    "text_sha256": "3f34672cbef172acb2b181e2e2d54b8ab7ccc1ce256b605b8239bfd8934c1a7f",
+    "rewritten_sha256": "090774ba93b46106b4aa54b050401aaec8e8c1b029aba1b74ab3b6ff2f546697"
    },
    {
     "spec": {
@@ -1092,8 +1094,8 @@
      "preset": "ldap"
     },
     "rc": "rocketchat",
-    "text_sha256": "b46d81e0153669e931e13f21be808b7f25749cf854806939aee43fa964d73591",
-    "rewritten_sha256": "1c5317e602337ba9d81c023163b8dfd4da9f520214344bb01d6f74873cc7431b"
+    "text_sha256": "1bd6a971e95a587a20bed524491fa3f3d736e4512f620c6df41a21f0040d6435",
+    "rewritten_sha256": "46b4254145d74662ec5dc5fa445eecb494217c3c8a89f79c66cda14e6871e97c"
    },
    {
     "spec": {
@@ -1115,8 +1117,8 @@
      "preset": "ldap"
     },
     "rc": "rocketchat",
-    "text_sha256": "b731f91e3ebff0cc0bd1e47874aa0568eb709337e09c21283d35cfece8283e07",
-    "rewritten_sha256": "dbb3789631ce59dca9b934c9b8347a67cc1275d6fbfc2354f86ce653e1524c3a"
+    "text_sha256": "88cadc1b10a39a4cfdf57ca4ca8a9795300d8eed8a4af7a17cf20fd9d2a6490d",
+    "rewritten_sha256": "e875a8f3dcbedd3097929115f4775224802a4f1b4a6391726dbca846b1c96a21"
    },
    {
     "spec": {
@@ -1138,8 +1140,8 @@
      "preset": "ldap"
     },
     "rc": "rocketchat",
-    "text_sha256": "f607a9c8783a4f290588a3b1adb19a99df03abdac59f0782bf48cb2cae2728c6",
-    "rewritten_sha256": "35ea0d2c76e1d33b617c11ad4218d0b80e488740d0e4de720391f929a14cfcf2"
+    "text_sha256": "fbb05848ddf0fbc35400f6b44d77458d4e9c51f88f69e77190669b7e5b4a2d80",
+    "rewritten_sha256": "32431b8bb6dcd8409f10a3b1b41ab7e2c9f1e2a54d6eede70eafe1cf96aa9833"
    },
    {
     "spec": {

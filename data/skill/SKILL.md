@@ -185,7 +185,7 @@ From `houston info --name <n> --json`:
 Every `--json` reply is one envelope:
 
 ```json
-{"schema":"houston.info.v1","contract":2,"houston_version":"2.1.5",
+{"schema":"houston.info.v1","contract":2,"houston_version":"2.1.6",
  "generated_at":"...","ok":true,"data":{...},"warnings":[],"error":null}
 ```
 

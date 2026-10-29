@@ -23,13 +23,13 @@ async function refreshEdgeBadge() {
   const n = (EDGE.routes || []).length;
   badge.hidden = false;
   if (!EDGE.running) {
-    badge.textContent = `edge: stopped`;
+    badge.textContent = `HTTPS: stopped`;
     badge.className = "chip down";
   } else if (broken) {
-    badge.textContent = `edge: ${broken} unreachable`;
+    badge.textContent = `HTTPS: ${broken} unreachable`;
     badge.className = "chip down";
   } else {
-    badge.textContent = `edge: ${n} name${n === 1 ? "" : "s"}`;
+    badge.textContent = `HTTPS: ${n} name${n === 1 ? "" : "s"}`;
     badge.className = "chip up";
   }
 }
@@ -39,11 +39,11 @@ function openEdge() {
   body.innerHTML = "";
   if (!EDGE || !EDGE.installed) {
     body.append(ctx.el("p", { class: "kv" },
-      "No edge yet — it starts with the first --https or --domain workspace."));
+      "No HTTPS yet — it starts with the first workspace created with HTTPS."));
   } else {
     body.append(ctx.el("div", { class: "kv" },
       EDGE.running ? "Running — holds :80 and :443 for every https name"
-                   : "STOPPED — every https name on this box is unreachable"));
+                   : "STOPPED — every https name on this server is unreachable"));
     if (EDGE.domain) body.append(ctx.el("div", { class: "kv" }, `GUI name: ${EDGE.domain}`));
     if (!(EDGE.routes || []).length) {
       body.append(ctx.el("p", { class: "kv" }, "No names registered yet."));
@@ -61,7 +61,8 @@ function openEdge() {
     // network to join, so advising it would send someone to restart a healthy edge.
     if ((EDGE.routes || []).some((r) => !r.reachable && !r.passthrough)) {
       body.append(ctx.el("p", { class: "banner warn" },
-        "Run `houston edge restart` to re-attach them."));
+        "An admin with a shell on the server re-attaches them with `houston edge restart`; "
+        + "there is no button for it here."));
     }
     // Certificates nothing points at. `down --volumes` removes a workspace's ROUTE
     // and walks past the certificate, which is keyed by hostname -- so a Let's
@@ -75,7 +76,7 @@ function openEdge() {
         `${stale.length} certificate${many ? "s" : ""} held with no route — `
         + (many ? "each is a certificate and private key"
                 : "a certificate and private key")
-        + " on this box for a name nothing serves."));
+        + " on this server for a name nothing serves."));
       for (const host of stale) {
         const row = ctx.el("div", { class: "dcheck warn" },
           ctx.el("span", { class: "dmark" }, "!"),
@@ -137,7 +138,8 @@ function render() {
   const pill = ctx.$("#running-pill");
   pill.textContent = unknown ? "state unknown" : `${running} running`;
   pill.className = "pill " + (unknown ? "unknown" : "running");
-  ctx.$("#sb-count").textContent = `${ctx.ALL_REPROS.length} repro(s) · ` +
+  const n = ctx.ALL_REPROS.length;
+  ctx.$("#sb-count").textContent = `${n} workspace${n === 1 ? "" : "s"} · ` +
     (unknown ? "state unknown" : `${running} running`);
   ctx.$("#sb-refreshed").textContent = (!ctx.SERVER_ONLINE ? "Server unavailable · " : "")
     + (ctx.LAST_REPROS_AT ? "Last refreshed: " + new Date(ctx.LAST_REPROS_AT).toLocaleTimeString() : "Not read yet");
@@ -304,21 +306,26 @@ const PENDING = new Map();
 const BUSY_VERB = {
   Stop: "Stopping", Start: "Starting", Restart: "Restarting", Down: "Removing",
   "Make default": "Setting default", "API token": "Minting",
-  "Check TLS": "Checking", Env: "Applying",
+  "Check the certificate": "Checking", Env: "Applying",
 };
 const pendingOn = (name) => PENDING.get(name) || "";
 
 // A workspace job still running when this page loaded. PENDING lives in the page, so after
 // a reload during a create the rail said `down` beside a create in progress. Read once at
 // load; each one is shown as working until its job ends.
-const JOB_VERB = { create: "Creating", up: "Starting", teardown: "Removing",
+// A take down and a delete are one job kind, and Stop, Start and Restart another: the job's
+// `verb` says which. A job from a server without it keeps the combined word (a state job: none).
+const JOB_VERB = { create: "Creating", up: "Bringing up", teardown: "Taking down or deleting",
   restore: "Restoring", upgrade: "Upgrading", rollback: "Rolling back" };
+const VERB_ING = { delete: "Deleting", "take down": "Taking down", stop: "Stopping",
+  start: "Starting", restart: "Restarting" };
+const jobVerb = (j) => VERB_ING[j.verb] || JOB_VERB[j.kind];
 async function adoptRunningJobs() {
   let jobs;
   try { jobs = (await ctx.api("/api/jobs")).jobs || []; } catch (_) { return; }
-  const adopted = jobs.filter((j) => ctx.jobActive(j.status) && JOB_VERB[j.kind] && j.label
+  const adopted = jobs.filter((j) => ctx.jobActive(j.status) && jobVerb(j) && j.label
     && !PENDING.has(j.label));
-  for (const j of adopted) PENDING.set(j.label, JOB_VERB[j.kind]);
+  for (const j of adopted) PENDING.set(j.label, jobVerb(j));
   if (adopted.length) render();
   await Promise.all(adopted.map(async (j) => {
     for (;;) {
@@ -327,7 +334,7 @@ async function adoptRunningJobs() {
       try { state = await ctx.api(`/api/jobs/${j.id}`); } catch (_) { break; }
       if (!ctx.jobActive(state.status)) break;
     }
-    if (PENDING.get(j.label) === JOB_VERB[j.kind]) PENDING.delete(j.label);
+    if (PENDING.get(j.label) === jobVerb(j)) PENDING.delete(j.label);
     await ctx.loadRepros();
     if (ctx.SELECTED === j.label) await ctx.refreshDetail({ force: true });
   }));
@@ -498,7 +505,7 @@ function renderActionPane(d, busyLabel) {
   }
   if (kube) {
     pane.append(ctx.el("p", { class: "apnote" },
-      "Load testing and the capacity search are Compose-only: a Kubernetes "
+      "Load testing and the capacity search are Docker-only: a Kubernetes "
       + "workspace is reached through a port-forward, which would be what the "
       + "numbers measured."));
   }

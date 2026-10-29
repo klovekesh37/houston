@@ -6,6 +6,7 @@
  * in this tier that opens a socket.
  */
 import * as net from 'node:net';
+import * as os from 'node:os';
 
 import { ConflictError } from '../../lib/errors';
 import { info, nullEmit, type Emit } from '../../lib/events';
@@ -290,7 +291,7 @@ export async function ingressEndpoint(
       port,
       source: 'loadbalancer',
       service: only.where,
-      local: await isLocalAddress(only.addr),
+      local: await isHere(context, only.addr),
     };
   }
   if (only.nodePort !== null) {
@@ -301,11 +302,58 @@ export async function ingressEndpoint(
         port: only.nodePort,
         source: 'nodeport',
         service: only.where,
-        local: await isLocalAddress(node),
+        local: await isHere(context, node),
       };
     }
   }
   return null;
+}
+
+/**
+ * Whether an ingress address is on THIS machine: one of its own (the bind test), or, for a
+ * kind cluster, its node container on one of this machine's Docker bridges. A kind node's
+ * address is carried by no host interface, so the bind test alone called it a remote load
+ * balancer, and a `--domain` name's http-01 challenge was sent straight to a private Docker
+ * address no ACME server can reach (measured on a real domain: the order sat pending on
+ * "wrong status code '404'" and the name kept the ingress's placeholder certificate).
+ */
+async function isHere(context: string, addr: string): Promise<boolean> {
+  if (await isLocalAddress(addr)) return true;
+  return kindNodeContainer(context) !== '' && onThisDockerBridge(addr);
+}
+
+/** An IPv4 address as an unsigned 32-bit number, or null. */
+function ipv4(text: string): number | null {
+  const parts = text.split('.');
+  if (parts.length !== 4) return null;
+  let value = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/u.test(part) || Number(part) > 255) return null;
+    value = value * 256 + Number(part);
+  }
+  return value;
+}
+
+/**
+ * Whether `addr` is inside the subnet of one of this machine's Docker bridges (docker0, br-*).
+ * From the OS's interface list, not from `docker`: this module does not own that seam.
+ */
+function onThisDockerBridge(addr: string): boolean {
+  const want = ipv4(addr);
+  if (want === null) return false;
+  for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+    if (name !== 'docker0' && !name.startsWith('br-')) continue;
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.cidr === null) continue;
+      const [base = '', bits = ''] = entry.cidr.split('/');
+      const net4 = ipv4(base);
+      const length = Number(bits);
+      if (net4 === null || !Number.isInteger(length) || length < 1 || length > 32) continue;
+      const size = 2 ** (32 - length);
+      if (Math.floor(want / size) === Math.floor(net4 / size)) return true;
+    }
+  }
+  return false;
 }
 
 /**

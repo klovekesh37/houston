@@ -70,7 +70,7 @@ window.addEventListener("pageshow", (event) => {
 // so the entry point is simply not rendered rather than rendered-and-refused.
 const ROLE_HELP = {
   admin: "everything, including managing people",
-  member: "full workspace lifecycle — today's behaviour",
+  member: "create workspaces and change their own; see everyone's",
   readonly: "look only. No logs, env or tokens: those carry real secrets",
 };
 
@@ -163,7 +163,7 @@ async function resetPassword(name) {
 }
 
 async function removePerson(name) {
-  if (!confirm(`Remove ${name}?\n\nThey are signed out immediately and can no longer sign in.\nTheir workspaces are left alone.`)) return;
+  if (!confirm(`Remove ${name}?\n\nThey are signed out immediately and can no longer sign in.\nTheir workspaces stay, but only an admin can change or hand them over now.`)) return;
   try {
     await ctx.api(`/api/users/${encodeURIComponent(name)}`, { method: "DELETE" });
     ctx.toast(`${name} removed`, "ok"); openPeople();

@@ -117,7 +117,7 @@ export async function runScaleLocked(
   warn(
     emit,
     'bulk Mongo prefill: users are credential-less and messages fire no ' +
-      'app hooks - for scale/perf repros, not feature testing.',
+      'app hooks - for scale and performance tests, not feature testing.',
     { phase: 'seed' },
   );
   const result: Bag = {};
@@ -265,7 +265,7 @@ export async function importApplyLocked(
   try {
     auth = await login(m);
   } catch (exc) {
-    throw new NotReadyError(`can't import - repro not ready: ${errorText(exc)}`);
+    throw new NotReadyError(`can't import - workspace not ready: ${errorText(exc)}`);
   }
   const res = await apply(m.rootUrl, auth, plan, {
     workspace: m.name,

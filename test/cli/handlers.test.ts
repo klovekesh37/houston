@@ -568,12 +568,46 @@ describe('use', () => {
     expect(loadConfig().default_repro).toBe('ticket-1234');
     const missing = await run(['use', 'nope']);
     expect(missing.code).toBe(4);
-    expect(missing.out).toContain("no repro named 'nope'");
+    expect(missing.out).toContain("no workspace named 'nope'");
     expect(loadConfig().default_repro).toBe('ticket-1234');
   });
 });
 
 describe('prune', () => {
+  test('says what goes for good, and that stopped workspaces are left alone', async () => {
+    // "These down repros will be deleted" did not say that `down` is not `stop`, nor that the
+    // data `down` kept goes too; and "PersistentVolumeClaims" did not say it is their data.
+    jest.resetModules();
+    jest.doMock('../../src/core/lifecycle/pruning', () => ({
+      ...jest.requireActual<object>('../../src/core/lifecycle/pruning'),
+      prunable: async () => ['bob-t1'],
+      orphanNamespaces: async () => ['houston-orphan'],
+      prune: jest.fn(),
+    }));
+    try {
+      const fresh = require('../../src/cli/app') as typeof AppNS;
+      const { createExecutor: fresher } = require('../../src/cli/handlers') as typeof HandlersNS;
+      let out = '';
+      const io: CliIo = {
+        writeOut: (value) => (out += value),
+        writeErr: () => undefined,
+      };
+      const code = await fresh.runCli(['prune', '--orphans'], {
+        execute: fresher(io, { confirm: async () => false }),
+        io,
+      });
+      expect(code).toBe(1);
+      expect(out).toContain(
+        'These workspaces were taken down with `houston down`; their containers, kept data ' +
+          'and records will be deleted for good (stopped ones are not touched):\n  - bob-t1\n',
+      );
+      expect(out).toContain('— their data (PersistentVolumeClaims) goes too:');
+    } finally {
+      jest.dontMock('../../src/core/lifecycle/pruning');
+      jest.resetModules();
+    }
+  });
+
   test('says which namespaces it destroyed, rather than "Nothing to prune"', async () => {
     // `prune --orphans` deleted namespaces and their PersistentVolumeClaims and printed
     // "Nothing to prune.": the CLI rendered `removed` alone, so a sweep that removed no local

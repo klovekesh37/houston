@@ -377,6 +377,19 @@ describe('the links a workspace publishes', () => {
       );
     },
   );
+  it('names the address a person opens, the one `--root-url` advertised included', async () => {
+    // Every "Open" took `public_url || root_url`, and with `--root-url` (a tunnel, a proxy)
+    // that is http://localhost -- measured on testin6.kestron.org, served there all along.
+    const answers = { default: '', dockerUp: false, states: {}, statusMap: {}, svcMap: {} };
+    const at = (values: Partial<Metadata>) =>
+      metadata({ name: 'w', rootUrl: 'http://localhost:3014', hostPort: 3014, ...values });
+    const tunnelled = at({ extra: { advertised_url: 'https://w.example.test' } });
+    expect((await summary(tunnelled)).open_url).toBe('https://w.example.test');
+    expect((await rowFor(tunnelled, answers)).open_url).toBe('https://w.example.test');
+    const https = at({ publicUrl: 'https://h.example.test' });
+    expect((await rowFor(https, answers)).open_url).toBe('https://h.example.test');
+    expect((await summary(at({}))).open_url).toBe('http://localhost:3014');
+  });
   it('never lends a Kubernetes row the uptime of Docker containers left under its name', async () => {
     // 2.1.1's takeover left a Docker workspace's containers running under the Kubernetes
     // record that replaced it, and `list` showed their uptime and health as the namespace's.
@@ -800,8 +813,9 @@ describe('what the record alone says', () => {
     expect(Object.fromEntries(groups[0]?.rows ?? [])).toEqual({
       Cluster: 'kind-houston-local',
       Namespace: 'houston-old',
-      Arrangement: 'microservices',
-      Pods: '9 for Rocket.Chat and MongoDB',
+      Shape: 'microservices',
+      // Counted from the cluster, which a unit test has none of.
+      Pods: 'not counted: the cluster did not answer',
       License: expect.stringContaining('microservices are an Enterprise feature') as unknown,
     });
     // And the flat list the CLI prints is the derived one, not the sentence above.
@@ -827,13 +841,17 @@ describe('what the record alone says', () => {
       return Object.fromEntries(groups[0]?.rows ?? []) as Record<string, string>;
     };
     expect((await rows({ deployment: 'microservices' })).License).toBe(
-      'microservices are an Enterprise feature: without a license, Rocket.Chat replicas after ' +
-        'the first stop ("Enterprise license not found"). Add one with `--license` or in ' +
-        'Rocket.Chat under Workspace > Subscription.',
+      'microservices are an Enterprise feature: without an Enterprise license, every ' +
+        'Rocket.Chat replica after the first stops ("Enterprise license not found"). Add one ' +
+        'with `--license` or in Rocket.Chat under Workspace > Subscription.',
     );
     expect(await rows({ deployment: 'microservices', licensed: true })).not.toHaveProperty(
       'License',
     );
+    // Given and REFUSED (bound to another URL) is no license at all to Rocket.Chat.
+    expect(
+      await rows({ deployment: 'microservices', licensed: true, license_status: 'refused' }),
+    ).toHaveProperty('License');
     expect(await rows({ deployment: 'monolith' })).not.toHaveProperty('License');
   });
 

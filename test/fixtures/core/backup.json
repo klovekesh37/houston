@@ -36,7 +36,7 @@
       "requires_flag": "",
       "warnings": [
         "cannot compare versions 'garbage' and '8.5.1'; proceeding blind",
-        "the dump came from preset 'ldap' but this repro is 'default'; the data may reference services that do not exist here.",
+        "the dump came from preset 'ldap' but this workspace is 'default'; the data may reference services that do not exist here.",
         "sidecar data is NOT in this bundle (minio_data); uploads and IdP state will be missing even though the database references them.",
         "this dump was taken with --live, so it may be inconsistent."
       ],

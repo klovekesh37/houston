@@ -136,23 +136,26 @@ houston does not sign you out of Okta. Run one `serve` per houston home, and bac
 
 ## Finding your way
 
-- **Top bar:** **Home**, **Activity** (running and past jobs), **Clusters**, **Scenarios**
-  (presets), **Backups** (every backup on the machine, including those of deleted
-  workspaces, each of which can be restored as a new workspace), **Refresh** (re-reads the
-  page you are on), the light/dark switch (light is
+- **Top bar:** **Home**, **Activity** (running and past jobs), **Clusters**, **Presets**
+  (what each adds to a plain Rocket.Chat, and how to use it), **Backups** (every backup on
+  this server, including those of deleted workspaces, each of which can be restored as a new
+  workspace), **Refresh** (re-reads the page you are on), the light/dark switch (light is
   the default), and your account menu: **Your sessions**, **Change your houston password**,
   **Sign out**. The **doctor** chip on the left runs the environment check.
 - **Home** shows what needs you, what is running and where, and how much memory is left.
 - **The left rail** lists workspaces. Click one to open it: **Open RC**, **Stop**,
   **Restart**, and tabs for **Overview**, **Logs**, **Containers**, **Env vars** and
-  **Backups**.
+  **Backups**. At its foot, **Delete taken-down workspaces** deletes, with their data, every
+  taken-down workspace you may delete (an admin: everyone's); stopped ones, and ones created
+  with **Keep**, are left alone.
 - **Its right-hand pane** has the rest: **Add sample data**, **Import settings**,
   **Send an API call**, **PAT and Token**, **Back up now**, **Upgrade version**,
   **Roll back to** the earlier version (after an upgrade that kept its backup),
-  **Attach monitoring**, **Run a load test**, **Find capacity** and **Hand over…**. At its
-  foot, apart from Stop: **Take down…** removes the containers and keeps the data (Bring up
-  starts it again), and **Delete workspace…** deletes it with its data and record, once you
-  type its name. Stop only pauses it. All of it, and Stop, Restart, Logs and Env vars, is offered
+  **Attach monitoring**, **Run a load test**, **Find capacity**, **Check the certificate**
+  (an HTTPS workspace) and **Hand over…** (after which only the new owner and admins can
+  change it). At its foot, apart from Stop: **Take down…** removes the containers and keeps
+  the data (Bring up starts it again), and **Delete workspace…** deletes it with its data and
+  record, once you type its name. Stop only pauses it. All of it, and Stop, Restart, Logs and Env vars, is offered
   to the workspace's owner and admins, or to anyone under `gui.destroy_policy anyone`; a
   member opening someone else's workspace sees its details and who to ask.
 
@@ -160,14 +163,21 @@ houston does not sign you out of Okta. Run one `serve` per houston home, and bac
 
 **+ New workspace** opens two steps:
 
-1. **Where should it run?** **On this machine** (free): Docker, and any Kubernetes running
-   here. **In AWS** (costs money): one card per Amazon EKS cluster, with its cost per day.
+1. **Where should it run?** **On this server** (free): Docker, and any Kubernetes running
+   on it. **In AWS** (costs money): one card per Amazon EKS cluster, with its cost per day.
 2. **Details:** the Rocket.Chat version and an optional name, the preset, sample data and
    monitoring, HTTPS, the shape, and **More options**. `--offline` and `--no-pull` are
-   command-line only.
+   command-line only. **Keep**, under More options, makes **Delete taken-down workspaces**
+   skip it; on Docker it also becomes this server's default for CLI commands.
 
-On an EKS cluster this server built with a DNS zone, HTTPS is Let's Encrypt: leave the
-domain empty for `<name>.<zone>` and give a contact email once. Elsewhere, type a domain.
+**HTTPS** has three choices. **Off** is plain http on a port of this server, which only a
+browser on the server opens unless the workspace binds beyond loopback. **Let's Encrypt** needs
+a domain that reaches the server on port 443: if a wildcard DNS record (`*.example.com`)
+already points at the server, any name under it works with no DNS change; any other name needs
+its own record first. **Local certificate** needs no domain, but only a browser on the server
+itself reaches it (run `houston trust-ca` there once). On an EKS cluster this server built with
+a DNS zone, HTTPS is Let's Encrypt: leave the domain empty for `<name>.<zone>` and give a
+contact email once.
 
 **Create workspace** shows the progress, then the address and the login. You can close
 the dialog; the workspace keeps starting. With accounts, the name you type gets your name
@@ -176,6 +186,14 @@ or any for an admin): then it is that workspace.
 
 For **e2ee**, choose the **Policy** and the switches; the [E2EE guide](e2ee.md) says
 what each sets and how to try it.
+
+### From your own computer
+
+When the GUI runs on a shared server, `localhost` in a workspace's links is *your*
+computer, where nothing runs: those links open only in a browser on the server. Create the
+workspace with HTTPS and its links are public, for example Mailpit at
+`https://<workspace>/mailpit/`. Mailpit shows every email Rocket.Chat sends; it neither
+delivers mail nor receives it.
 
 ## Sample data
 
@@ -191,8 +209,8 @@ is green. See [Sample data](guide.md#sample-data) for counts, recovery and histo
 
 ## Clusters and Amazon EKS
 
-The **Clusters** page has a **This machine** card (Docker and local Kubernetes, with
-**Create here**) and an **Amazon EKS** section: the AWS identity the server uses, then one
+The **Clusters** page has a **This server** card (Docker and any Kubernetes on the server,
+with **Create here**) and an **Amazon EKS** section: the AWS identity the server uses, then one
 card per cluster with its state, cost per day and workspaces. Click a card for the
 cluster's own page: **Create a workspace here**, **Public names (DNS)**, **Prepare again**,
 **Delete cluster…** (admin, only on a cluster houston built, after typing its name).
@@ -239,7 +257,7 @@ protects it. Pick the row for where HTTPS ends:
 |---|---|
 | nowhere: only you, on this machine | `houston serve` |
 | houston handles it, on a name that points here | `houston serve --domain rc.example.com --email you@example.com` |
-| a proxy on this machine | `houston serve --bind 127.0.0.1 --allow-host rc.example.com` |
+| a proxy on this machine | `houston serve --bind 127.0.0.1 --allow-host rc.example.com --trust-proxy 127.0.0.1` |
 | a proxy somewhere else (a lab, Codespaces, ngrok, a load balancer) | `houston serve --bind 0.0.0.0 --allow-host rc.example.com --trust-proxy 10.0.0.1` |
 
 - `--allow-host` is the host people type; any other host gets a 403. Repeat it, or use `*`.

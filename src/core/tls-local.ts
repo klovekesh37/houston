@@ -284,6 +284,6 @@ export function manualTrustInstructions(caCrt: string, uninstall = false): strin
     '  Windows:        certutil -addstore -f Root <path>\n' +
     '  Firefox:        Settings -> Privacy & Security -> Certificates -> ' +
     'View Certificates -> Authorities -> Import\n\n' +
-    '  Or skip it: the browser warning is safe to click through for a local repro.\n'
+    '  Or skip it: the browser warning is safe to click through for a local workspace.\n'
   );
 }

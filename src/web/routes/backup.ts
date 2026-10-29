@@ -170,7 +170,10 @@ export function register(app: FastifyInstance): void {
       // per box, so while another workspace holds them the create is refused -- from a job
       // that has already started. Who holds them is said here, before anything starts.
       const held = await sidecarHolder(String(manifest.preset ?? ''));
-      return { manifest, compatibility: null, held };
+      // And whether THIS viewer may use the bundle at all, so the dialog can say who can
+      // before a click is refused: '' when they may.
+      const refusal = await bundleRefusal(bundle, actor(request));
+      return { manifest, compatibility: null, held, refusal };
     }
     const meta = await readMeta(await resolveName(name));
     return { manifest, compatibility: backupCompatModule().compatibility(manifest, meta) };

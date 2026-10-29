@@ -88,6 +88,7 @@ import { workspace } from './runner/paths';
 import {
   type Metadata,
   adminPass,
+  externalUrl,
   readCompose,
   readMeta,
   rcServices,
@@ -343,7 +344,7 @@ export async function requireMongoTools(name: string): Promise<void> {
   if (rc !== 0) {
     throw new NotReadyError(
       `the mongodb for ${quotedText(name)} has no mongodump/mongorestore, or is ` +
-        'not running. Start the repro (`houston start`) and try again.',
+        'not running. Start the workspace (`houston start`) and try again.',
     );
   }
 }
@@ -365,7 +366,7 @@ export async function warnLowFdLimit(name: string, emit: Emit = nullEmit): Promi
   if (rc === 0 && limit < NOFILE_MIN) {
     warn(
       emit,
-      `this repro's mongodb can open only ${String(limit)} files ` +
+      `this workspace's mongodb can open only ${String(limit)} files ` +
         `(MongoDB asks for ${String(NOFILE_MIN)}). Restoring anyway, one collection ` +
         `at a time. Recreate it with \`houston up --force --name ${name}\` to ` +
         'pick up the raised limit.',
@@ -666,7 +667,7 @@ async function dumpToBundle({
     if (!fs.existsSync(archive) || fs.statSync(archive).size === 0) {
       throw new DockerError(
         `mongodump produced an empty archive for database ${quotedText(database)} - ` +
-          'is this repro seeded, and is MONGO_URL correct?',
+          'is this workspace seeded, and is MONGO_URL correct?',
       );
     }
 
@@ -1803,7 +1804,8 @@ export async function deleteBackup(bundle: string): Promise<Bag> {
 export async function retargetSiteUrl(target: string, emit: Emit = nullEmit): Promise<void> {
   try {
     const meta = await readMeta(target);
-    const want = meta.publicUrl || meta.rootUrl;
+    // externalUrl: a proxied workspace's restore set Site_Url to houston's loopback address.
+    const want = externalUrl(meta);
     if (want === '') return;
     const auth = await login(meta);
     const current = await getSetting(meta.rootUrl, auth, adminPass(meta), 'Site_Url');

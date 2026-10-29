@@ -115,7 +115,7 @@ describe('starting a workspace that was brought down', () => {
 
   it('says what revives it instead of reporting an exit code', async () => {
     // `compose start` cannot revive a repro with no containers -- say what does.
-    await writeRecord('x', metadata({ name: 'x', project: 'houston-x' }));
+    await writeRecord('x', metadata({ name: 'x', project: 'houston-x', rcVersion: '8.5.1' }));
     jest.doMock('../../../src/core/runner/engine', () => ({
       ...jest.requireActual('../../../src/core/runner/engine'),
       start: async () => 1,
@@ -130,7 +130,10 @@ describe('starting a workspace that was brought down', () => {
       (error: unknown) => error,
     );
     expect((refused as Error).constructor.name).toBe(DockerError.name);
-    expect(String((refused as Error).message)).toContain('no containers to start');
+    // With the recorded version: `up` requires one, and a bare `up --name x` was a usage error.
+    expect(String((refused as Error).message)).toContain(
+      'nothing to start; bring it back, data intact: houston up --version 8.5.1 --name x',
+    );
   });
 
   it('does not tell a merely stopped workspace it was brought down', async () => {
@@ -172,7 +175,7 @@ describe('restarting a workspace that is not there to restart', () => {
   it('refuses one that was brought down, as start does, without restarting anything', async () => {
     // `compose restart` restarts the containers there are: after `down`, none -- exit 0,
     // and the CLI said "restarted".
-    await writeRecord('d', metadata({ name: 'd', project: 'houston-d' }));
+    await writeRecord('d', metadata({ name: 'd', project: 'houston-d', rcVersion: '8.6.0' }));
     const restarted: string[] = [];
     jest.doMock('../../../src/core/runner/engine', () => ({
       ...jest.requireActual('../../../src/core/runner/engine'),
@@ -191,7 +194,7 @@ describe('restarting a workspace that is not there to restart', () => {
       (error: unknown) => error,
     );
     expect((refused as Error).constructor.name).toBe(DockerError.name);
-    expect(String((refused as Error).message)).toContain('no containers to start');
+    expect(String((refused as Error).message)).toContain('houston up --version 8.6.0 --name d');
     expect(restarted).toEqual([]);
   });
 

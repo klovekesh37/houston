@@ -61,6 +61,7 @@ import {
   ingressEndpoint,
   kindNodeContainer,
 } from '../kube/endpoints';
+import { dockerAvailable } from '../runner/host';
 import { updateConfig } from '../runner/locks';
 import * as paths from '../runner/paths';
 import { listMeta, readMeta, recorded } from '../runner/record';
@@ -296,21 +297,32 @@ export async function resolveTls(
 ): Promise<TlsSpec | null> {
   // A domain means HTTPS; requiring --https alongside it was ceremony. --https on its own
   // selects the local-CA mode, which needs nothing else.
-  if (!(req.https || req.domain || req.acmeEmail)) {
+  const askedLocal = req.https;
+  if (!(req.https || req.domain)) {
     // ...unless this workspace ALREADY has an https name. `down` then `up` is the
     // documented way to bring a workspace back ("data intact"), and it silently dropped
-    // TLS: the record went on claiming public_url while nothing served it.
+    // TLS: the record went on claiming public_url while nothing served it. With --email
+    // too: skipping the record there turned a --domain workspace into a local-CA one.
     const restored = await tlsFromRecord(exclude || reproName);
-    if (restored === null) return null;
-    [req.https, req.domain] = restored;
-    if (!(req.https || req.domain)) return null;
-    info(
-      emit,
-      'restoring the https name this workspace already had' +
-        (req.domain ? ` (${req.domain})` : ''),
-      { phase: 'tls' },
+    if (restored !== null) {
+      [req.https, req.domain] = restored;
+      info(
+        emit,
+        'restoring the https name this workspace already had' +
+          (req.domain ? ` (${req.domain})` : ''),
+        { phase: 'tls' },
+      );
+    }
+  }
+  // --email is the contact for a domain's certificate, not a mode: alone it silently chose
+  // the local CA, a name no browser on another computer opens.
+  if (req.acmeEmail && !req.domain && !askedLocal) {
+    throw new ValidationError(
+      "--email is the Let's Encrypt contact for --domain; it needs a name. For HTTPS " +
+        'without a domain use --https (a browser on the machine running houston only).',
     );
   }
+  if (!(req.https || req.domain)) return null;
   void bindHost;
 
   // Normalized before anything else reads it: it becomes ROOT_URL, the Host() router rule
@@ -455,8 +467,9 @@ export async function routeKubernetesName(
         warn(
           emit,
           `the edge did not start${because}, so ${ktls.host} will not ` +
-            'answer yet. The workspace itself is unaffected; free the ' +
-            'port and `houston edge start`.',
+            'answer yet. The workspace itself is unaffected; ' +
+            (holder ? 'free the port and ' : 'once that is fixed, ') +
+            '`houston edge start`.',
           { phase: 'tls' },
         );
       }
@@ -775,6 +788,17 @@ export async function kubernetesTlsPlan(
   const remoteIngress = !endpoint.local;
   let owns = await refuseANameThatWillNotReach(claim, emit, endpoint, remoteIngress, spec, tlsspec);
   if (!owns && remoteIngress) owns = true;
+  // THE EDGE IS A DOCKER CONTAINER. Without Docker it could not start, and `ready` then
+  // waited out its whole budget on a name nothing would answer: refuse before MongoDB and
+  // the chart, naming the cause. Only here, once it is known the name needs the edge.
+  if (!owns && !(await dockerAvailable())) {
+    throw new PreflightError(
+      `${asked}: ${tlsspec.host} is served through houston's edge, a Traefik container, ` +
+        'and Docker is not available on this machine. Install or start Docker ' +
+        `(\`houston doctor\` checks it) and run this again, or leave out ${asked} and ` +
+        'reach the workspace on its port-forward.',
+    );
+  }
   return kubeTls({
     host: tlsspec.host,
     ingressClass,

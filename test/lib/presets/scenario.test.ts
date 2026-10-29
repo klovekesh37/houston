@@ -27,7 +27,7 @@ describe('a scenario', () => {
 
   it('says what a scenario DOES support when asked for one it does not', () => {
     expect(() => SPEC.resolve({}, 'nomad')).toThrow(
-      "scenario 'demo' does not support deployment type 'nomad'; supported: docker, kubernetes",
+      "preset 'demo' does not support deployment type 'nomad'; supported: docker, kubernetes",
     );
   });
 
@@ -39,7 +39,7 @@ describe('a scenario', () => {
     // Recorded from an earlier release's Scenario, built with the same params and adapters.
     const recorded = [
       "unknown --set param(s) for preset 'demo': nope, user - valid: domain, users",
-      "scenario 'demo' does not support deployment type 'nomad'; supported: docker, kubernetes",
+      "preset 'demo' does not support deployment type 'nomad'; supported: docker, kubernetes",
     ];
     const said: string[] = [];
     for (const [params, target] of [

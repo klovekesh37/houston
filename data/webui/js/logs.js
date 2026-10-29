@@ -169,7 +169,8 @@ function renderLogs(body, d) {
   // named, because the two have nothing in common as problems.
   const stat = ctx.el("span", { class: "logstat", id: "log-stat" });
   ctl.append(levelSel, svcSel, search, follow, clear, stat);
-  if (d.grafana_url) ctl.append(ctx.el("a", { class: "linkchip monitor", href: d.grafana_url + "/d/houston-logs", target: "_blank" }, "Logs in Grafana (Loki)"));
+  if (d.grafana_url) ctl.append(ctx.el("a", { class: "linkchip monitor", href: d.grafana_url + "/d/houston-logs", target: "_blank",
+    ...(ctx.remoteLoopback(d.grafana_url) ? { title: ctx.LOOPBACK_TITLE } : {}) }, "Logs in Grafana (Loki)"));
   const box = ctx.el("div", { class: "logview", id: "logview" });
   // The way back. Scrolling up detaches you from the stream, so there has to be
   // one press that returns -- and it says how much arrived while you were reading,
@@ -548,7 +549,7 @@ let SEED_TARGET = null;
 async function openSeed(name) {
   await ctx.loadSeedChoices();
   SEED_TARGET = name;
-  ctx.$("#seed-title").textContent = `Seed data: ${name}`;
+  ctx.$("#seed-title").textContent = `Add sample data: ${name}`;
   ctx.$("#seed-form").reset();
   syncSeedMode();
   ctx.$("#seed-dialog").showModal();
@@ -562,8 +563,9 @@ function syncSeedMode() {
   for (const input of ctx.$("#seed-options").querySelectorAll("input")) input.disabled = scale;
   ctx.$("#seed-form").history_days.disabled = scale || !ctx.$("#seed-form").history.checked;
   ctx.$("#seed-hint").textContent = scale
-    ? "Bulk Mongo insert: credential-less users, no app hooks. For scale/perf only."
-    : "Creates real, loginable users/channels/messages via the REST API.";
+    ? "Writes straight into the database: users who cannot sign in, no Rocket.Chat checks. "
+      + "For load and capacity tests only."
+    : "Creates users you can sign in as, with their rooms and messages, through Rocket.Chat itself.";
 }
 async function submitSeed() {
   const f = ctx.$("#seed-form");
@@ -578,7 +580,7 @@ async function submitSeed() {
     let job;
     if (scale) {
       job = await ctx.api(`/api/repros/${SEED_TARGET}/scale`, { method: "POST", body: JSON.stringify({ scale: f.scale.value.trim() }) });
-      ctx.streamJob(job.job_id, `Scale prefill: ${SEED_TARGET}`);
+      ctx.streamJob(job.job_id, `Bulk test data: ${SEED_TARGET}`);
     } else {
       job = await ctx.api(`/api/repros/${SEED_TARGET}/seed`, { method: "POST", body: JSON.stringify({ profile: f.profile.value, ...selection }) });
       // The renderer goes here as well as in JOB_RESULT_RENDERER: the table only
@@ -590,9 +592,9 @@ async function submitSeed() {
   } catch (e) { ctx.toast(e.message); }
 }
 async function clearScale() {
-  if (!confirm(`Remove all --scale data from ${SEED_TARGET}?`)) return;
+  if (!confirm(`Remove all bulk test data from ${SEED_TARGET}?`)) return;
   ctx.$("#seed-dialog").close();
-  try { const { job_id } = await ctx.api(`/api/repros/${SEED_TARGET}/scale`, { method: "DELETE" }); ctx.streamJob(job_id, `Clearing scale data: ${SEED_TARGET}`); }
+  try { const { job_id } = await ctx.api(`/api/repros/${SEED_TARGET}/scale`, { method: "DELETE" }); ctx.streamJob(job_id, `Removing bulk test data: ${SEED_TARGET}`); }
   catch (e) { ctx.toast(e.message); }
 }
 

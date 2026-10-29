@@ -5,7 +5,7 @@ let IMPORT_TARGET = null;
 let IMPORT_UPLOAD_ID = null;
 function openImport(name) {
   IMPORT_TARGET = name;
-  ctx.$("#import-title").textContent = `Import customer config: ${name}`;
+  ctx.$("#import-title").textContent = `Import settings: ${name}`;
   ctx.$("#import-file").value = "";
   IMPORT_UPLOAD_ID = null;
   ctx.$("#import-form").only.value = "";
@@ -36,9 +36,10 @@ async function previewImport() {
   const c = plan.counts;
   // Everything below comes from the uploaded dump's setting ids — escape all of
   // it: a crafted `_id` would otherwise run script in a page holding the token.
-  let html = `<b>apply ${c.apply}</b> &middot; skip ${c.redacted} redacted, ${c.denied} identity/env`;
-  if (plan.oauth_services.length) html += `<br>oauth pre-create: ${escapeHtml(plan.oauth_services.join(", "))}`;
-  if (plan.redacted.length) html += `<br><span class="warn">set by hand (redacted): ${escapeHtml(plan.redacted.join(", "))}</span>`;
+  let html = `<b>Sets ${c.apply}</b> &middot; skips ${c.redacted} the export hid (secrets) and ${c.denied} `
+    + "that belong to their server (its address, license, registration and the like)";
+  if (plan.oauth_services.length) html += `<br>Creates these custom OAuth providers first, so their settings can be set: ${escapeHtml(plan.oauth_services.join(", "))}`;
+  if (plan.redacted.length) html += `<br><span class="warn">Hidden in the export; set these by hand: ${escapeHtml(plan.redacted.join(", "))}</span>`;
   html += "<hr>" + plan.apply.map((a) => `<div class="kv"><code>${escapeHtml(a.id)}</code> = ${escapeHtml(a.value)}</div>`).join("");
   box.innerHTML = html; box.hidden = false;
   IMPORT_UPLOAD_ID = plan.upload_id || null;
@@ -47,7 +48,7 @@ async function previewImport() {
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 async function applyImport() {
   ctx.$("#import-dialog").close();
-  try { const { job_id } = await ctx.api(`/api/repros/${IMPORT_TARGET}/config-import`, { method: "POST", body: JSON.stringify({ upload_id: IMPORT_UPLOAD_ID }) }); streamJob(job_id, `Importing config: ${IMPORT_TARGET}`); }
+  try { const { job_id } = await ctx.api(`/api/repros/${IMPORT_TARGET}/config-import`, { method: "POST", body: JSON.stringify({ upload_id: IMPORT_UPLOAD_ID }) }); streamJob(job_id, `Importing settings: ${IMPORT_TARGET}`); }
   catch (e) { ctx.toast(e.message); }
 }
 async function showLogs(name) {
@@ -65,11 +66,11 @@ function reportPrune(r) {
   // a sweep that had just destroyed them -- the same defect the CLI had.
   const orphans = (r.orphans || []).length;
   if (orphans) ctx.toast(`removed ${orphans} orphaned namespace(s): ${(r.orphans || []).join(", ")}`, "ok");
-  if (!targets) { if (!orphans) ctx.toast("nothing to prune", "info"); return; }
-  if (removed === targets) { ctx.toast(`pruned ${removed}`, "ok"); return; }
+  if (!targets) { if (!orphans) ctx.toast("no taken-down workspaces to delete", "info"); return; }
+  if (removed === targets) { ctx.toast(`deleted ${removed} taken-down workspace${removed === 1 ? "" : "s"}`, "ok"); return; }
   // prune() warns per-repro through emit; those now arrive in the job dialog, and
   // the shortfall is still worth saying out loud here.
-  ctx.toast(`pruned ${removed} of ${targets}; ${targets - removed} could not be cleaned up`);
+  ctx.toast(`deleted ${removed} of ${targets}; ${targets - removed} could not be cleaned up`);
 }
 
 // Prune is the same story as Stop -- a synchronous call that removes containers
@@ -88,12 +89,14 @@ async function withBusy(btn, verb, fn) {
   }
 }
 async function doPrune() {
-  if (!confirm("Delete every 'down' repro, including data volumes and records?")) return;
-  await withBusy(ctx.$("#btn-prune"), "Pruning…", async () => {
+  if (!confirm("Delete every taken-down workspace you are allowed to delete (an admin: everyone's), "
+    + "with its data and record? Stopped ones, and ones created with Keep, are left alone. "
+    + "This cannot be undone.")) return;
+  await withBusy(ctx.$("#btn-prune"), "Deleting…", async () => {
     try {
       const { job_id } = await ctx.api("/api/prune",
                                    { method: "POST", body: JSON.stringify({ confirm: true }) });
-      streamJob(job_id, "Pruning down workspaces", async (r) => {
+      streamJob(job_id, "Deleting taken-down workspaces", async (r) => {
         reportPrune(r);
         await ctx.loadRepros();
       });
@@ -112,8 +115,8 @@ function openJob(title) { ctx.$("#job-title").textContent = title; ctx.$("#job-l
 // A job stuck on something it cannot see -- a create waiting on a port-forward -- held its
 // workspace until the server was killed. Stop ends it at its next step; what it did stays.
 async function stopJob(job, btn) {
-  if (!confirm("Stop this job? It ends at its next step. What it has done so far stays, "
-    + "so delete the workspace afterwards if you no longer want it.")) return;
+  if (!confirm("Stop this job? It ends at its next step; what it already did stays and nothing "
+    + "is deleted. If it was creating a workspace you no longer want, delete that workspace afterwards.")) return;
   btn.disabled = true;
   try {
     await ctx.api(`/api/jobs/${job.id}/stop`, { method: "POST" });
@@ -122,7 +125,7 @@ async function stopJob(job, btn) {
 }
 // What each phase of a job DOES, as a step in the create dialog's progress.
 const PHASE_STEP = {
-  preflight: "Checking this machine", resolve: "Looking up the version", provision: "Preparing the cluster",
+  preflight: "Checking this server", resolve: "Looking up the version", provision: "Preparing the cluster",
   plan: "Working out what to build", pull: "Pulling images", create: "Writing the workspace",
   boot: "Starting the containers", wait: "Waiting for Rocket.Chat to answer", post_ready: "Applying settings",
   tls: "Setting up HTTPS", seed: "Adding sample data", monitor: "Attaching monitoring",
@@ -556,7 +559,7 @@ function noteBlock(notes) {
 
 function appendNotes(parent, notes) {
   if (!notes || !notes.length) return;
-  parent.append(ctx.el("div", { class: "section-label" }, "Using this scenario"));
+  parent.append(ctx.el("div", { class: "section-label" }, "Using this preset"));
   parent.append(noteBlock(notes));
 }
 
@@ -579,7 +582,8 @@ function renderPerfResult(r) {
   if (r.grafana_url) {
     const url = `${r.grafana_url}/d/houston-k6-loadtest?from=now-15m&to=now&kiosk`;
     pre.append(ctx.el("div", { class: "result" },
-      ctx.el("a", { href: url, target: "_blank", style: "text-decoration:none" }, ctx.el("button", { class: "btn small" }, "Open k6 dashboard in Grafana"))));
+      ctx.el("a", { href: url, target: "_blank", style: "text-decoration:none",
+        ...(ctx.remoteLoopback(url) ? { title: ctx.LOOPBACK_TITLE } : {}) }, ctx.el("button", { class: "btn small" }, "Open k6 dashboard in Grafana"))));
     const frame = ctx.el("iframe", { src: url, class: "grafana-embed" });
     pre.append(frame);
   }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import * as config from '../../src/lib/config';
+import { metadata, writeRecord } from '../../src/core/runner/record';
 import { listPresets } from '../../src/lib/presets';
 import { emptyPreset, type Preset } from '../../src/lib/presets/types';
 
@@ -73,9 +74,41 @@ describe('explicit human command renderers', () => {
     }
   });
 
+  test('stop, start, down and use name whose workspace they acted on', async () => {
+    // Without --name they act on the default the whole houston home shares, so on a shared
+    // server the line has to say when it was a colleague's.
+    await writeRecord(
+      'bob-t1',
+      metadata({
+        name: 'bob-t1',
+        project: 'houston-bob-t1',
+        rcVersion: '8.5.1',
+        extra: { created_by: 'bob' },
+      }),
+    );
+    expect((await render('stop', { name: 'bob-t1' })).out).toBe(
+      "✓ 'bob-t1' stopped (owned by bob; resume with `houston start`).\n",
+    );
+    expect((await render('start', { name: 'bob-t1' })).out).toBe(
+      "✓ 'bob-t1' started (owned by bob).\n",
+    );
+    expect((await render('down', { name: 'bob-t1', removed: false })).out).toContain(
+      "✓ 'bob-t1' down (data kept; owned by bob).\n",
+    );
+    expect((await render('use', { default: 'bob-t1' })).out).toBe(
+      "✓ default workspace is now 'bob-t1' (owned by bob). Commands run without --name act " +
+        'on it, for everyone using this houston home.\n',
+    );
+    // A record that names nobody gets no owner invented for it.
+    await writeRecord('rc851', metadata({ name: 'rc851', project: 'houston-rc851' }));
+    expect((await render('stop', { name: 'rc851' })).out).toBe(
+      "✓ 'rc851' stopped (resume with `houston start`).\n",
+    );
+  });
+
   test('list preserves the empty guidance and the stable human columns', async () => {
     expect((await render('list', { repros: [], count: 0 })).out).toBe(
-      'No repros yet. Create one with `houston up --version <X.Y.Z>`.\n',
+      'No workspaces yet. Create one with `houston up --version <X.Y.Z>`.\n',
     );
     const shown = (
       await render('list', {
@@ -96,8 +129,28 @@ describe('explicit human command renderers', () => {
     expect(shown).toContain('NAME');
     expect(shown).toContain('RC');
     expect(shown).toContain('*ticket-1');
-    expect(shown).toContain('* = default repro');
+    expect(shown).toContain('* = default workspace');
     expect(shown).not.toContain('"repros"');
+    // Its URL is the one a person opens: behind a tunnel, the name `--root-url` advertised.
+    const tunnelled = (
+      await render('list', {
+        repros: [
+          {
+            name: 'ticket-2',
+            rc_version: '8.9.0',
+            mongo_tag: '8.0',
+            runtime: 'docker',
+            host_port: 3014,
+            state: 'running',
+            root_url: 'http://localhost:3014',
+            public_url: '',
+            open_url: 'https://ticket.example.test',
+          },
+        ],
+      })
+    ).out;
+    expect(tunnelled).toContain('https://ticket.example.test');
+    expect(tunnelled).not.toContain('http://localhost:3014');
   });
 
   test('token, PAT and API produce pasteable/raw output rather than serialized objects', async () => {
@@ -263,16 +316,18 @@ describe('explicit human command renderers', () => {
           row('a', 'arn:aws:eks:us-east-1:1:cluster/support'),
           row('b', 'kind-houston-local'),
           row('c', 'default'),
+          // A Docker workspace said `compose`, a tool's name; --json keeps `runtime: docker`.
+          { ...row('d', ''), runtime: 'docker' },
         ],
-        count: 3,
+        count: 4,
       })
     ).out;
     // NAME is 20 cells and a mark, RC 10, MONGO 8: WHERE starts at cell 39.
     const where = out
       .split('\n')
-      .slice(1, 4)
+      .slice(1, 5)
       .map((line) => line.slice(39, 47).trim());
-    expect(where).toEqual(['eks', 'kind', 'k8s']);
+    expect(where).toEqual(['eks', 'kind', 'k8s', 'docker']);
   });
 
   test('cluster status opens with where the cluster is and who built it, and ends with the next step', async () => {
@@ -1149,7 +1204,7 @@ describe('pat', () => {
 /**
  * `houston monitor`'s lines against what earlier releases printed with the service stubbed
  * to the payload given. The detach line dropped earlier releases'
- * ` (metrics setting left as-is — repro not reachable)` when `rc_setting_reset` was false,
+ * ` (metrics setting left as-is — workspace not reachable)` when `rc_setting_reset` was false,
  * the shared-stack note was reworded, and the attach line had no blank line after it.
  */
 describe('monitor', () => {
@@ -1205,7 +1260,7 @@ describe('monitor', () => {
     expect(shown).toEqual(recorded);
     expect(recorded[0]).toMatch(/^✓ monitoring attached to 'alpha'\n\nGrafana: /u);
     expect(recorded[3]).toBe(
-      "✓ monitoring detached from 'alpha' (metrics setting left as-is — repro not reachable)\n",
+      "✓ monitoring detached from 'alpha' (metrics setting left as-is — workspace not reachable)\n",
     );
     expect(recorded[4]).toContain('other workspaces on this cluster are still using it\n');
   });

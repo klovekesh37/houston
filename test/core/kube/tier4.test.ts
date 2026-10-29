@@ -549,6 +549,43 @@ describe('the MongoDB operator', () => {
     expect(ran('uninstall')).toBe(false);
   });
 
+  it('removes the webhook the operator registered for itself, and only that one', async () => {
+    // The operator creates `mdbpolicy.mongodb.com` at startup, so it carries no Helm label
+    // and `helm uninstall` left it behind, pointing at a Service that was gone (measured on
+    // k3s: 3 hooks, all at houston-system/operator-webhook).
+    const installed: Rule = [has('list'), listed('mongodb-kubernetes-operator', 'deployed', 1)];
+    const unused: Rule = [has('mongodbcommunity'), { stdout: '' }];
+    const webhook = (namespace: string): Rule => [
+      has('get', 'validatingwebhookconfiguration'),
+      json({
+        kind: 'ValidatingWebhookConfiguration',
+        metadata: { name: 'mdbpolicy.mongodb.com' },
+        webhooks: [{ clientConfig: { service: { namespace, name: 'operator-webhook' } } }],
+      }),
+    ];
+    const deletedWebhook = () =>
+      seen.some(
+        (argv) =>
+          argv.includes('delete') &&
+          argv.includes('validatingwebhookconfiguration') &&
+          argv.includes('mdbpolicy.mongodb.com'),
+      );
+
+    script([installed, unused, webhook(OPERATOR_NAMESPACE)]);
+    expect(await removeOperator({ context: 'prod' })).toBe(true);
+    expect(deletedWebhook()).toBe(true);
+
+    // Another operator's, in another namespace: not ours to delete.
+    script([installed, unused, webhook('mongodb')]);
+    expect(await removeOperator({ context: 'prod' })).toBe(true);
+    expect(deletedWebhook()).toBe(false);
+
+    // A read it could not make: left alone. It fails open, so leaving it costs nothing.
+    script([installed, unused, [has('get', 'validatingwebhookconfiguration'), REFUSED]]);
+    expect(await removeOperator({ context: 'prod' })).toBe(true);
+    expect(deletedWebhook()).toBe(false);
+  });
+
   it('answers null rather than an empty reference count', async () => {
     script([], REFUSED);
     expect(await mongodbResources('prod')).toBeNull();

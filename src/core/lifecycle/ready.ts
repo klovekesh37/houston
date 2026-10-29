@@ -28,12 +28,31 @@ import {
   stopForward,
 } from '../kube/forward';
 import { namespaceFor, requireOwnNamespace } from '../kube/namespace';
-import { workspaceReady, terminalPodFailure, servicesWithoutEndpoints } from '../kube/status';
+import {
+  workspaceReady,
+  workloadReplicas,
+  terminalPodFailure,
+  servicesWithoutEndpoints,
+} from '../kube/status';
 import { CONTEXT as KUBE_CONTEXT } from '../kube/names';
-import { completeSetupWizard, NotReady, apiInfo, waitReady } from '../rcapi';
+import {
+  type Auth,
+  completeSetupWizard,
+  getSetting,
+  licenseValid,
+  NotReady,
+  apiInfo,
+  waitReady,
+} from '../rcapi';
 import * as engine from '../runner/engine';
 import { type Metadata, adminPass, readMeta, updateMeta } from '../runner/record';
-import { oneShotSetups, rcRestartCount, rcState, servicesByProject } from '../runner/queries';
+import {
+  oneShotSetups,
+  projectStates,
+  rcRestartCount,
+  rcState,
+  servicesByProject,
+} from '../runner/queries';
 import * as postready from '../postready';
 import * as topology from '../topology';
 import { MODE_LOCAL, originCertificate } from '../tls';
@@ -288,8 +307,11 @@ export async function waitServing(
   }
   const seen: { restarts: number; cause: string | null } = { restarts: 0, cause: null };
 
-  const isAlive = async (): Promise<boolean> =>
-    ['running', 'restarting', 'created'].includes(await rcState(meta.name));
+  let last = '';
+  const isAlive = async (): Promise<boolean> => {
+    last = await rcState(meta.name);
+    return ['running', 'restarting', 'created'].includes(last);
+  };
 
   const tick = async (elapsed: number): Promise<void> => {
     await crashLoopTick(meta, emit, timeout, seen, elapsed);
@@ -326,6 +348,16 @@ export async function waitServing(
     }
   } catch (error) {
     if (!(error instanceof NotReady)) throw error;
+    // STOPPED IS AN ANSWER, as on Kubernetes. Rocket.Chat runs `restart: always`, so a crash
+    // comes back as `restarting`: an exited one was stopped, and its logs do not say so.
+    // `compose ps` lists running containers only, so there a stopped one is `absent`; `compose
+    // ls --all` still lists its project, every container exited (a taken-down one: none).
+    const project = last === 'absent' ? ((await projectStates()) ?? {})[meta.project] : '';
+    if (last === 'exited' || /^exited\(\d+\)$/.test(project ?? '')) {
+      throw new NotReadyError(
+        `'${meta.name}' is stopped — \`houston start --name ${meta.name}\` brings it back`,
+      );
+    }
     if (seen.cause === null) {
       seen.cause = (await diagnoseFailure(meta.name)) ?? '';
     }
@@ -599,6 +631,15 @@ export async function waitServingKubernetes(
     : await namespaceFor(meta.name);
   // Forwarded to, and set up over REST, only while it is still this workspace's own.
   await requireOwnNamespace(meta.name, { context });
+  // STOPPED IS AN ANSWER, NOT A WAIT. `stop` scales Rocket.Chat to zero, and this polled out
+  // its whole timeout (five minutes by default) on a workspace never going to move, then
+  // named `kubectl get pods` -- there are none. A refused read is not "stopped": it waits.
+  const replicas = await workloadReplicas(meta.name, { context }).catch(() => null);
+  if (replicas === 0) {
+    throw new NotReadyError(
+      `'${meta.name}' is stopped — \`houston start --name ${meta.name}\` brings it back`,
+    );
+  }
   const deadline = Date.now() + timeout * 1000;
   let last = 0;
   // Consecutive rounds where the workspace is ready and the port answers with something
@@ -659,6 +700,49 @@ export async function waitServingKubernetes(
 }
 
 /**
+ * Whether Rocket.Chat ACCEPTED the license houston gave it, recorded for the panel.
+ *
+ * A license is valid only at the address it was issued for: one given to a workspace whose
+ * Site_Url is anything else is installed and refused ("Url validation failed"), and the
+ * panel said "Licensed" all the same. Asked a few times, because Rocket.Chat may still be
+ * applying it when it first serves; no answer records nothing rather than a guess.
+ */
+export async function checkLicense(
+  meta: Metadata,
+  auth: Auth | null,
+  emit: Emit,
+  pause: (ms: number) => Promise<void> = sleep,
+): Promise<void> {
+  if (auth === null || bag(meta.extra).licensed !== true) return;
+  let valid: boolean | null = null;
+  for (let tries = 0; tries < 4 && valid !== true; tries += 1) {
+    if (tries > 0) await pause(5000);
+    valid = await licenseValid(meta.rootUrl, auth);
+  }
+  if (valid === null) return;
+  if (valid) {
+    info(emit, 'Rocket.Chat accepted the license', { phase: 'post_ready' });
+  } else {
+    const site = await getSetting(meta.rootUrl, auth, adminPass(meta), 'Site_Url');
+    warn(
+      emit,
+      'Rocket.Chat refused the license: one is valid only at the address it was issued for ' +
+        `and until it expires${typeof site === 'string' && site !== '' ? `, and this workspace's Site_Url is ${site}` : ''}. ` +
+        `\`houston logs --name ${meta.name}\` shows its reason. Rocket.Chat keeps a refused ` +
+        'license refused even once the address is right (measured on 8.8.1): put it right, ' +
+        `then \`houston restart --name ${meta.name}\` and \`houston ready --name ${meta.name}\`.`,
+      { phase: 'post_ready' },
+    );
+  }
+  const status = valid ? 'valid' : 'refused';
+  if (bag(meta.extra).license_status === status) return;
+  await updateMeta(meta.name, (current) => {
+    current.extra.license_status = status;
+  });
+  meta.extra.license_status = status;
+}
+
+/**
  * Wait for the workspace to serve, then finish it off.
  *
  * `final` is whether this call is the END of what the user asked for. It is for `houston
@@ -677,6 +761,7 @@ export async function waitAndFinalize(
   const elapsed = Math.floor((Date.now() - started) / 1000);
   const auth = await finalize(meta, emit);
   await postready.runPostReady(meta, auth, emit);
+  await checkLicense(meta, auth, emit);
   // AND THE SEED THE INTERRUPTED CREATE ASKED FOR. The note says the workspace "may be
   // running without its preset configuration or seed data" and names this command as the
   // thing that completes it -- and this used to run post_ready, seed nothing, print

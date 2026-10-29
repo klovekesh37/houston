@@ -230,6 +230,19 @@ export async function teardownKubernetes(
   }
   await removeTheClusterSide(context, emit, meta, target, volumes);
   await dropTheEdgeRoute(emit, target, volumes);
+  // ON PURPOSE (`uninstallWorkspaceWorkloads` keeps a preset's Services stable for the re-up),
+  // but unsaid: after a plain `down` the preset's pods ran on while `list` said "down".
+  // `teardown`, not `done`: the CLI prints no informational `done` line. Only a preset that
+  // runs services, which is one that publishes a console (e2ee is settings and users only).
+  const services = Array.isArray(extra.sidecar_ports) && extra.sidecar_ports.length > 0;
+  if (!volumes && services && (meta.preset || 'default') !== 'default') {
+    info(
+      emit,
+      `its ${meta.preset} services keep running in ${await namespaceFor(target)} until ` +
+        '`down --volumes`',
+      { phase: 'teardown' },
+    );
+  }
   // `context` rides along so the CLI can say what a kept disk costs on a cloud cluster.
   return { name: target, removed: volumes, found, runtime: topology.KUBERNETES, context };
 }

@@ -203,7 +203,9 @@ describe("Keycloak's hosts-entry notes", () => {
     const notes = pre.notes.join('\n');
     // s3_minio's presigned mode still says where its line goes, and how to avoid it.
     expect(notes).toContain('this line to /etc/hosts (needs sudo):');
-    expect(notes).toContain('  That entry points at THIS machine, so the browser has to be on it.');
+    expect(notes).toContain(
+      '  That entry works only for a browser on the machine running houston.',
+    );
     expect(notes).toContain('--set s3_host=<this host>');
     // saml's own were for a browser reaching Keycloak by port.
     expect(notes).not.toContain('idp_host');
@@ -302,30 +304,56 @@ describe('presigned downloads on an HTTPS workspace', () => {
 });
 
 describe('phpLDAPadmin at /phpldapadmin', () => {
-  it('serves under its server path on both runtimes, for OpenLDAP and AD', () => {
+  it('is served through its own prefix-stripping nginx on both runtimes, for OpenLDAP and AD', () => {
+    // phpLDAPadmin 2 has no server-path setting (1.x's PHPLDAPADMIN_SERVER_PATH is gone): it
+    // serves from / and builds its links from X-Forwarded-Prefix, which this nginx sends.
+    const conf = (text: string, upstream: number): void => {
+      expect(text).toContain(`proxy_pass http://phpldapadmin:${String(upstream)}/;`);
+      expect(text).toContain('proxy_set_header X-Forwarded-Prefix /phpldapadmin;');
+      expect(text).toContain('location = / { return 302 /phpldapadmin/; }');
+    };
     const docker = withPublicUrl(load('ldap', {}), URL_, 'docker');
-    expect(docker.services.phpldapadmin?.environment).toMatchObject({
-      PHPLDAPADMIN_SERVER_PATH: '/phpldapadmin',
+    // The host port is the nginx's now, so http://localhost:8082 keeps opening it.
+    expect(docker.services.phpldapadmin?.ports).toBeUndefined();
+    expect(docker.services['ldap-ui']).toMatchObject({
+      ports: ['8082:80'],
+      depends_on: ['phpldapadmin'],
+      volumes: ['./ldap/ldap-ui.conf:/etc/nginx/conf.d/default.conf:ro'],
     });
+    // Compose dials the container's own port.
+    conf((docker.files.find(([f]) => f === 'ldap/ldap-ui.conf') as [string, string])[1], 8080);
     expect(publicPathsOf(docker.extra)).toEqual([
       {
         preset: 'ldap',
         path: '/phpldapadmin',
-        service: 'phpldapadmin',
+        service: 'ldap-ui',
         container_port: 80,
-        service_port: 8082,
+        service_port: 80,
       },
     ]);
     expect(docker.notes.join('\n')).toContain(`phpLDAPadmin: ${URL_}/phpldapadmin/`);
+
     const ad = withPublicUrl(
       resolve('ldap', 'kubernetes', { directory: 'ad' }),
       URL_,
       'kubernetes',
     );
-    expect(container(ad, 'phpldapadmin').env).toEqual(
-      expect.arrayContaining([{ name: 'PHPLDAPADMIN_SERVER_PATH', value: '/phpldapadmin' }]),
-    );
-    expect(publicPathsOf(ad.extra)[0]).toMatchObject({ service_port: 80, container_port: 80 });
+    // Kubernetes dials the Service, which listens on 80.
+    const cm = docs(ad).find((d) => (d.metadata as Bag).name === 'ldap-ui-files') as {
+      data: Record<string, string>;
+    };
+    conf(cm.data['default.conf'] as string, 80);
+    const service = (name: string) =>
+      docs(ad).find((d) => d.kind === 'Service' && (d.metadata as Bag).name === name) as {
+        metadata: { labels: Bag };
+      };
+    expect(service('ldap-ui').metadata.labels['houston.io/ui-port']).toBe('8082');
+    expect(service('phpldapadmin').metadata.labels['houston.io/ui-port']).toBeUndefined();
+    expect(publicPathsOf(ad.extra)[0]).toMatchObject({
+      service: 'ldap-ui',
+      service_port: 80,
+      container_port: 80,
+    });
   });
 
   it('sits beside every other UI of a composed workspace', () => {

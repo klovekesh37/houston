@@ -26,7 +26,13 @@
     },
     "edge stop, nothing installed": {
       "code": 0,
-      "stdout": "no edge is set up in this home — nothing to stop. If a name is still being served, the edge belongs to another HOUSTON_HOME; `houston edge status` says so.\n",
+      "stdout": "no edge is set up in this home — nothing to stop. If a name is still being served, the edge belongs to another houston home, usually houston run with sudo or as another user; `houston edge status` says so. Run this the same way (or with HOUSTON_HOME=<that home>).\n",
+      "stderr": "",
+      "dialled": []
+    },
+    "edge stop, installed": {
+      "code": 0,
+      "stdout": "✓ edge stopped; it no longer holds :80 or :443.\nEvery HTTPS workspace on this machine, and a `serve --domain` GUI, is offline for everyone until `houston edge start`.\n",
       "stderr": "",
       "dialled": []
     },
@@ -50,7 +56,7 @@
     },
     "edge delete, nothing there": {
       "code": 0,
-      "stdout": "nothing here for h.example.com — no route, no certificate, no ACME entry. Already clean, or the name belongs to another HOUSTON_HOME.\n",
+      "stdout": "nothing here for h.example.com — no route, no certificate, no ACME entry. Already clean, or the name belongs to another houston home (houston run with sudo or as another user).\n",
       "stderr": "",
       "dialled": []
     },
@@ -62,7 +68,7 @@
     },
     "edge delete, a foreign edge serves the name": {
       "code": 0,
-      "stdout": "✓ Let's Encrypt certificate removed from acme.json\nthe edge holding :443 belongs to another HOUSTON_HOME (/elsewhere/.houston/edge), and it reads its OWN certificate store — so what was just deleted is this home's copy, not the certificate that name is being served with. Run this there, with that HOUSTON_HOME.\n",
+      "stdout": "✓ Let's Encrypt certificate removed from acme.json\nthe edge holding :443 belongs to another houston home (/elsewhere/.houston), usually houston run with sudo or as another user, and it reads its OWN certificate store — so what was just deleted is this home's copy, not the certificate that name is being served with. Run this the same way (or with HOUSTON_HOME=/elsewhere/.houston).\n",
       "stderr": "",
       "dialled": []
     },
@@ -122,7 +128,7 @@
     },
     "tls-status, trusted": {
       "code": 0,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate this machine trusts.\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate the machine running houston trusts.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -131,7 +137,7 @@
     },
     "tls-status, nothing serving": {
       "code": 1,
-      "stdout": "Checking https://t1.example.com ...\n  ✗ nothing is serving TLS on this host's port 443 - connection refused\n  Rocket.Chat itself is fine at http://localhost:3000 - this is the TLS layer.\n  Most likely, in order:\n    1. inbound TCP/443 not reachable from the internet (cloud security group / host firewall)\n    2. DNS: `dig +short t1.example.com` must return this host's PUBLIC IP\n    3. behind Cloudflare's orange cloud? it terminates TLS, so tlsalpn cannot work - put a provider token in ~/.houston/acme/dns.env to switch to dns-01\n  What Traefik says:  houston logs --name w | grep -i acme\n  Debug on staging (--acme-staging): production allows only 5 failed validations per hour for t1.example.com.\n",
+      "stdout": "Checking https://t1.example.com ...\n  ✗ nothing is serving TLS on this host's port 443 - connection refused\n  This checks the TLS layer only; `houston ready --name w` checks Rocket.Chat (http://localhost:3000 on the machine running houston).\n  Most likely, in order:\n    1. inbound TCP/443 not reachable from the internet (cloud security group / host firewall)\n    2. DNS: `dig +short t1.example.com` must return this host's PUBLIC IP\n    3. behind a CDN or tunnel that ends TLS (Cloudflare's orange cloud)? tlsalpn cannot work there - `houston config set acme.challenge http` (no token; the name's :80 must reach this machine), or a provider token in <home>/acme/dns.env for dns-01\n  What the edge (Traefik) says:  houston edge logs | grep -i acme\n  Debug on staging (`houston config set acme.staging true`, then re-create the workspace): production allows only 5 failed validations per hour for t1.example.com.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -140,7 +146,7 @@
     },
     "tls-status, a squatter on IPv4 and the real one on ::1": {
       "code": 0,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate this machine trusts.\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate the machine running houston trusts.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -150,7 +156,7 @@
     },
     "tls-status, every family serves a placeholder": {
       "code": 1,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w -------------------------------+\n|  Endpoint   t1.example.com:443         |\n|  Issuer     CN = TRAEFIK DEFAULT CERT  |\n|  Valid for  CN = TRAEFIK DEFAULT CERT  |\n|  Expires                               |\n+----------------------------------------+\n  ✗ this is the edge's built-in placeholder certificate (Traefik's default) — Let's Encrypt has not issued one for this name yet.\n    The edge asks as soon as the workspace is up, so that is normal for a minute or three. Run this again; if it persists, the request is failing, most likely for one of the reasons below.\n  Rocket.Chat itself is fine at http://localhost:3000 - this is the TLS layer.\n  Most likely, in order:\n    1. inbound TCP/443 not reachable from the internet (cloud security group / host firewall)\n    2. DNS: `dig +short t1.example.com` must return this host's PUBLIC IP\n    3. behind Cloudflare's orange cloud? it terminates TLS, so tlsalpn cannot work - put a provider token in ~/.houston/acme/dns.env to switch to dns-01\n  What Traefik says:  houston logs --name w | grep -i acme\n  Debug on staging (--acme-staging): production allows only 5 failed validations per hour for t1.example.com.\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w -------------------------------+\n|  Endpoint   t1.example.com:443         |\n|  Issuer     CN = TRAEFIK DEFAULT CERT  |\n|  Valid for  CN = TRAEFIK DEFAULT CERT  |\n|  Expires                               |\n+----------------------------------------+\n  ✗ this is the edge's built-in placeholder certificate (Traefik's default) — Let's Encrypt has not issued one for this name yet.\n    The edge asks as soon as the workspace is up, so that is normal for a minute or three. Run this again; if it persists, the request is failing, most likely for one of the reasons below.\n  This checks the TLS layer only; `houston ready --name w` checks Rocket.Chat (http://localhost:3000 on the machine running houston).\n  Most likely, in order:\n    1. inbound TCP/443 not reachable from the internet (cloud security group / host firewall)\n    2. DNS: `dig +short t1.example.com` must return this host's PUBLIC IP\n    3. behind a CDN or tunnel that ends TLS (Cloudflare's orange cloud)? tlsalpn cannot work there - `houston config set acme.challenge http` (no token; the name's :80 must reach this machine), or a provider token in <home>/acme/dns.env for dns-01\n  What the edge (Traefik) says:  houston edge logs | grep -i acme\n  Debug on staging (`houston config set acme.staging true`, then re-create the workspace): production allows only 5 failed validations per hour for t1.example.com.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -159,7 +165,7 @@
     },
     "tls-status, a workspace with no port of its own": {
       "code": 0,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate this machine trusts.\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a certificate the machine running houston trusts.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -168,7 +174,7 @@
     },
     "tls-status, local CA, not ours": {
       "code": 1,
-      "stdout": "Checking https://l.houston.localhost ...\n+- TLS: l -----------------------------+\n|  Endpoint   l.houston.localhost:443  |\n|  Issuer     CN = houston local CA    |\n|  Valid for  t1.example.com           |\n|  Expires    Nov 23 2026              |\n+--------------------------------------+\n  ✗ serving a certificate that does not chain to houston's CA.\n  Rocket.Chat itself is fine at http://localhost:3000 - this is the TLS layer.\n  Check Traefik started:  houston logs --name l | grep -i traefik\n",
+      "stdout": "Checking https://l.houston.localhost ...\n+- TLS: l -----------------------------+\n|  Endpoint   l.houston.localhost:443  |\n|  Issuer     CN = houston local CA    |\n|  Valid for  t1.example.com           |\n|  Expires    Nov 23 2026              |\n+--------------------------------------+\n  ✗ serving a certificate that does not chain to houston's CA.\n  This checks the TLS layer only; `houston ready --name l` checks Rocket.Chat (http://localhost:3000 on the machine running houston).\n  Check the edge (Traefik) is running:  houston edge status\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1"
@@ -176,7 +182,7 @@
     },
     "tls-status, local CA, not trusted yet": {
       "code": 0,
-      "stdout": "Checking https://l.houston.localhost ...\n+- TLS: l -----------------------------+\n|  Endpoint   l.houston.localhost:443  |\n|  Issuer     CN = houston local CA    |\n|  Valid for  t1.example.com           |\n|  Expires    Nov 23 2026              |\n+--------------------------------------+\n  ✓ serving HTTPS with houston's local CA.\n  Not trusted by this machine yet. Run `houston trust-ca` once to silence browser warnings (the warning itself is harmless locally).\n",
+      "stdout": "Checking https://l.houston.localhost ...\n+- TLS: l -----------------------------+\n|  Endpoint   l.houston.localhost:443  |\n|  Issuer     CN = houston local CA    |\n|  Valid for  t1.example.com           |\n|  Expires    Nov 23 2026              |\n+--------------------------------------+\n  ✓ serving HTTPS with houston's local CA.\n  l.houston.localhost opens only in a browser on the machine running houston: a .localhost name never opens from another computer (`--domain` gives one that does).\n  Not trusted by the machine running houston yet. Run `houston trust-ca` once there to silence browser warnings (the warning itself is harmless locally).\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1"
@@ -184,7 +190,7 @@
     },
     "tls-status, staging": {
       "code": 0,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a real Let's Encrypt-issued certificate.\n  Not trusted here, which is normal for --acme-staging: DNS and the challenge both worked.\n  For a trusted certificate, re-run the SAME command without --acme-staging:\n    houston up -v 8.5.1 --name w --domain t1.example.com --email o@e.com --force --wait\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ✓ serving HTTPS with a real Let's Encrypt-issued certificate.\n  Not trusted here, which is normal for a Let's Encrypt staging certificate: DNS and the challenge both worked.\n  `acme.staging` is off now, so re-run the SAME command for a trusted certificate:\n    houston up -v 8.5.1 --name w --domain t1.example.com --email o@e.com --force --wait\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -202,7 +208,7 @@
     },
     "tls-status, fronted by a proxy": {
       "code": 0,
-      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ⚠ t1.example.com is fronted by something else: it serves a certificate issued by \"CN = Cloudflare's edge\", not the one this host serves ('CN = houston local CA').\n  That is what an orange-clouded Cloudflare record looks like. Clients get the proxy's certificate, not this one.\n  ✓ serving HTTPS with a certificate this machine trusts.\n",
+      "stdout": "Checking https://t1.example.com ...\n+- TLS: w ---------------------------+\n|  Endpoint   t1.example.com:443     |\n|  Issuer     CN = houston local CA  |\n|  Valid for  t1.example.com         |\n|  Expires    Nov 23 2026            |\n+------------------------------------+\n  ⚠ t1.example.com is fronted by something else: it serves a certificate issued by \"CN = Cloudflare's edge\", not the one this host serves ('CN = houston local CA').\n  That is what an orange-clouded Cloudflare record looks like. Clients get the proxy's certificate, not this one.\n  ✓ serving HTTPS with a certificate the machine running houston trusts.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -211,7 +217,7 @@
     },
     "tls-status, Kubernetes, nothing serving": {
       "code": 1,
-      "stdout": "Checking https://k1.example.com ...\n  ✗ nothing is serving TLS on this host's port 443 - connection refused\n  Rocket.Chat itself is fine at http://localhost:3000 - this is the TLS layer.\n  TLS terminates in the cluster, from a Secret cert-manager filled — the edge only forwards the raw connection, so its log has nothing about this name.\n  Most likely, in order:\n    1. the Certificate is not Ready yet, or says why it is not\n    2. the ClusterIssuer is not Ready (created before cert-manager, or no egress for an ACME order)\n    3. nothing routes to the ingress — `houston doctor` names a cluster holding this host's ports\n  What cert-manager says:\n    kubectl -n houston-kws describe certificate kws-tls\n    kubectl describe clusterissuer houston-acme\n    kubectl -n houston-kws get order,challenge\n  Debug on staging (`houston config set acme.staging true`): production allows only 5 failed validations per hour for k1.example.com.\n",
+      "stdout": "Checking https://k1.example.com ...\n  ✗ nothing is serving TLS on this host's port 443 - connection refused\n  This checks the TLS layer only; `houston ready --name kws` checks Rocket.Chat (http://localhost:3000 on the machine running houston).\n  TLS terminates in the cluster, from a Secret cert-manager filled — the edge only forwards the raw connection, so its log has nothing about this name.\n  Most likely, in order:\n    1. the Certificate is not Ready yet, or says why it is not\n    2. the ClusterIssuer is not Ready (created before cert-manager, or no egress for an ACME order)\n    3. nothing routes to the ingress — `houston doctor` names a cluster holding this host's ports\n  What cert-manager says:\n    kubectl -n houston-kws describe certificate kws-tls\n    kubectl describe clusterissuer houston-acme\n    kubectl -n houston-kws get order,challenge\n  Debug on staging (`houston config set acme.staging true`, then re-create the workspace): production allows only 5 failed validations per hour for k1.example.com.\n",
       "stderr": "",
       "dialled": [
         "127.0.0.1",
@@ -227,7 +233,7 @@
     "tls-status, no such workspace": {
       "code": 4,
       "stdout": "",
-      "stderr": "error: no repro named 'nope' (run `houston list`)\n",
+      "stderr": "error: no workspace named 'nope' (run `houston list`)\n",
       "dialled": []
     },
     "tls-status, no name: the GUI's own": {
@@ -242,7 +248,7 @@
   "trust": {
     "trust-ca, the install fails": {
       "code": 0,
-      "stdout": "  ⚠ could not install it automatically on this platform (/usr/local/share/ca-certificates (need sudo: sudo: a password is required)).\n\n  Install this file by hand:\n    <home>/ca/ca.crt\n\n  macOS:          Keychain Access -> System -> drag it in -> set to Always Trust\n  Debian/Ubuntu:  sudo cp it into /usr/local/share/ca-certificates/ && sudo update-ca-certificates\n  Fedora/RHEL:    sudo cp it into /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust extract\n  Windows:        certutil -addstore -f Root <path>\n  Firefox:        Settings -> Privacy & Security -> Certificates -> View Certificates -> Authorities -> Import\n\n  Or skip it: the browser warning is safe to click through for a local repro.\n\n",
+      "stdout": "  ⚠ could not install it automatically on this platform (/usr/local/share/ca-certificates (need sudo: sudo: a password is required)).\n\n  Install this file by hand:\n    <home>/ca/ca.crt\n\n  macOS:          Keychain Access -> System -> drag it in -> set to Always Trust\n  Debian/Ubuntu:  sudo cp it into /usr/local/share/ca-certificates/ && sudo update-ca-certificates\n  Fedora/RHEL:    sudo cp it into /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust extract\n  Windows:        certutil -addstore -f Root <path>\n  Firefox:        Settings -> Privacy & Security -> Certificates -> View Certificates -> Authorities -> Import\n\n  Or skip it: the browser warning is safe to click through for a local workspace.\n\n",
       "stderr": "",
       "calls": [
         [
@@ -254,7 +260,7 @@
     },
     "trust-ca --uninstall, the removal fails": {
       "code": 0,
-      "stdout": "  ⚠ could not remove it automatically on this platform (/usr/local/share/ca-certificates (need sudo: sudo: a password is required)).\n\n  Remove this file by hand:\n    <home>/ca/ca.crt\n\n  macOS:          Keychain Access -> System -> drag it in -> set to Always Trust\n  Debian/Ubuntu:  sudo cp it into /usr/local/share/ca-certificates/ && sudo update-ca-certificates\n  Fedora/RHEL:    sudo cp it into /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust extract\n  Windows:        certutil -addstore -f Root <path>\n  Firefox:        Settings -> Privacy & Security -> Certificates -> View Certificates -> Authorities -> Import\n\n  Or skip it: the browser warning is safe to click through for a local repro.\n\n",
+      "stdout": "  ⚠ could not remove it automatically on this platform (/usr/local/share/ca-certificates (need sudo: sudo: a password is required)).\n\n  Remove this file by hand:\n    <home>/ca/ca.crt\n\n  macOS:          Keychain Access -> System -> drag it in -> set to Always Trust\n  Debian/Ubuntu:  sudo cp it into /usr/local/share/ca-certificates/ && sudo update-ca-certificates\n  Fedora/RHEL:    sudo cp it into /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust extract\n  Windows:        certutil -addstore -f Root <path>\n  Firefox:        Settings -> Privacy & Security -> Certificates -> View Certificates -> Authorities -> Import\n\n  Or skip it: the browser warning is safe to click through for a local workspace.\n\n",
       "stderr": "",
       "calls": [
         [
@@ -266,7 +272,7 @@
     },
     "trust-ca, installed": {
       "code": 0,
-      "stdout": "✓ CA installed into the system trust store (/usr/local/share/ca-certificates).\n  Restart the browser to pick it up. Firefox keeps its own store — if it still warns, import the CA under Settings → Privacy → Certificates.\n",
+      "stdout": "✓ CA installed into the system trust store (/usr/local/share/ca-certificates).\n  That is the machine running houston: a browser on another computer still warns, and never opens a .localhost name at all (`--domain` gives one that does).\n  Restart the browser to pick it up. Firefox keeps its own store — if it still warns, import the CA under Settings → Privacy → Certificates.\n",
       "stderr": "",
       "calls": [
         [

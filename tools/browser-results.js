@@ -15,7 +15,13 @@
 // Re-recorded for a directory workspace's notes reading as points (the presets write one
 // string per point now), for a rail card whose long name and preset list stay inside it, and
 // for the scenario card reading each preset's guide behind tabs.
-const EXPECTED = 226;
+// Home not asking about a workspace whose create is still running extends 226.
+// Three wording behaviors on a shared server -- restore as new naming who holds the port,
+// what deleting taken-down workspaces deletes, a running job named by the GUI's verbs --
+// extend 233.
+// A running job named by its verb once the record carries it, restore into a colleague's
+// workspace shown disabled, and recorded activity in plain words extend 236.
+const EXPECTED = 239;
 
 module.exports = (results) => {
   const wanted = process.env.BROWSER_GATE_PROBE === 'count' ? EXPECTED + 1 : EXPECTED;

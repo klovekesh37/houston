@@ -56,6 +56,7 @@ import { preflight } from '../kube/probe';
 import { createWorkspace } from '../kube/workspace';
 import {
   adminPass,
+  externalUrl,
   keptAdminPassword,
   metadata,
   readMeta,
@@ -469,7 +470,7 @@ async function claimMonitoringPorts(job: KubeCreate): Promise<void> {
   const held = await ports.sidecarHolder(job.monitoringPorts, job.reproName);
   if (held !== null) {
     throw new ConflictError(
-      `monitoring needs host port ${String(config.MONITOR_PORTS[1])}, already claimed by repro '${held.name}'`,
+      `monitoring needs host port ${String(config.MONITOR_PORTS[1])}, already claimed by workspace '${held.name}'`,
     );
   }
   const own = await ports.ownPorts(job.reproName);
@@ -563,8 +564,8 @@ export async function planClusterStep(job: KubeCreate): Promise<void> {
     warn(
       job.emit,
       `'${job.plan.context}' is a ${job.plan.distribution} cluster, and without --domain ` +
-        'this workspace is reachable only by a port-forward from this machine — ' +
-        'tied to a pod, gone when it restarts, and one person at a time. ' +
+        'this workspace opens only in a browser on the machine running houston, through a ' +
+        'port-forward that ends when its pod restarts. ' +
         '`--domain <name>` gives it a publicly-trusted address instead.',
       { phase: 'preflight' },
     );
@@ -946,6 +947,7 @@ export async function finish(job: KubeCreate): Promise<Bag> {
     // a script.
     root_url: meta.rootUrl,
     public_url: meta.publicUrl,
+    open_url: externalUrl(meta),
     reused: job.reused,
     runtime: topology.KUBERNETES,
   };

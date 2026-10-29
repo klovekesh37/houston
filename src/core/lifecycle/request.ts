@@ -94,7 +94,7 @@ export function requireLicense(text: string): string {
   const trimmed = text.trim();
   if (!LICENSE_RE.test(trimmed)) {
     throw new ValidationError(
-      '--license does not hold a Rocket.Chat licence: want the text Rocket.Chat issued (base64, ' +
+      '--license does not hold a Rocket.Chat license: want the text Rocket.Chat issued (base64, ' +
         'or starting RCV3_), on one line, at most 64 KiB',
     );
   }
@@ -114,7 +114,7 @@ export function voiceLicenceWarning(
   if (licensed || regToken !== '') return '';
   if (!presetNames.flatMap((name) => namesOf(name)).includes('voice')) return '';
   return (
-    'the voice preset needs a licence with the Voice add-on (teams-voip), and this workspace ' +
+    'the voice preset needs a license with the Voice add-on (teams-voip), and this workspace ' +
     'has neither --license nor --reg-token: it boots, but Rocket.Chat shows no call button ' +
     'until one is applied in Administration → Subscription.'
   );
@@ -504,7 +504,7 @@ function deriveOne(req: CreateReq, preset: string, prefix: string, emit: Emit): 
     emit,
     `the ${preset} preset will address its own service as '${host}', ` +
       'taken from the URL you gave — that is the name the browser follows, ' +
-      'and its default names this machine. Override with ' +
+      'and its default names only the machine running houston. Override with ' +
       `\`--set ${key}=...\`.`,
     { phase: 'create' },
   );

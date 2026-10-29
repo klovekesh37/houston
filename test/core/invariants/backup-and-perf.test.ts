@@ -156,6 +156,31 @@ describe('a restore', () => {
       jest.resetModules();
     }
   });
+
+  it("retargets a proxied workspace at the URL it advertises, not houston's loopback one", async () => {
+    // `up --root-url https://…` behind a proxy or a tunnel: restoring its own backup set
+    // Site_Url to http://localhost:<port>, and every link it mailed pointed there.
+    await aWorkspace('proxied', { advertised_url: 'https://rc.tunnel.test' });
+    const wrote: [string, string][] = [];
+    jest.resetModules();
+    jest.doMock('../../../src/core/rcapi', () => ({
+      ...(jest.requireActual('../../../src/core/rcapi') as Record<string, unknown>),
+      login: async () => ({ token: 't', userId: 'u' }),
+      getSetting: async () => 'https://source.example.test',
+      setSetting: async (_u: string, _a: unknown, _p: string, key: string, value: string) => {
+        wrote.push([key, value]);
+        return true;
+      },
+    }));
+    try {
+      const backup = require('../../../src/core/backup') as typeof BackupNS;
+      await backup.retargetSiteUrl('proxied', nullEmit);
+      expect(wrote).toEqual([['Site_Url', 'https://rc.tunnel.test']]);
+    } finally {
+      jest.dontMock('../../../src/core/rcapi');
+      jest.resetModules();
+    }
+  });
 });
 
 describe('a load test that could not put the caps back', () => {

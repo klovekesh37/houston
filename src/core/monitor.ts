@@ -172,7 +172,7 @@ export async function attachLocked(target: string, emit: Emit = nullEmit): Promi
     }
   } catch (exc) {
     throw new NotReadyError(
-      `repro not reachable to enable metrics (ready first): ${errorText(exc)}`,
+      `workspace not reachable to enable metrics (ready first): ${errorText(exc)}`,
     );
   }
 
@@ -266,7 +266,7 @@ export async function attachKubernetes(target: string, emit: Emit = nullEmit): P
     }
   } catch (exc) {
     throw new NotReadyError(
-      `repro not reachable to enable metrics (ready first): ${errorText(exc)}`,
+      `workspace not reachable to enable metrics (ready first): ${errorText(exc)}`,
     );
   }
 

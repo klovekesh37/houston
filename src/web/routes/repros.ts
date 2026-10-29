@@ -352,6 +352,7 @@ export function register(app: FastifyInstance): void {
     const target = await checkStateRequest(request.params.name, action);
     return submit(app, 'state', (emit) => setState(target, action, emit, { streamOutput: true }), {
       label: target,
+      verb: String(action), // start, stop or restart: `checkStateRequest` refused anything else
     });
   });
 
@@ -596,9 +597,7 @@ export function register(app: FastifyInstance): void {
       app,
       'teardown',
       (emit) => teardown(target, { volumes, confirm, emit, streamOutput: true }),
-      {
-        label: target,
-      },
+      { label: target, verb: volumes ? 'delete' : 'take down' },
     );
   });
 

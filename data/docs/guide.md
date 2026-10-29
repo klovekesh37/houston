@@ -6,7 +6,7 @@ starting one, read the [README](../../README.md) first.
 Every command also explains itself: `houston <command> --help`.
 
 **Contents:** [Commands at a glance](#commands-at-a-glance) ·
-[Everyday lifecycle](#everyday-lifecycle) · [Scenarios (presets)](#scenarios-presets) ·
+[Everyday lifecycle](#everyday-lifecycle) · [Presets](#presets) ·
 [Sample data](#sample-data) · [A customer's settings](#a-customers-settings) ·
 [Settings and environment variables](#settings-and-environment-variables) ·
 [Backup, restore, upgrade](#backup-restore-upgrade) · [HTTPS](#https) ·
@@ -52,7 +52,7 @@ creating it again:
 | `restart` | restarts Rocket.Chat |
 | `down` | removes the containers but **keeps** the data and the record |
 | `down --volumes` | deletes the data too, after asking |
-| `prune` | **deletes** every workspace that is `down`, with its data and record, except pinned and running ones |
+| `prune` | **deletes** every workspace that is `down`, with its data and record, except pinned ones; stopped ones are not touched. An admin's prune covers everyone's |
 
 The commands that delete data ask first, and `prune` lists what it will remove. Add
 `--yes` to skip the question in a script.
@@ -61,12 +61,13 @@ The commands that delete data ask first, and `prune` lists what it will remove. 
 for a different version, preset or monitoring, it warns and ignores the request. To try
 another version, use `houston upgrade` or pick a new name. `--force` rebuilds the
 workspace, and `--fresh` also wipes its data. A rebuild keeps what you leave out: its
-deployment, instance count, cluster, admin password, monitoring, pin and port (a new port
-only when something else has taken the old one).
+deployment, instance count, cluster, admin password, monitoring, `--root-url`, pin and port
+(a new port only when something else has taken the old one).
 
 **One workspace you use every day:** create it once with `--pin`, then `stop` and
 `start` it. A command without `--name` acts on the pinned workspace, or on the one
-`houston use <name>` chose last.
+`houston use <name>` chose last. That default belongs to the houston home, so on a shared
+server it is the same for everyone using it: give `--name` there.
 
 ```bash
 houston up --version 8.5.1 --name main --pin
@@ -79,7 +80,7 @@ out of memory.
 
 ---
 
-## Scenarios (presets)
+## Presets
 
 A preset adds the service a ticket is about, wires Rocket.Chat to it, and turns the
 feature on, so it is ready when you sign in.
@@ -104,6 +105,12 @@ houston up --version 8.5.1 --name ticket-1234 --preset ldap --wait
 
 For `ldap`, `saml` and `oidc`, sign in as **`user1` / `user1`**. `houston info` lists
 each preset's consoles and logins.
+
+Those consoles listen on fixed ports on this machine (phpLDAPadmin 8082, Mailpit 8025,
+Keycloak 8081 or 8085, MinIO 9000 and 9001, the livechat demo 8090), so one machine holds
+one workspace per such preset, and one with monitoring. A workspace that is only `down`
+still holds its ports, because it comes back on them: to start another `ldap` workspace,
+delete the first with `down --volumes` (its data goes too), or use another machine.
 
 Presets take parameters with `--set key=value`. `houston presets` prints each one's
 parameters and defaults:
@@ -339,7 +346,8 @@ variables; give it a setting's name and houston points you to the prefixed form.
 - An `OVERWRITE_SETTING_` value is applied at every boot. The admin UI can still change
   it while Rocket.Chat runs, and the next restart puts it back.
 - A change recreates only the Rocket.Chat container. MongoDB keeps running.
-  `--no-restart` saves the change for the next `up`.
+  `--no-restart` saves the change without applying it; re-run the same `houston env`
+  without it to apply it.
 - Your overrides are kept with the workspace and win over the preset's.
 - You may override `MONGO_URL`, `PORT`, `ROOT_URL` or `TRANSPORTER` to reproduce a
   broken configuration. houston warns what each one will break.
@@ -375,7 +383,9 @@ houston upgrade --name ticket-1234 --rollback
   it starts. `--dry-run` shows the plan without changing anything.
 - An upgrade keeps the workspace's MongoDB when the new Rocket.Chat still runs on it, as
   7.13 runs on 7.0. One that needs a new major MongoDB version is refused: MongoDB majors
-  have to be upgraded one step at a time.
+  have to be upgraded one step at a time. To carry the data across, `houston backup`, then
+  `houston up` the new version under a new name, then `houston restore <bundle> --name
+  <new name> --allow-upgrade`. `upgrade --force` moves Rocket.Chat only.
 
 ---
 
@@ -388,15 +398,18 @@ On Docker, one shared Traefik proxy, the **edge**, holds ports 80 and 443 and se
 every HTTPS name on the machine. It starts with the first workspace that needs it.
 
 ```bash
-# A real name, with a Let's Encrypt certificate. The name must point at this machine.
+# A real name, with a Let's Encrypt certificate. The name must point at this machine; under
+# a wildcard DNS record (*.example.com) that already does, any name works with no DNS change.
 houston up --version 8.5.1 --name ticket-1234 --domain t1234.example.com --email you@example.com
 
-# No domain and no internet: houston's own certificate authority.
+# No domain and no internet: houston's own certificate authority, for a browser on this machine.
 houston trust-ca                                              # once per machine
 houston up --version 8.5.1 --name ticket-1234 --https         # https://ticket-1234.houston.localhost
 ```
 
-The email is remembered (`houston config set acme.email <address>`). Rocket.Chat's
+The email is remembered (`houston config set acme.email <address>`). It is the contact for
+the `--domain` certificate, so `--email` without a name is refused; `--https` needs none.
+Rocket.Chat's
 `ROOT_URL` becomes the HTTPS URL, which is what OAuth and SAML redirects need.
 
 A preset's own pages are served on the same name and certificate, on both runtimes, so
@@ -414,7 +427,7 @@ they work from any browser, not only on this machine:
 
 ```bash
 houston edge status              # is it running, which names, can it reach each one
-houston edge stop                # frees ports 80 and 443
+houston edge stop                # frees ports 80 and 443: every HTTPS workspace goes offline
 houston tls-status --name ticket-1234
 ```
 

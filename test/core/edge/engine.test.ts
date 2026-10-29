@@ -197,7 +197,7 @@ describe('naming what holds :443', () => {
       [['ps', '{{.Names}}'], { stdout: `${CONTAINER}\t0.0.0.0:443->443/tcp\n` }],
       ...foreignEdgeAt('/somebody/elses/.houston/edge'),
     ]);
-    expect(await portHolder(443)).toContain('another HOUSTON_HOME');
+    expect(await portHolder(443)).toContain('another houston home, usually houston run with sudo');
   });
 
   it('does not report this home’s own edge as foreign', async () => {
@@ -267,6 +267,55 @@ describe('starting the edge', () => {
         delete cfg.acme_challenge;
       });
     }
+  });
+
+  it("applies a changed acme.challenge to an edge that already asks Let's Encrypt", async () => {
+    // Behind a tunnel: the edge was built with TLS-ALPN, then `config set acme.challenge http`
+    // and `up --domain` again. The edge kept TLS-ALPN and the certificate failed on it a second
+    // time (measured behind Cloudflare); only `edge restart` applied the setting.
+    await write(edge({ domain: '', acmeEmail: 'a@b.test', acmeChallenge: 'tlsalpn' }));
+    const config = require('../../../src/lib/config') as typeof ConfigNS;
+    config.updateConfig((cfg) => {
+      cfg.acme_challenge = 'http';
+    });
+    try {
+      scriptDocker(runningEdge());
+      expect((await ensureRunning({ acmeEmail: 'a@b.test' })).ok).toBe(true);
+      expect(current()?.acmeChallenge).toBe('http');
+      expect(composeVerbs().some((verb) => verb.startsWith('down'))).toBe(true);
+    } finally {
+      config.updateConfig((cfg) => {
+        delete cfg.acme_challenge;
+      });
+    }
+  });
+
+  it('rebuilds a challenge-changed edge with the staging its request asks for', async () => {
+    // A create may ask for staging itself (the API's acme_staging), not only through config:
+    // re-resolving from config alone sent that request's names to production.
+    await write(edge({ domain: '', acmeEmail: 'a@b.test', acmeChallenge: 'tlsalpn' }));
+    const config = require('../../../src/lib/config') as typeof ConfigNS;
+    config.updateConfig((cfg) => {
+      cfg.acme_challenge = 'http';
+    });
+    try {
+      scriptDocker(runningEdge());
+      expect((await ensureRunning({ acmeEmail: 'a@b.test', acmeStaging: true })).ok).toBe(true);
+      expect(current()?.acmeChallenge).toBe('http');
+      expect(current()?.acmeStaging).toBe(true);
+    } finally {
+      config.updateConfig((cfg) => {
+        delete cfg.acme_challenge;
+      });
+    }
+  });
+
+  it('leaves a running edge alone when its challenge has not changed', async () => {
+    await write(edge({ domain: '', acmeEmail: 'a@b.test', acmeChallenge: 'tlsalpn' }));
+    scriptDocker(runningEdge());
+    expect((await ensureRunning({ acmeEmail: 'a@b.test' })).ok).toBe(true);
+    expect(current()?.acmeChallenge).toBe('tlsalpn');
+    expect(composeVerbs().some((verb) => verb.startsWith('down'))).toBe(false);
   });
 
   it('still applies a changed configuration to an edge that is already running', async () => {

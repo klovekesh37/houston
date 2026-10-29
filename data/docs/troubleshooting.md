@@ -25,8 +25,9 @@ for what Kubernetes refuses, see [the Kubernetes guide](kubernetes.md#what-kuber
 
 | It says | Do this |
 |---|---|
-| something about **memory** | Remove a workspace you are done with: `houston down --name <name> --volumes`. |
+| something about **memory** | Stop one of your own running workspaces (`houston stop --name <name>` keeps its data), or remove one you are done with: `houston down --name <name> --volumes`. The message names each workspace's owner: ask before stopping a colleague's. |
 | a **port** is in use | Pass `--port`, or leave it out and houston picks a free one. |
+| "publishes port(s) …, already claimed by workspace '<name>'" | A preset's console port is fixed, and `<name>` holds it, even while it is only `down`. One workspace per such preset fits on a machine. The message names its owner: they free the port with `houston down --name <name> --volumes` (its data goes too). Ask them rather than deleting a colleague's workspace, or use another machine. |
 | the **Docker daemon** is not running | Start Docker Desktop, or `sudo systemctl start docker`. |
 | "already exists and is reused as-is" | `up` brings back the existing workspace. `--force` rebuilds it, `--fresh` also wipes its data; `houston upgrade` changes the version. |
 | "is already a Docker Compose workspace" (or "a Kubernetes workspace") | The name, typed or derived from the version, belongs to a workspace on the other runtime, and one name is one workspace. Give the new one its own name, or delete the old one first with `houston down --name <name> --volumes`. |

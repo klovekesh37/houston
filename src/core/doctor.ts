@@ -481,7 +481,7 @@ export async function checkPorts(_ctx: Ctx): Promise<Row[]> {
       line(
         'ports',
         'ok',
-        `Port 3000 free (repros auto-pick from 3000; next free: ${String(free)})`,
+        `Port 3000 free (workspaces auto-pick from 3000; next free: ${String(free)})`,
       );
     } else {
       line(

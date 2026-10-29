@@ -82,6 +82,14 @@ describe('the config files written into a workspace', () => {
     expect(otel?.[1]).not.toContain('__PROJECT__');
   });
 
+  it('ships what a container wrote BEFORE the collector started, not only what follows', () => {
+    // `houston monitor` on a running workspace started the collector at the END of each log
+    // (the filelog default), so Rocket.Chat's boot output never reached Loki: measured, 57
+    // of 65 lines missing from the "Rocket.Chat Logs" dashboard.
+    const otel = files(RC_SERVICES, PROJECT).find(([p]) => p.endsWith('otel/config.yaml'));
+    expect(otel?.[1]).toMatch(/\n {10}start_at: beginning\n/u);
+  });
+
   it('generates a scrape target per Rocket.Chat service, on the metrics port', () => {
     const targets = files(RC_SERVICES, PROJECT).find(([p]) => p.endsWith('rocketchat.yml'));
     expect(targets?.[1]).toContain('    - rocketchat-1:9458');

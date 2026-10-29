@@ -39,12 +39,14 @@ import {
   normalizeAllowHost,
   normalizeDomain,
   notes,
+  probeServed,
   recentIssuances,
   recordIssuance,
   registrableDomain,
   rootUrl,
   tlsSpec,
   verify,
+  type TlsReport,
 } from '../../src/core/tls';
 import { ensureCa, issueLeaf } from '../../src/core/tls-local';
 
@@ -463,4 +465,47 @@ describe('a TLS endpoint nothing is serving', () => {
     for (const [host, port] of targets) ours.push((await verify(host, { port, timeout: 5 })).error);
     expect(ours).toEqual(recorded);
   }, 60_000);
+});
+
+describe('a Kubernetes name the edge carries', () => {
+  // `tls-status` probed only the cluster's ingress (the origin) and said "✓ serving" while
+  // the edge in front was down and the URL refused every connection.
+  const extra = { tls_terminates: 'cluster', edge: true, ingress_endpoint: '10.0.0.5:31416' };
+  const report = (over: Partial<TlsReport>): TlsReport => ({
+    host: '',
+    port: 443,
+    serving: true,
+    trusted: false,
+    trusted_via_ca: true,
+    issuer: 'CN = houston local CA',
+    subject: '',
+    dates: '',
+    names: [],
+    fallback: false,
+    self_signed: false,
+    staging: false,
+    error: '',
+    ...over,
+  });
+
+  it('is not serving when the name itself refuses, however well the origin answers', async () => {
+    const ask = jest.fn(async (target: string) =>
+      target === '10.0.0.5' ? report({}) : report({ serving: false, error: 'Connection refused' }),
+    );
+    const r = await probeServed('ws.houston.localhost', 443, extra, { ask: ask as typeof verify });
+    expect(r.serving).toBe(false);
+    expect(r.error).toContain('houston edge status');
+    // The origin is still asked with the name as SNI: that rule is what this sits on top of.
+    expect(ask.mock.calls[0]).toEqual(['10.0.0.5', { port: 31416, sni: 'ws.houston.localhost' }]);
+  });
+
+  it("reports the origin's certificate when the name answers, a CDN in front included", async () => {
+    const ask = jest.fn(async (target: string) =>
+      target === '10.0.0.5'
+        ? report({ issuer: 'CN = R11' })
+        : report({ issuer: 'CN = Cloudflare Inc ECC CA-3' }),
+    );
+    const r = await probeServed('rc.example.com', 443, extra, { ask: ask as typeof verify });
+    expect(r).toMatchObject({ serving: true, issuer: 'CN = R11' });
+  });
 });

@@ -91,10 +91,11 @@ export function build(params: Params): Preset {
   return {
     ...emptyPreset('email'),
     description:
-      "Mailpit mailcatcher wired to RC's SMTP. Every email RC sends — " +
-      'password resets, invites, verification, notification and 2FA mail — ' +
-      `is captured at ${mailpitUrl} (at /mailpit/ on an HTTPS workspace) instead of ` +
-      'leaving the machine. ' +
+      // The GUI's create list shows only the first sentence: it has to say what this is.
+      'A web inbox (Mailpit) that catches every email Rocket.Chat sends; nothing is ' +
+      'delivered and nothing can be sent in. Password resets, invites, verification, ' +
+      'notification and 2FA mail all land there: at <workspace URL>/mailpit/ over HTTPS, ' +
+      `otherwise at ${mailpitUrl} on the machine running houston. ` +
       'Pair with --seed for users with verified emails.',
     env: smtpSettings(verification),
     services: mailpitService(),
@@ -109,7 +110,8 @@ export function build(params: Params): Preset {
     kubernetesManifests: [mailpitManifests()],
     guides: [
       guide('email', {
-        summary: 'Mailpit catches every email Rocket.Chat sends.',
+        summary:
+          'Mailpit catches every email Rocket.Chat sends and shows it in a web inbox; it delivers nothing and receives nothing.',
         steps: [
           "Admin → Email → 'Send test email', then open Mailpit.",
           'A seeded user is asked for a sign-in code: read it in Mailpit (one shared inbox; tell users apart by the To column).',

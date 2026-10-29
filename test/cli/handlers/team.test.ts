@@ -180,12 +180,16 @@ afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function typescript(one: Case) {
+async function typescript(one: Case, { removes = false } = {}) {
   jest.resetModules();
   process.env.HOUSTON_USER = one.user;
   jest.doMock('../../../src/core/lifecycle/destroy', () => ({
     ...jest.requireActual('../../../src/core/lifecycle/destroy'),
-    teardown: async (name: string) => ({ name, removed: true, runtime: 'docker' }),
+    teardown: async (name: string) => {
+      // `removes`: as the real one does with --volumes, the record goes with the workspace.
+      if (removes) fs.rmSync(path.join(home, 'repros', name), { recursive: true, force: true });
+      return { name, removed: true, runtime: 'docker' };
+    },
   }));
   const app = require('../../../src/cli/app') as typeof AppNS;
   const handlers = require('../../../src/cli/handlers') as typeof HandlersNS;
@@ -253,6 +257,31 @@ describe('the shared-box CLI, against earlier releases', () => {
     expect({ code: ours.code, stdout: stamp(ours.stdout), stderr: ours.stderr }).toEqual({
       ...recorded,
       stdout: stamp(recorded.stdout),
+    });
+  });
+});
+
+describe('down --volumes names whose workspace it deleted', () => {
+  it('reads the owner before the teardown removes the record that names it', async () => {
+    // The removed line named nobody: by the time it was printed the record was gone.
+    const argv = ['down', '-n', 'alice-rc8-5-1', '--volumes', '--yes'];
+    const human = await typescript({ argv, user: 'bob' }, { removes: true });
+    expect(human.stdout).toBe(
+      "deleting 'alice-rc8-5-1', owned by alice.\n" +
+        "✓ 'alice-rc8-5-1' removed (containers, data volume, and record; owned by alice).\n",
+    );
+    writeRecord('alice-rc8-5-1', { created_by: 'alice' });
+    const json = await typescript({ argv: [...argv, '--json'], user: 'bob' }, { removes: true });
+    const envelope = JSON.parse(json.stdout.trim().split('\n').at(-1) ?? '') as {
+      data: Record<string, unknown>;
+    };
+    // Additive: the fields --json has always carried, and the owner beside them.
+    expect(envelope.data).toEqual({
+      name: 'alice-rc8-5-1',
+      removed: true,
+      runtime: 'docker',
+      volumes: true,
+      owner: 'alice',
     });
   });
 });

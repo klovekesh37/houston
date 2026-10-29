@@ -323,6 +323,7 @@ receivers:
           include:
             - /hostfs/storage/\`container_id\`/**/*.log
           include_file_path: true
+          start_at: beginning
           operators:
             - type: router
               id: log_router

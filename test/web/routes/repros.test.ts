@@ -20,6 +20,7 @@ import { AUDIT_FILE } from '../../../src/core/audit';
 import { event } from '../../../src/lib/events';
 import * as admin from '../../../src/core/lifecycle/admin';
 import * as createDocker from '../../../src/core/lifecycle/create-docker';
+import * as destroy from '../../../src/core/lifecycle/destroy';
 import { deriveFor } from '../../../src/core/lifecycle/naming';
 import * as inspect from '../../../src/core/lifecycle/inspect';
 import * as payload from '../../../src/core/lifecycle/payload';
@@ -74,6 +75,10 @@ jest.mock('../../../src/core/lifecycle/payload', () => ({
 jest.mock('../../../src/core/lifecycle/create-docker', () => ({
   ...jest.requireActual('../../../src/core/lifecycle/create-docker'),
   createRepro: jest.fn(),
+}));
+jest.mock('../../../src/core/lifecycle/destroy', () => ({
+  ...jest.requireActual('../../../src/core/lifecycle/destroy'),
+  teardown: jest.fn(),
 }));
 jest.mock('../../../src/core/lifecycle/state', () => ({
   ...jest.requireActual('../../../src/core/lifecycle/state'),
@@ -138,6 +143,10 @@ function defaults(): void {
     .mocked(state.setState)
     .mockReset()
     .mockResolvedValue(undefined as never);
+  jest
+    .mocked(destroy.teardown)
+    .mockReset()
+    .mockImplementation(async (name: string) => ({ name, removed: false }));
   jest
     .mocked(admin.login)
     .mockReset()
@@ -722,6 +731,30 @@ describe('acting on a workspace', () => {
     expect(refused.statusCode).toBe(409);
     expect(String(refused.json().error)).toMatch(/^k1 belongs to kmem — /u);
     expect(jest.mocked(createDocker.createRepro)).toHaveBeenCalledTimes(2);
+  });
+
+  it('records what a teardown or a state job does, which the kind alone does not say', async () => {
+    // Activity and the rail could not tell a Delete from a Take down (both `teardown`), nor
+    // Stop, Start and Restart (all `state`): the job record carried neither.
+    await workspace('w-del', 'alice');
+    await workspace('w-down', 'alice');
+    expect((await post('/api/repros/x/state', { action: 'restart' })).statusCode).toBe(200);
+    expect((await del('/api/repros/w-down')).statusCode).toBe(200);
+    expect((await del('/api/repros/w-del?volumes=true&confirm=true')).statusCode).toBe(200);
+    expect(await app.jobs.drain()).toEqual([]);
+    const listed = ((await get('/api/jobs')).json().jobs as Record<string, unknown>[]).map(
+      (job) => [job.kind, job.label, job.verb],
+    );
+    expect(listed).toEqual([
+      ['teardown', 'w-del', 'delete'],
+      ['teardown', 'w-down', 'take down'],
+      ['state', 'x', 'restart'],
+    ]);
+    // `label` stays the workspace's name: the rail matches a running job to its row by it.
+    expect(jest.mocked(destroy.teardown).mock.calls.map(([name]) => name)).toEqual([
+      'w-down',
+      'w-del',
+    ]);
   });
 
   it('sets the default workspace', async () => {

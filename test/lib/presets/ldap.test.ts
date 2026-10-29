@@ -73,7 +73,7 @@ describe('--set groups=on', () => {
 });
 
 describe('--set bind=service', () => {
-  it('binds Rocket.Chat as the read-only user osixia creates, on both runtimes', () => {
+  it('binds Rocket.Chat as the read-only user the directory creates, on both runtimes', () => {
     const preset = load('ldap', { bind: 'service' });
     expect(preset.env).toMatchObject({
       OVERWRITE_SETTING_LDAP_Authentication_UserDN: 'cn=readonly,dc=example,dc=com',
@@ -147,6 +147,8 @@ describe('a directory too large to ship', () => {
           HOUSTON_LDAP_BASE_DN: 'dc=corp,dc=example,dc=org',
           HOUSTON_LDAP_DOMAIN: 'corp.example.org',
           HOUSTON_LDAP_GROUPS: groups,
+          // The container has it from slapd's own environment, as it has the base DN.
+          LDAP_ADMIN_PASSWORD: 'admin',
         }),
       ).toBe(shipped);
     }
@@ -162,7 +164,7 @@ describe('a directory too large to ship', () => {
       entrypoint: [
         '/bin/sh',
         '-c',
-        expect.stringContaining('&& exec /container/tool/run --copy-service'),
+        expect.stringContaining('&& exec /usr/local/bin/docker-entrypoint.sh slapd'),
       ],
       environment: { HOUSTON_LDAP_USERS: '130000', HOUSTON_LDAP_GROUPS: 'on' },
     });
@@ -189,9 +191,7 @@ describe('--set tls=ldaps|starttls', () => {
       LDAP_TLS_VERIFY_CLIENT: 'never',
     });
     expect(ldaps.services.openldap?.volumes).toEqual(
-      expect.arrayContaining([
-        './ldap/certs/ldap.key:/container/service/slapd/assets/certs/ldap.key:ro',
-      ]),
+      expect.arrayContaining(['./ldap/certs/ldap.key:/container/certs/ldap.key:ro']),
     );
     expect(ldaps.extra).toEqual({ directory_tls: 'ldaps', directory_trust: 'houston' });
     expect(load('ldap', { tls: 'starttls' }).env).toMatchObject({
@@ -290,8 +290,16 @@ describe('--set directory=ad', () => {
       entrypoint: ['/bin/sh', '-c', expect.stringContaining('/entrypoint.d/50-houston-seed')],
       environment: { REALM: 'EXAMPLE.COM', DOMAIN: 'EXAMPLE', INSECURE_LDAP: 'true' },
     });
-    expect(preset.services.phpldapadmin?.environment).toMatchObject({
-      PHPLDAPADMIN_LDAP_HOSTS: 'samba-ad',
+    // phpLDAPadmin 2: the Administrator signs in by DN; Samba has no entryUUID.
+    expect(preset.services.phpldapadmin?.environment).toEqual({
+      LDAP_HOST: 'samba-ad',
+      LDAP_BASE_DN: 'DC=example,DC=com',
+      LDAP_USERNAME: 'CN=Administrator,CN=Users,DC=example,DC=com',
+      LDAP_PASSWORD: expect.any(String),
+      LDAP_LOGIN_ATTR: 'dn',
+      LDAP_LOGIN_ATTR_DESC: 'Login DN',
+      LDAP_LOGIN_OBJECTCLASS: 'user',
+      LDAP_GUIDKEY: 'objectguid',
     });
     expect(preset.files).toEqual([['ldap/ad-seed.sh', AD_SEED]]);
     expect(preset.dependsOn).toEqual(['samba-ad']);
@@ -507,5 +515,144 @@ describe('--set idp=saml|oidc', () => {
       'both define the service "keycloak"',
     );
     expect(load('ldap', { idp: 'none', mfa: 'off' })).toEqual(load('ldap', {}));
+  });
+});
+
+describe("the directory's browser", () => {
+  // osixia/phpldapadmin:0.9.0 shipped phpLDAPadmin 1.2.5 on a PHP nobody patches any more;
+  // phpLDAPadmin 2.3.12 is the security release on PHP 8.4.27.
+  const IMAGE = 'phpldapadmin/phpldapadmin:2.3.12';
+
+  it('is the maintained phpLDAPadmin on both runtimes, signed in to with the admin DN', () => {
+    const compose = load('ldap', {});
+    expect(compose.services.phpldapadmin?.image).toBe(IMAGE);
+    expect(compose.services.phpldapadmin?.environment).toEqual({
+      LDAP_HOST: 'openldap',
+      LDAP_BASE_DN: 'dc=example,dc=com',
+      LDAP_USERNAME: 'cn=admin,dc=example,dc=com',
+      LDAP_PASSWORD: 'admin',
+      // The notes say "log in with DN"; 2.x defaults to uid, and to posixAccount entries.
+      LDAP_LOGIN_ATTR: 'dn',
+      LDAP_LOGIN_ATTR_DESC: 'Login DN',
+      LDAP_LOGIN_OBJECTCLASS: 'organizationalRole',
+    });
+    const docs = resolve('ldap', 'kubernetes', {}).kubernetesManifests.flatMap((m) =>
+      safeLoadAll(m),
+    ) as {
+      kind: string;
+      metadata: { name: string };
+      spec: { template: { spec: { containers: Record<string, unknown>[] } } };
+    }[];
+    const ui = docs.find((d) => d.kind === 'Deployment' && d.metadata.name === 'phpldapadmin')!;
+    const container = ui.spec.template.spec.containers[0] as {
+      image: string;
+      env: { name: string; value: string }[];
+      ports: { containerPort: number }[];
+      readinessProbe: { httpGet: { path: string; port: number } };
+    };
+    expect(container.image).toBe(IMAGE);
+    expect(Object.fromEntries(container.env.map((e) => [e.name, e.value]))).toEqual(
+      compose.services.phpldapadmin?.environment,
+    );
+    // It runs as www-data, on 8080; `/` answers a redirect, so readiness asks Laravel's /up.
+    expect(container.ports).toEqual([{ containerPort: 8080 }]);
+    expect(container.readinessProbe.httpGet).toEqual({ path: '/up', port: 8080 });
+  });
+
+  it('never ships the old image, in any flavour or combination', () => {
+    for (const params of [{}, { directory: 'ad' }, { tls: 'ldaps' }, { idp: 'saml' }]) {
+      for (const runtime of ['docker', 'kubernetes'] as const) {
+        const text = JSON.stringify(resolve('ldap', runtime, params));
+        expect(text).not.toContain('osixia/phpldapadmin');
+        expect(text).not.toContain('PHPLDAPADMIN_');
+      }
+    }
+  });
+});
+
+describe("the administrator's entry", () => {
+  // osixia makes cn=admin the root account and, seeded from custom LDIF, never creates its
+  // entry. phpLDAPadmin 2 then refused the documented sign-in: "Authentication succeeded, but
+  // the DN doesnt exist ... rootdn to login (not supported)" (live, k3s, 2026-10-28).
+  const ENTRY =
+    'dn: cn=admin,dc=example,dc=com\nobjectClass: simpleSecurityObject\n' +
+    'objectClass: organizationalRole\ncn: admin\nuserPassword: admin\n';
+
+  it('is seeded first, with the class phpLDAPadmin admits, on both runtimes', () => {
+    expect(ldifOf(load('ldap', {})).startsWith(ENTRY)).toBe(true);
+    const cm = resolve('ldap', 'kubernetes', {})
+      .kubernetesManifests.flatMap((m) => safeLoadAll(m))
+      .find((d) => (d as { kind: string }).kind === 'ConfigMap') as {
+      data: Record<string, string>;
+    };
+    expect(Object.values(cm.data).some((text) => text.startsWith(ENTRY))).toBe(true);
+    expect(load('ldap', {}).services.phpldapadmin?.environment).toMatchObject({
+      LDAP_LOGIN_OBJECTCLASS: 'organizationalRole',
+    });
+  });
+
+  it('is generated too, for a directory too large to ship', () => {
+    expect(GENERATOR).toContain('-v admin="$LDAP_ADMIN_PASSWORD"');
+    expect(GENERATOR).toContain('dn: cn=admin,%s\\nobjectClass: simpleSecurityObject');
+  });
+
+  it("is followed by the delete of the image's own empty ou=people, shipped and generated", () => {
+    // The image seeds ou=people beside ou=groups; houston's users are in ou=Users, so every
+    // tree showed an empty second people branch (live, Docker lane VD, 2026-10-28).
+    const gone = 'dn: ou=people,dc=example,dc=com\nchangetype: delete\n';
+    expect(ldifOf(load('ldap', {})).startsWith(`${ENTRY}\n${gone}\n`)).toBe(true);
+    expect(GENERATOR).toContain('printf "dn: ou=people,%s\\nchangetype: delete\\n\\n", base');
+  });
+});
+
+describe('the directory itself', () => {
+  // osixia/openldap:1.5.0 is OpenLDAP 2.4.57 on Debian 10 (both past end of life, last built
+  // February 2021); its replacement keeps osixia's environment and is pinned by digest.
+  const PINNED = /^ghcr\.io\/intechcore\/openldap:2\.6\.\d+-\d+@sha256:[0-9a-f]{64}$/u;
+
+  it('is a maintained OpenLDAP 2.6, pinned by digest, seeded from /bootstrap on both runtimes', () => {
+    for (const users of ['5', '600']) {
+      const compose = load('ldap', { users });
+      const slapd = compose.services.openldap as { image: string; command?: unknown };
+      expect(slapd.image).toMatch(PINNED);
+      // The image's own CMD (`slapd`) applies /bootstrap; osixia's --copy-service is gone.
+      expect(slapd.command).toBeUndefined();
+      const deployment = resolve('ldap', 'kubernetes', { users })
+        .kubernetesManifests.flatMap((m) => safeLoadAll(m))
+        .find(
+          (d) =>
+            (d as { kind: string }).kind === 'Deployment' &&
+            (d as { metadata: { name: string } }).metadata.name === 'openldap',
+        ) as { spec: { template: { spec: { containers: Record<string, unknown>[] } } } };
+      const container = deployment.spec.template.spec.containers[0] as {
+        image: string;
+        args?: unknown;
+        volumeMounts: { mountPath: string }[];
+      };
+      expect(container.image).toBe(slapd.image);
+      expect(container.args).toBeUndefined();
+      if (users === '5') {
+        expect(container.volumeMounts.map((m) => m.mountPath)).toContain(
+          '/bootstrap/50-rc-users.ldif',
+        );
+      }
+    }
+  });
+
+  it('never ships osixia/openldap, in any flavour or combination', () => {
+    for (const params of [
+      {},
+      { tls: 'ldaps' },
+      { tls: 'starttls' },
+      { bind: 'service' },
+      { users: '600' },
+    ]) {
+      for (const runtime of ['docker', 'kubernetes'] as const) {
+        const text = JSON.stringify(resolve('ldap', runtime, params));
+        expect(text).not.toContain('osixia/openldap');
+        expect(text).not.toContain('--copy-service');
+        expect(text).not.toContain('/container/service/slapd');
+      }
+    }
   });
 });

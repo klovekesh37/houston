@@ -305,8 +305,9 @@ export function blockers(
 ): string[] {
   const out: string[] = [];
   // kubectl and helm are for BUILDING (prepare runs them after the money is spent), so a
-  // create refuses without them. Nothing else here needs helm, and a delete that refused
-  // for a tool it never runs would be the one command that cannot stop a bill.
+  // create refuses without them. A delete never needs helm, and needs kubectl only to look
+  // inside first -- `deleteCluster` asks for it there, and `--force` does without, so a
+  // missing tool is never what stops somebody stopping a bill.
   const coreTools = new Set(Object.keys(CORE_TOOLS));
   for (const name of Object.keys(pre.tools).sort()) {
     if (!toBuild && coreTools.has(name)) continue;
@@ -551,6 +552,8 @@ export const DEFAULT_VPC_CIDR = '10.0.0.0/16';
  * because an undocumented divergence is indistinguishable from a mistake.
  */
 export const DEFAULT_NODES = 3;
+/** The most nodes houston will ask eksctl for; the cost estimate holds the same bound. */
+export const MAX_NODES = 100;
 
 /**
  * The date this cluster says it is wanted until, or '' for no expiry.
@@ -1567,6 +1570,13 @@ export async function createCluster(
     emit?: Emit;
   } = {},
 ): Promise<Record<string, unknown>> {
+  // Before AWS is asked anything: `0` became 3 at both front-ends, and -1 or 250 went to
+  // eksctl as the managed group's desiredCapacity.
+  if (!Number.isInteger(nodes) || nodes < 1 || nodes > MAX_NODES) {
+    throw new ValidationError(
+      `a cluster is built with from 1 to ${String(MAX_NODES)} nodes, not ${String(nodes)}`,
+    );
+  }
   const [pre, resolved] = await refuseACreateWeShouldNotMake(name, where);
 
   const expires = expiryDate(expiresDays);
@@ -1736,6 +1746,16 @@ export async function deleteCluster(
   const stopping = blockers(pre);
   if (stopping.length > 0) {
     throw new PreflightError(`cannot delete an EKS cluster from here: ${stopping.join('; ')}`);
+  }
+  // A delete without --force reads what the cluster holds, with kubectl. Missing, that read
+  // failed as "nothing answered: it may be stopped..." about a cluster in perfect health.
+  const kubectl = pre.tools.kubectl as Tool | undefined;
+  if (!force && kubectl !== undefined && !toolPresent(kubectl)) {
+    throw new PreflightError(
+      `kubectl is not installed, so houston cannot read what '${name}' holds before ` +
+        'deleting it. Install it (`houston doctor` names what is missing), or pass --force ' +
+        'to delete it without looking.',
+    );
   }
 
   // A browser selection contains the full ARN. Refuse if the AWS identity changed

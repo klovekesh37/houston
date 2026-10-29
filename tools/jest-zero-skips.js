@@ -142,7 +142,18 @@ const ROOT = path.resolve(__dirname, '..');
 // the combined note, the public-URL stripping, the scenario group's all-or-nothing rule, and the
 // blank lines a conditional part leaves dropped.
 // The voice preset links its guide online.
-const FLOOR = 4701;
+// The 2026-10-21 live audit's fixes: serve's local-proxy text, a rebuild keeping --root-url,
+// K8s --https refused without Docker, tls-status asking the name, ready on a stopped K8s
+// workspace, late monitoring shipping earlier logs, the operator's webhook, the keep-data
+// down line, an EKS node bound at core and route and a missing kubectl named, the side-port
+// refusal's cost, the down hint's version, the advertised URL in info, a combination's notes
+// at the width info prints them, and a proxied workspace's restore keeping its Site_Url.
+// phpLDAPadmin 2.3.12 in place of osixia's 1.2.5, on both runtimes, and never the old image;
+// the cn=admin entry osixia never created, seeded so phpLDAPadmin 2 can sign it in; and the
+// directory a pinned, maintained OpenLDAP 2.6 in place of osixia/openldap:1.5.0. A changed
+// acme.challenge reaching a running edge from `up --domain`, with the staging its request asks
+// for.
+const FLOOR = 4760;
 
 /** Every authored construct that removes a test from a run or inverts what it asserts. */
 const SKIP_CONSTRUCTS = [

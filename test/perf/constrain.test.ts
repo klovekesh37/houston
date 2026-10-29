@@ -115,7 +115,7 @@ describe('resolveServices', () => {
     // A typo that silently capped nothing would report a constrained result for an
     // unconstrained workspace.
     expect(() => resolveServices({ redis: { cpus: 1, mem: null } }, services)).toThrow(
-      /no service 'redis' in this repro \(services: ldap, mongodb, rocketchat-1, rocketchat-2\)/u,
+      /no service 'redis' in this workspace \(services: ldap, mongodb, rocketchat-1, rocketchat-2\)/u,
     );
   });
 
@@ -134,7 +134,7 @@ describe('resolveServices', () => {
       { ldap: { cpus: 1, mem: null } },
       {
         RAISES:
-          "no service 'redis' in this repro (services: ldap, mongodb, rocketchat-1, rocketchat-2)",
+          "no service 'redis' in this workspace (services: ldap, mongodb, rocketchat-1, rocketchat-2)",
       },
     ];
     const mine = cases.map(([c, s]) => {

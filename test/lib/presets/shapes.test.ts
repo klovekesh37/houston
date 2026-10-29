@@ -298,11 +298,14 @@ describe('the ldap scenario', () => {
     // it. NodePort's 30000-32767 range would have made the numbers differ.
     const want = config.PRESET_PORTS.ldap?.[0] as number;
     const compose = resolve('ldap', 'docker', {});
-    expect(compose.services.phpldapadmin?.ports).toEqual([`${String(want)}:80`]);
+    // phpLDAPadmin 2 listens on 8080 (it runs as www-data).
+    expect(compose.services.phpldapadmin?.ports).toEqual([`${String(want)}:8080`]);
     expect(compose.ports).toEqual([want]);
     const svc = named(kube('ldap'), 'Service', 'phpldapadmin');
     expect(g(svc, 'metadata', 'labels', LDAP_UI_PORT_LABEL)).toBe(String(want));
     expect(g(svc, 'spec', 'ports', 0, 'port')).toBe(80);
+    // The lifecycle forwards the host port to `targetPort`: the container's own.
+    expect(g(svc, 'spec', 'ports', 0, 'targetPort')).toBe(8080);
     // The label the lifecycle looks for is the label the adapter writes.
     const forward = jest.requireActual<typeof ForwardNS>('../../../src/core/kube/forward');
     expect(LDAP_UI_PORT_LABEL).toBe(forward.UI_PORT_LABEL);

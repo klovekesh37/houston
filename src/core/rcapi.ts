@@ -726,6 +726,27 @@ export async function getSetting(
 }
 
 /**
+ * Whether Rocket.Chat ACCEPTED the license it holds: true, false, or null when it could not
+ * be asked (not serving, or a release whose `licenses.info` does not say).
+ */
+export async function licenseValid(
+  rootUrl: string,
+  auth: Auth,
+  { timeoutMs = 15_000 } = {},
+): Promise<boolean | null> {
+  try {
+    const resp = await get(`${trimEnd(rootUrl)}/api/v1/licenses.info`, {
+      headers: authHeaders(auth),
+      timeoutMs,
+    });
+    const valid = map(body(resp).license).hasValidLicense;
+    return resp.status === 200 && typeof valid === 'boolean' ? valid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every setting id this workspace knows, or null if it could not be asked.
  *
  * Catches a silent mistake: a Rocket.Chat SETTING only takes effect from the environment

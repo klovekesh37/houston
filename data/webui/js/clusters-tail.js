@@ -238,7 +238,7 @@ function clRenderPage(anim) {
   const list = ctx.el("div", { class: "pcard mlist" });
   for (const p of here) list.append(machineRow(p));
   box.append(ctx.el("section", { class: "mstrip", id: "cl-local" },
-    ctx.el("div", { class: "zone-h" }, ctx.el("h2", { class: "small" }, "This machine"), ctx.el("span", { class: "tag" }, "Free")), list));
+    ctx.el("div", { class: "zone-h" }, ctx.el("h2", { class: "small" }, "This server"), ctx.el("span", { class: "tag" }, "Free")), list));
   // Amazon EKS: the page.
   const zone = ctx.el("section", { class: "zone eks", id: "cl-aws" });
   const head = ctx.el("div", { class: "zone-h" }, ctx.el("h2", {}, "Amazon EKS"),
@@ -271,7 +271,7 @@ function clRenderPage(anim) {
   } else if (!CLSTATE.listError && !CLSTATE.overviewError) {
     zone.append(ctx.canAdmin() ? eksHero()
       : ctx.el("div", { class: "pcard place muted" }, ctx.el("div", { class: "nm" }, "Amazon EKS isn't set up on this server"),
-        ctx.el("p", { class: "ds" }, "An admin sets it up. Until then, workspaces run on this machine.")));
+        ctx.el("p", { class: "ds" }, "An admin sets it up. Until then, workspaces run on this server.")));
   }
   box.append(zone);
 }
@@ -302,7 +302,7 @@ function machineRow(p) {
   const opens = p.key === "docker" || p.key.startsWith("k8s:");
   const note = p.key === "k8s-new" ? "Set up automatically the first time you use it"
     : p.key === "k8s-none" ? (p.ds || "") : p.facts[0] || "";
-  const sub = p.wh.replace(/^On this machine( · )?/u, "");
+  const sub = p.wh.replace(/^On this server( · )?/u, "");
   const row = ctx.el("div", { class: "mrow" + (opens ? " click" : ""), "data-place": p.key },
     ctx.placeIcon(p.ico),
     ctx.el("div", { class: "mname" }, ctx.el("b", {}, p.nm), sub ? ctx.el("span", { class: "wh" }, ` · ${sub}`) : ""),
@@ -369,7 +369,7 @@ function failedCard(build) {
   const cmd = `houston cluster delete ${build.name}${build.region ? ` --region ${build.region}` : ""}`;
   const p = { ico: "aws", nm: build.name, wh: `Amazon EKS · ${build.region || "?"}`,
     pill: ["warn", gone ? "Build failed, nothing left" : "Build failed"],
-    ds: gone ? "The build failed and AWS holds nothing of it." : "The build failed part-way and may still be billing. Delete what it left:",
+    ds: gone ? "The build failed and AWS holds nothing of it." : "The build failed part-way and may still be billing. An admin deletes what it left, in a shell on the server:",
     facts: [] };
   const card = ctx.el("div", { class: "pcard place", "data-failed": build.name }, ...ctx.placeBody(p));
   if (!gone) {
@@ -494,7 +494,7 @@ function clRenderPlace(anim) {
     const cap = ctx.MACHINE_ROOM || ctx.HOME.cap;
     box.append(kvGrid([
       ["Workspaces", ...heldList(ws.map((r) => ({ name: r.name, owner: `${r.rc_version} · ${r.state}` })))],
-      ["Memory", cap && cap.known ? `Room for about ${cap.room} more workspaces` : "Not read on this machine"],
+      ["Memory", cap && cap.known ? `Room for about ${cap.room} more workspaces` : "Not read on this server"],
       ["Engine", ctx.DOCKER_OK === false ? "Docker is not answering" : "Docker, with Compose"],
     ]));
   } else if (p.ico === "k8s") {
@@ -514,7 +514,7 @@ function clRenderPlace(anim) {
       ["Workspaces", ...heldList((full && full.workspaces) || (st && st.workspaces))],
       ["Uses", ...uses],
       ["Details", [(st && st.distribution) || (p.row && p.row.ours ? "kind" : "kubernetes"), nodes, `context ${p.context}`, up].filter(Boolean).join(" · ")],
-      ["Cost", "Free: it runs on this machine"],
+      ["Cost", "Free: it runs on this server"],
     ]));
   } else {
     if (p.warn) box.append(ctx.el("div", { class: "callout money", style: "margin:0 0 1rem" }, `▲ ${p.warn}`));
@@ -536,7 +536,7 @@ function clRenderPlace(anim) {
       if (r.cert_manager !== null) facts.push(r.cert_manager ? okT("cert-manager") : noT("no cert-manager"));
       if (st.zone && r.dns_answers === false) facts.push(noT(`public names under ${st.zone} do not answer yet`));
       else if (st.zone) facts.push(`public names under ${st.zone}`);
-      else facts.push("no public names yet: workspaces are reached by a port-forward");
+      else facts.push("no public names yet: workspaces open only in a browser on the server, through a port-forward");
       // Saying so was not enough: the record lived only behind the pane's "Public names
       // (DNS)…", which nobody new to EKS knew to open.
       const dnsBtn = (st.zone && r.dns_answers === false) || !st.zone
@@ -575,7 +575,12 @@ function clPlacePane(p) {
       box.append(link("Copy kubeconfig command", () => clCopy(clKubeconfigCommand(row), "the kubeconfig command")));
     }
     box.append(link("Copy context name", () => clCopy(row.context, "the context name")));
-    if (ctx.canAdmin() && (gone || (st && !st.reachable))) box.append(link("Forget this cluster", () => clForget(row)));
+    if (ctx.canAdmin() && (gone || (st && !st.reachable))) {
+      box.append(link("Forget this cluster", () => clForget(row)),
+        ctx.el("p", { class: "note" }, p.ico === "aws"
+          ? "Only stops listing it here. It does not delete it in AWS, which bills it while it exists."
+          : "Only stops listing it here. The cluster itself is not touched."));
+    }
     if (p.ico === "aws") {
       box.append(ctx.el("hr"));
       if (ctx.canAdmin() && row.billable && !gone && !(st && st.made_by_houston === false)) {
@@ -899,7 +904,9 @@ function setupStepTwo(step, foot) {
       field("Name", "name", { placeholder: "team-eks" }), field("Region", "region", { placeholder: "us-east-1" }),
       field("Nodes", "nodes", { type: "number", min: "1", max: "20" }),
       field("Reminder to delete, in days", "expires", { placeholder: "7" }, "A reminder only: nothing deletes on it."),
-      field("Public names (optional)", "zone", { placeholder: "eks.example.com" })));
+      field("Public names (optional)", "zone", { placeholder: "eks.example.com" },
+        "A DNS zone you control: workspaces become <name>.<zone>. Without one they open only in a "
+        + "browser on the server, and adding one later takes a shell on the server.")));
     const est = SETUP.estimate;
     const estBox = ctx.el("div", { class: "callout info", id: "eks-estimate" });
     if (est) {
@@ -1027,7 +1034,8 @@ async function setupApprove(account) {
 async function setupBuild() {
   const name = (SETUP.f.name || "").trim();
   if (!name) { ctx.toast("The cluster needs a name, e.g. team-eks"); return; }
-  const body = { name, region: SETUP.f.region, nodes: Number(SETUP.f.nodes) || 0, expires: SETUP.f.expires, zone: SETUP.f.zone };
+  // `|| 3`, as setupPrice prices it: a cleared field sent 0, which the server now refuses.
+  const body = { name, region: SETUP.f.region, nodes: Number(SETUP.f.nodes) || 3, expires: SETUP.f.expires, zone: SETUP.f.zone };
   try {
     const { job_id } = await ctx.api("/api/clusters/create", { method: "POST", body: JSON.stringify(body) });
     SETUP.building = name;
@@ -1057,7 +1065,7 @@ function setupStepThree(step, foot) {
       ctx.el("p", { class: "hint", style: "font-size:14px" }, SETUP.f.zone
         ? `Then one step is left: one DNS record, so its workspaces get public names under ${SETUP.f.zone}. `
           + "Home and the cluster's card show it, with a Set up button."
-        : "Without a DNS zone its workspaces are reachable only by a port-forward; the cluster's page says how to add one."));
+        : "Without a DNS zone its workspaces open only in a browser on the server, through a port-forward; the cluster's page says how to add one."));
     foot.append(fhint(""), fbtn("Close", () => ctx.$("#eks-setup").close(), "btn solid"));
     return;
   }
@@ -1080,8 +1088,8 @@ function setupStepThree(step, foot) {
   const target = st && st.ready && st.ready.cname_target;
   if (target || (st && st.zone)) {
     const record = `*.${(st && st.zone) || "<your zone>"}   CNAME   ${target || "<the load balancer's address, once it has one>"}`;
-    step.append(ctx.el("div", { class: "way" }, ctx.el("h4", {}, "Public names ", ctx.el("span", { class: "pill off" }, "Optional")),
-      ctx.el("p", {}, `Without them, workspaces on ${c.name} are reachable only by a port-forward from the server. Add one DNS record:`),
+    step.append(ctx.el("div", { class: "way" }, ctx.el("h4", {}, "Public names ", ctx.el("span", { class: "pill off" }, "Needed from other computers")),
+      ctx.el("p", {}, `Without them, workspaces on ${c.name} open only in a browser on the server itself, through a port-forward. Add one DNS record:`),
       ctx.el("div", { class: "cmd" }, ctx.el("pre", {}, record), fbtn("Copy", () => clCopy(record, "the record"), "btn sm"))));
   }
   foot.append(fhint(""), fbtn("Close", () => ctx.$("#eks-setup").close()));
@@ -1101,7 +1109,7 @@ const chk = (ok, ...text) => ctx.el("div", { class: "chk" },
   ctx.el("span", { class: ok ? "ok" : "no" }, ok ? "✓" : "✗"), ctx.el("span", {}, ...text));
 
 function sameIn(command) {
-  return ctx.el("div", { class: "same" }, ctx.el("span", {}, "Same in the terminal:"),
+  return ctx.el("div", { class: "same" }, ctx.el("span", {}, "In a shell on the server:"),
     cmdCode(command),
     ctx.el("button", { type: "button", class: "cp", onclick: () => clCopy(command, "the command") }, "copy"));
 }
@@ -1135,8 +1143,8 @@ function clRenderDns() {
   const zone = BUILD.zone;
   menu.append(btn("Close", () => ctx.$("#cluster-build").close()));
   if (!zone) {
-    body.append(ctx.el("p", { class: "hint" }, "This cluster has no DNS zone, so a workspace on it is reachable only "
-      + "by a port-forward from the machine that made it. Give it a zone, a domain you control such as "
+    body.append(ctx.el("p", { class: "hint" }, "This cluster has no DNS zone, so a workspace on it opens only in a "
+      + "browser on the server that made it, through a port-forward. Give it a zone, a domain you control such as "
       + "rc.example.com, and every workspace is named <name>.<zone>; then add the one record this shows."),
       sameIn(`houston cluster prepare ${BUILD.name} --zone <zone>`));
     return;

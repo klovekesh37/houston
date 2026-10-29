@@ -123,4 +123,6 @@ houston prune --orphans                       # namespaces houston owns that no 
 
 The shared cluster stays, because other workspaces use it. `prune` deletes a kind cluster
 only if houston created it; a cluster you brought is never deleted. The shared MongoDB
-operator and monitoring go once nothing needs them.
+operator and monitoring go once nothing needs them, but their CRDs stay: deleting a CRD
+deletes every resource of that kind in the cluster. The ingress controller and cert-manager
+that `--https` or `--domain` installed also stay, as the cluster's own infrastructure.

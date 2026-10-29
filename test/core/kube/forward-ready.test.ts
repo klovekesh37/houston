@@ -32,6 +32,8 @@ const mockRepaired: number[] = [];
 let mockReachable = true;
 let mockInfo: Record<string, unknown> | null = { version: '8.5.1' };
 let mockForeign = false;
+/** The Rocket.Chat workload's desired replicas; 'refused' is a read the cluster refused. */
+let mockReplicas: number | null | 'refused' = 1;
 
 // The namespace identity check asks the cluster, and this suite has none: it is tested on its
 // own in test/core/kube/tier3.test.ts. `mockForeign` makes it refuse, as it would for a
@@ -47,6 +49,10 @@ jest.mock('../../../src/core/kube/namespace', () => ({
 jest.mock('../../../src/core/kube/status', () => ({
   ...jest.requireActual<typeof StatusNS>('../../../src/core/kube/status'),
   workspaceReady: () => Promise.resolve(mockReady),
+  workloadReplicas: () =>
+    mockReplicas === 'refused'
+      ? Promise.reject(new Error('could not ask cluster'))
+      : Promise.resolve(mockReplicas),
   terminalPodFailure: () => Promise.resolve(null),
   servicesWithoutEndpoints: () => Promise.resolve([]),
 }));
@@ -114,6 +120,7 @@ beforeEach(() => {
   mockReachable = true;
   mockInfo = { version: '8.5.1' };
   mockForeign = false;
+  mockReplicas = 1;
 });
 
 afterEach(() => {
@@ -137,6 +144,27 @@ describe('ready, on a Kubernetes workspace', () => {
     mockReachable = true;
     const served = await drive(waitServingKubernetes(workspace(3999), nullEmit, 30));
     expect(served).toEqual({ ok: true, value: { ready: true, url: 'http://localhost:3999' } });
+  });
+
+  it('says a stopped workspace is stopped, at once, rather than waiting out the timeout', async () => {
+    // `stop` scales Rocket.Chat to zero; `ready --timeout 60` then polled 62 s and ended in
+    // "kubectl get pods" -- there were none -- and the default timeout made it five minutes.
+    mockReady = false;
+    mockReplicas = 0;
+    const stopped = await drive(waitServingKubernetes(workspace(3998), nullEmit, 60));
+    expect(stopped.ok).toBe(false);
+    const error = (stopped as { error: unknown }).error;
+    expect(error).toBeInstanceOf(NotReadyError);
+    expect(String(error)).toContain("'k' is stopped");
+    expect(String(error)).toContain('houston start --name k');
+    expect(mockRepaired).toEqual([]);
+  });
+
+  it('waits as before when the cluster will not say how many replicas it wants', async () => {
+    // "I could not ask" is not "it is stopped".
+    mockReplicas = 'refused';
+    const served = await drive(waitServingKubernetes(workspace(3997), nullEmit, 30));
+    expect(served).toEqual({ ok: true, value: { ready: true, url: 'http://localhost:3997' } });
   });
 
   it("forwards to, and sets up, only a namespace that is still this workspace's own", async () => {

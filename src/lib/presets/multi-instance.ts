@@ -108,11 +108,11 @@ export function build(params: Params): Preset {
       guide('multi-instance', {
         summary: `${String(instances)} Rocket.Chat instances behind one load balancer, with NATS between them.`,
         steps: [
-          'Verify the mesh, every connected instance: houston api --name <name> GET /api/v1/instances.get (one a restart replaced stays listed a while).',
+          'Verify the mesh, every connected instance, in a shell on the machine running houston: houston api --name <name> GET /api/v1/instances.get (one a restart replaced stays listed a while).',
           'Open two instance URLs (listed above) in separate browsers and post in one.',
         ],
         know: [
-          'Cross-instance real-time needs an Enterprise licence (its scalability module): without one, a message posted on one instance shows on the others only after a reload. Add one with --license or under Workspace > Subscription.',
+          'Cross-instance real-time needs an Enterprise license (its scalability module): without one, a message posted on one instance shows on the others only after a reload. Add one when creating (--license, or the Enterprise license field), or in Rocket.Chat under Workspace > Subscription.',
         ],
       }),
     ],

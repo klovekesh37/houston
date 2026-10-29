@@ -133,7 +133,7 @@ function renderCapResult(r) {
 function doDefault(name) {
   return ctx.runAction(name, "Make default", async () => {
     await ctx.api(`/api/repros/${name}/default`, { method: "POST" });
-    ctx.toast(`${name} is now the default repro`, "ok");
+    ctx.toast(`${name} is now the default workspace for CLI commands`, "ok");
   });
 }
 let PAT_HEADERS = "";

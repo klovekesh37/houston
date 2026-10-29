@@ -153,6 +153,24 @@ describe('a cluster build job', () => {
   });
 });
 
+describe('the node count a build asks for', () => {
+  it('is refused outside 1..100 before any job starts', async () => {
+    // A cleared Nodes field sent 0: the build was accepted and audited, then failed inside
+    // its job. The estimate route already refused the same input with a 400.
+    const boss = await signIn(app, 'boss-nodes', 'admin');
+    for (const nodes of [0, -1, 101]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/clusters/create',
+        payload: { name: 'support', nodes },
+        headers: as(boss),
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(app.jobs.listJobs().some((summary) => summary.kind === 'cluster-create')).toBe(false);
+  });
+});
+
 describe('the existing-cluster connection', () => {
   it('shows the server identity without secrets and restricts kubeconfig changes to admins', async () => {
     const reader = await signIn(app, 'reader-connect', 'readonly');

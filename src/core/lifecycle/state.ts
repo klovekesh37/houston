@@ -111,7 +111,7 @@ export async function setStateKubernetes(
     async () => {
       await requireOwnNamespace(target, { context });
       if (action === 'stop' || action === 'restart') {
-        await stopWorkspace(target, { context, emit });
+        await stopWorkspace(target, { context, version: meta.rcVersion, emit });
         const pid = extra.port_forward_pid;
         if (isTruthy(pid)) {
           await stopPortForward(Number(pid), { namespace: await namespaceFor(target) });
@@ -128,7 +128,7 @@ export async function setStateKubernetes(
         }
       }
       if (action === 'start' || action === 'restart') {
-        await startWorkspace(target, { context, emit });
+        await startWorkspace(target, { context, version: meta.rcVersion, emit });
         // NO PORT-FORWARD HERE, and that is the tested answer rather than the obvious one.
         // Scaling up from zero takes far longer than `portForward`'s brief pod wait, so
         // kubectl attaches to a pod that is not ready, binds the socket for a moment and
@@ -172,10 +172,12 @@ async function reattachTheNetworkless(target: string, action: string, emit: Emit
 }
 
 /** What a `down`ed workspace is told when asked to start: it has nothing to start. */
-function downedHint(target: string): string {
+async function downedHint(target: string): Promise<string> {
+  // With its version: `up` requires one.
+  const { rcVersion } = await readMeta(target);
   return (
-    ` - '${target}' was \`down\`ed, so it has no containers to ` +
-    'start; recreate them from its stored metadata instead'
+    ` - '${target}' was taken down with \`houston down\`, so there is nothing to start; ` +
+    `bring it back, data intact: houston up --version ${rcVersion} --name ${target}`
   );
 }
 
@@ -236,7 +238,9 @@ export async function setState(
   // A `down`ed workspace has no containers, and `compose restart` restarts the ones there
   // are: none, exit 0, and the CLI said "restarted". `start` already refused this.
   if (action === 'restart' && (await containerDetails(target)).length === 0) {
-    throw new DockerError(`\`docker compose restart\` failed for '${target}'${downedHint(target)}`);
+    throw new DockerError(
+      `\`docker compose restart\` failed for '${target}'${await downedHint(target)}`,
+    );
   }
   const fn = action === 'start' ? engine.start : action === 'stop' ? engine.stop : engine.restart;
   const echo = streamOutput
@@ -265,7 +269,7 @@ export async function setState(
       (action === 'start' || action === 'restart') &&
       (await containerDetails(target)).length === 0
     ) {
-      hint = downedHint(target);
+      hint = await downedHint(target);
     } else if (action !== 'stop') {
       // Why, from Docker: compose said it on a stream only the CLI's terminal saw.
       const why = await startErrors(target);

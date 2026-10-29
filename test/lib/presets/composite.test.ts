@@ -284,3 +284,24 @@ describe('one set, one spelling', () => {
     expect(compositeName(['ldap+email', 'email'])).toBe('email+ldap');
   });
 });
+
+describe('the notes a combination adds', () => {
+  it('fit the width `info` prints notes at, so none breaks mid-sentence', () => {
+    // `info` lays a note out 82 columns wide (`printNotes`): a first line is word-wrapped
+    // behind a 4-space indent, so 78 for its text; a continuation line is printed as given
+    // behind 6, so 76. An 81-column first line printed "...marks LDAP users' emails" / "as" /
+    // "verified, so an LDAP login asks for a code".
+    for (const names of [
+      ['email', 'ldap'],
+      ['ldap', 'saml'],
+      ['ldap', 'oidc'],
+    ]) {
+      const own = new Set(names.flatMap((name) => load(name, {}).notes));
+      const added = loadMany(names, {}, 'docker').notes.filter((line) => !own.has(line));
+      expect(added.length).toBeGreaterThan(0);
+      const tooWide = (line: string): boolean =>
+        line.startsWith(' ') ? line.trim().length > 76 : line.length > 78;
+      expect(added.filter(tooWide)).toEqual([]);
+    }
+  });
+});

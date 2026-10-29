@@ -271,7 +271,7 @@ export async function seedInlineLocked(
   try {
     auth = await login(meta);
   } catch (error) {
-    throw new NotReadyError(`can't seed - repro not ready: ${errorText(error)}`);
+    throw new NotReadyError(`can't seed - workspace not ready: ${errorText(error)}`);
   }
   let plan: Plan;
   try {

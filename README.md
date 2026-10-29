@@ -93,7 +93,7 @@ Every command explains itself with `--help`, for example `houston up --help`.
 
 | Guide | Read it when |
 |---|---|
-| [User guide](data/docs/guide.md) | you need a scenario (preset), sample data, a customer's settings, backups and upgrades, HTTPS, monitoring, a load test or the REST API |
+| [User guide](data/docs/guide.md) | you need a preset, sample data, a customer's settings, backups and upgrades, HTTPS, monitoring, a load test or the REST API |
 | [Encrypted conversations (E2EE)](data/docs/e2ee.md) | the ticket concerns encrypted DMs, rooms or files |
 | [Voice calls](data/docs/voice.md) | the ticket concerns Voice calls or the SIP integration |
 | [Kubernetes](data/docs/kubernetes.md) | the ticket needs Kubernetes, or Rocket.Chat as microservices |
@@ -113,4 +113,5 @@ houston is maintained by the Rocket.Chat support team and is released under the
 [MIT licence](LICENSE). Report problems at
 [github.com/klovekesh37/houston/issues](https://github.com/klovekesh37/houston/issues).
 
-The 1.x source is kept in `legacy/` for reference; it is not shipped.
+The 1.x source is in the repository's history, in `legacy/` at the
+[v2.1.1 tag](https://github.com/klovekesh37/houston/tree/v2.1.1/legacy).

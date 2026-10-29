@@ -64,14 +64,19 @@ async function scalables(namespace: string, context: string): Promise<string[]> 
  */
 export async function scaleWorkspace(
   name: string,
-  { replicas, context, emit: _emit = nullEmit }: { replicas: number; context: string; emit?: Emit },
+  {
+    replicas,
+    context,
+    version = '<version>',
+    emit: _emit = nullEmit,
+  }: { replicas: number; context: string; version?: string; emit?: Emit },
 ): Promise<number> {
   const namespace = await namespaceFor(name);
   const targets = await scalables(namespace, context);
   if (targets.length === 0) {
     throw new NotFoundError(
       `'${name}' has no workloads to scale -- it was \`down\`ed, so there is nothing to ` +
-        `stop or start. Recreate it with \`houston up --name ${name}\``,
+        `stop or start. Recreate it with \`houston up --version ${version} --name ${name}\``,
     );
   }
   const res = await kube.run(
@@ -158,7 +163,12 @@ export async function mongoPodsTheOperatorKeeps(
 /** Scale to zero, remembering what to come back to, and wait for it. */
 export async function stopWorkspace(
   name: string,
-  { context, emit = nullEmit, sleep = realSleep }: { context: string; emit?: Emit; sleep?: Sleep },
+  {
+    context,
+    version = '<version>',
+    emit = nullEmit,
+    sleep = realSleep,
+  }: { context: string; version?: string; emit?: Emit; sleep?: Sleep },
 ): Promise<number> {
   const namespace = await namespaceFor(name);
   // Recorded BEFORE scaling, or the number read back is the zero we just wrote.
@@ -201,7 +211,7 @@ export async function stopWorkspace(
       { own: isOurs(context) },
     );
   }
-  const moved = await scaleWorkspace(name, { replicas: 0, context, emit });
+  const moved = await scaleWorkspace(name, { replicas: 0, context, version, emit });
 
   // An operator-managed MongoDB CANNOT be scaled to zero: the operator reconciles its
   // StatefulSet straight back, and the Community operator has no way to pause
@@ -249,7 +259,11 @@ export async function stopWorkspace(
  */
 export async function startWorkspace(
   name: string,
-  { context, emit = nullEmit }: { context: string; emit?: Emit },
+  {
+    context,
+    version = '<version>',
+    emit = nullEmit,
+  }: { context: string; version?: string; emit?: Emit },
 ): Promise<number> {
   const namespace = await namespaceFor(name);
   // Read as JSON and pick the key here, rather than through jsonpath.
@@ -282,7 +296,7 @@ export async function startWorkspace(
   if (targets.length === 0) {
     throw new NotFoundError(
       `'${name}' has no workloads to start -- it was \`down\`ed. Recreate it with ` +
-        `\`houston up --name ${name}\``,
+        `\`houston up --version ${version} --name ${name}\``,
     );
   }
   const mongo = targets.filter((target) => target.split('/').pop() === MONGO_SERVICE);

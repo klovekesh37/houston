@@ -8,7 +8,7 @@
         "--out",
         "b.rcbak"
       ],
-      "stdout": "✓ backed up 'alpha' (8.5.1) — 20.0 KB\n    b.rcbak\n  restore it:  houston restore b.rcbak\n",
+      "stdout": "✓ backed up 'alpha' (8.5.1) — 20.0 KB\n    b.rcbak\n  roll back to it:  houston restore b.rcbak   (replaces alpha's data; add --new for a separate copy)\n",
       "stderr": ""
     },
     {
@@ -19,7 +19,7 @@
         "--out",
         "b.rcbak"
       ],
-      "stdout": "✓ backed up 'alpha' (8.5.1) — 20.0 KB\n    /home/u/.houston/backups/alpha.rcbak\n  sidecar data is NOT included: grafana_data, minio_data\n  restore it:  houston restore /home/u/.houston/backups/alpha.rcbak\n",
+      "stdout": "✓ backed up 'alpha' (8.5.1) — 20.0 KB\n    /home/u/.houston/backups/alpha.rcbak\n  sidecar data is NOT included: grafana_data, minio_data\n  roll back to it:  houston restore /home/u/.houston/backups/alpha.rcbak   (replaces alpha's data; add --new for a separate copy)\n",
       "stderr": ""
     },
     {
@@ -132,7 +132,7 @@
         "8.6.1"
       ],
       "code": 0,
-      "stdout": "+- upgrade: alpha ----------------+\n|  Rocket.Chat  8.5.1  ->  8.6.1  |\n|  MongoDB      8.0               |\n|  image        img:8.6.1         |\n|  source       map               |\n+---------------------------------+\n  this repro terminates TLS\n✓ 'alpha' upgraded 8.5.1 -> 8.6.1 in 41.3s\n  roll back:  houston upgrade --rollback --name alpha\n",
+      "stdout": "+- upgrade: alpha ----------------+\n|  Rocket.Chat  8.5.1  ->  8.6.1  |\n|  MongoDB      8.0               |\n|  image        img:8.6.1         |\n|  source       map               |\n+---------------------------------+\n  this workspace terminates TLS\n✓ 'alpha' upgraded 8.5.1 -> 8.6.1 in 41.3s\n  roll back:  houston upgrade --rollback --name alpha\n",
       "stderr": ""
     },
     {

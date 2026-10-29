@@ -63,7 +63,7 @@ function adapter(intent: Intent): Preset {
   return {
     ...emptyPreset('e2ee'),
     description:
-      "Rocket.Chat's end-to-end encryption switched on, with test users; each user's keys are made in their own browser.",
+      "Rocket.Chat's end-to-end encryption switched on, with test users; a browser on another computer needs the workspace over HTTPS. Each user's keys are made in their own browser.",
     source: 'built-in (scenario)',
     scenario: 'e2ee',
     scenarioParams: { ...intent },
@@ -86,7 +86,7 @@ function adapter(intent: Intent): Preset {
         summary: `End-to-end encryption switched on${intent.users ? ', with test users' : ''}; policy ${intent.policy}.`,
         signIn: intent.users ? E2EE_TEST_USERS.map((user) => [user, user, '']) : [],
         steps: [
-          'Open Rocket.Chat on localhost or over HTTPS.',
+          'Open Rocket.Chat over HTTPS, or at localhost in a browser on the machine running houston.',
           'Sign in as two users, in separate browser profiles.',
           'Save the encryption password Rocket.Chat shows once, at the first sign-in.',
         ],
@@ -110,7 +110,7 @@ function adapter(intent: Intent): Preset {
             `Test users: ${E2EE_TEST_USERS.join(', ')}, each with its username as its password. Sign in as two of them in separate browser profiles.`,
           ]
         : []),
-      'Open Rocket.Chat on localhost or over HTTPS: a browser encrypts only on a secure origin.',
+      'Open Rocket.Chat over HTTPS, or at localhost in a browser on the machine running houston: a browser encrypts only on a secure origin.',
       ...(intent.policy === 'enforced'
         ? ['Enforced applies to private rooms created from now on; federated rooms are exempt.']
         : []),

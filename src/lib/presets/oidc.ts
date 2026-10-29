@@ -58,8 +58,9 @@ function oidcPreset(
       users: 'number of Keycloak test users (default 5)',
       idp_host:
         'hostname BOTH your browser and Rocket.Chat reach ' +
-        "Keycloak on (default 'keycloak', which needs a " +
-        'hosts entry and only works on this machine)',
+        "Keycloak on (default 'keycloak', which needs a hosts entry and works only for a " +
+        'browser on the machine running houston; from another computer create the ' +
+        'workspace with HTTPS on a domain instead)',
     },
     ports: [...presetPorts('oidc')],
     postReady: [
@@ -78,7 +79,7 @@ function oidcPreset(
         setup:
           idpHost === KC_HOST
             ? {
-                why: 'Add this line to /etc/hosts (needs sudo); it is how your browser reaches Keycloak at the address Rocket.Chat uses.',
+                why: keycloak.HOSTS_ENTRY_WHY,
                 line: `127.0.0.1  ${KC_HOST}`,
               }
             : null,
@@ -96,7 +97,7 @@ function oidcPreset(
         ],
         know: [
           idpHost === KC_HOST
-            ? 'The hosts entry points at this machine, so the browser must be on it. From another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>, which needs no hosts entry.'
+            ? `The hosts entry works only for a browser on the machine running houston. ${keycloak.FROM_ANOTHER_COMPUTER}`
             : `Your browser and Rocket.Chat both reach Keycloak at http://${idpHost}:${String(KC_PORT)}; the workspace must be bound wide enough for both (--bind 0.0.0.0).`,
         ],
       }),
@@ -107,9 +108,8 @@ function oidcPreset(
             'OIDC needs one host entry so your browser can reach Keycloak at the',
             "same URL RC's backend uses. Add this line to /etc/hosts (needs sudo):",
             '    127.0.0.1  keycloak',
-            '  That entry points at THIS machine, so the browser has to be on it. From',
-            '  another machine, re-create with:  --bind 0.0.0.0 --set idp_host=<this host>',
-            '  which needs no hosts entry at all.',
+            '  It points at the machine running houston, so the browser has to be on it.',
+            keycloak.FROM_ANOTHER_COMPUTER,
             `Then log in via 'Keycloak (OIDC)' as ${prefix}user1 / ${prefix}user1.`,
           ]
         : [

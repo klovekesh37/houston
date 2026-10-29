@@ -114,7 +114,9 @@ async function edgeLifecycle(io: CliIo, action: string): Promise<number> {
       say(
         io,
         'no edge is set up in this home — nothing to stop. If a name is still being ' +
-          'served, the edge belongs to another HOUSTON_HOME; `houston edge status` says so.',
+          'served, the edge belongs to another houston home, usually houston run with sudo or ' +
+          'as another user; `houston edge status` says so. Run this the same way (or with ' +
+          'HOUSTON_HOME=<that home>).',
       );
       return 0;
     }
@@ -125,9 +127,21 @@ async function edgeLifecycle(io: CliIo, action: string): Promise<number> {
       );
     }
     say(io, '✓ edge stopped; it no longer holds :80 or :443.');
+    if (action === 'stop') {
+      say(
+        io,
+        'Every HTTPS workspace on this machine, and a `serve --domain` GUI, is offline for ' +
+          'everyone until `houston edge start`.',
+      );
+    }
   }
   await edgeStart(io, action);
   return 0;
+}
+
+/** The houston home an edge directory belongs to: `/root/.houston` for `/root/.houston/edge`. */
+function foreignHome(edgeDir: string): string {
+  return edgeDir.replace(/\/edge\/?$/u, '');
 }
 
 /** Whether the certificate is really gone, which depends on who is running Traefik. */
@@ -138,10 +152,11 @@ async function reportAcmeDeletion(io: CliIo, gone: EdgeRuntimeNS.HostDeletion): 
   if (gone.foreign !== '') {
     say(
       io,
-      `the edge holding :443 belongs to another HOUSTON_HOME (${gone.foreign}), and it ` +
-        "reads its OWN certificate store — so what was just deleted is this home's copy, " +
-        'not the certificate that name is being served with. Run this there, with that ' +
-        'HOUSTON_HOME.',
+      `the edge holding :443 belongs to another houston home (${foreignHome(gone.foreign)}), ` +
+        'usually houston run with sudo or as another user, and it reads its OWN certificate ' +
+        "store — so what was just deleted is this home's copy, not the certificate that name " +
+        'is being served with. Run this the same way (or with ' +
+        `HOUSTON_HOME=${foreignHome(gone.foreign)}).`,
     );
   } else if (gone.restarted === true) {
     say(
@@ -210,7 +225,8 @@ async function edgeDelete(
     say(
       io,
       `nothing here for ${gone.host} — no route, no certificate, no ACME entry. Already ` +
-        'clean, or the name belongs to another HOUSTON_HOME.',
+        'clean, or the name belongs to another houston home (houston run with sudo or as ' +
+        'another user).',
     );
     return 0;
   }
@@ -355,7 +371,12 @@ export function tlsTroubleshoot(
   port: number,
 ): void {
   const topology = require('../../core/topology') as typeof TopologyNS;
-  say(io, `  Rocket.Chat itself is fine at ${meta.rootUrl} - this is the TLS layer.`);
+  // Said, not claimed: nothing here asked Rocket.Chat anything.
+  say(
+    io,
+    `  This checks the TLS layer only; \`houston ready --name ${meta.name}\` checks Rocket.Chat ` +
+      `(${meta.rootUrl} on the machine running houston).`,
+  );
   // A KUBERNETES WORKSPACE'S CERTIFICATE IS NOT THE EDGE'S, so none of the advice below
   // applies to it: sending someone to `edge logs` for a certificate the edge never saw is
   // the whole reason this branch exists.
@@ -387,13 +408,14 @@ export function tlsTroubleshoot(
       say(io, `    kubectl -n ${ns} get order,challenge`);
       say(
         io,
-        '  Debug on staging (`houston config set acme.staging true`): production allows only ' +
-          `5 failed validations per hour for ${host}.`,
+        '  Debug on staging (`houston config set acme.staging true`, then re-create the ' +
+          `workspace): production allows only 5 failed validations per hour for ${host}.`,
       );
     }
     return;
   }
   if (mode === 'acme') {
+    const tls = require('../../core/tls') as typeof TlsNS;
     say(io, '  Most likely, in order:');
     say(
       io,
@@ -402,16 +424,19 @@ export function tlsTroubleshoot(
     say(io, `    2. DNS: \`dig +short ${host}\` must return this host's PUBLIC IP`);
     say(
       io,
-      "    3. behind Cloudflare's orange cloud? it terminates TLS, so tlsalpn cannot work - " +
-        'put a provider token in ~/.houston/acme/dns.env to switch to dns-01',
+      "    3. behind a CDN or tunnel that ends TLS (Cloudflare's orange cloud)? tlsalpn cannot " +
+        "work there - `houston config set acme.challenge http` (no token; the name's :80 must " +
+        `reach this machine), or a provider token in ${tls.dnsEnvPath()} for dns-01`,
     );
-    say(io, `  What Traefik says:  houston logs --name ${meta.name} | grep -i acme`);
+    // The edge's Traefik asks Let's Encrypt; the workspace's own log never sees it.
+    say(io, '  What the edge (Traefik) says:  houston edge logs | grep -i acme');
     say(
       io,
-      `  Debug on staging (--acme-staging): production allows only 5 failed validations per hour for ${host}.`,
+      '  Debug on staging (`houston config set acme.staging true`, then re-create the ' +
+        `workspace): production allows only 5 failed validations per hour for ${host}.`,
     );
   } else {
-    say(io, `  Check Traefik started:  houston logs --name ${meta.name} | grep -i traefik`);
+    say(io, '  Check the edge (Traefik) is running:  houston edge status');
   }
 }
 
@@ -499,15 +524,16 @@ function explainSelfSignedAcme(
     } else {
       say(
         io,
-        '  Not trusted here, which is normal for --acme-staging: DNS and the challenge both worked.',
+        "  Not trusted here, which is normal for a Let's Encrypt staging certificate: DNS and " +
+          'the challenge both worked.',
       );
-      say(io, '  For a trusted certificate, re-run the SAME command without --acme-staging:');
+      say(io, '  `acme.staging` is off now, so re-run the SAME command for a trusted certificate:');
     }
     say(io, `    ${promoteCommand(meta, host)}`);
   } else if (mode === acmeMode) {
     say(
       io,
-      `  ✗ serving a certificate this machine does not trust, from ${r.issuer || 'an unnamed issuer'}.`,
+      `  ✗ serving a certificate the machine running houston does not trust, from ${r.issuer || 'an unnamed issuer'}.`,
     );
     say(
       io,
@@ -518,7 +544,8 @@ function explainSelfSignedAcme(
     say(io, '  ✓ serving HTTPS.');
     say(
       io,
-      '  This machine does not trust the issuer; that may be fine if the clients that matter do.',
+      '  The machine running houston does not trust the issuer; that may be fine if the ' +
+        'clients that matter do.',
     );
   }
 }
@@ -538,13 +565,21 @@ function explainLocalCaMode(
     return 1;
   }
   say(io, "  ✓ serving HTTPS with houston's local CA.");
+  say(
+    io,
+    `  ${host} opens only in a browser on the machine running houston: a .localhost name ` +
+      'never opens from another computer (`--domain` gives one that does).',
+  );
   if (r.trusted) {
-    say(io, '  This machine trusts it — `trust-ca` has been run; no browser warnings.');
+    say(
+      io,
+      '  The machine running houston trusts it — `trust-ca` has been run; no browser warnings.',
+    );
   } else {
     say(
       io,
-      '  Not trusted by this machine yet. Run `houston trust-ca` once to silence browser ' +
-        'warnings (the warning itself is harmless locally).',
+      '  Not trusted by the machine running houston yet. Run `houston trust-ca` once there to ' +
+        'silence browser warnings (the warning itself is harmless locally).',
     );
   }
   return 0;
@@ -632,7 +667,7 @@ export async function tlsStatus(io: CliIo, name: string): Promise<number> {
   await explainAcmeMode(io, host, mode, r);
   if (mode === tls.MODE_LOCAL) return explainLocalCaMode(io, host, meta, mode, port, r);
   if (r.trusted) {
-    say(io, '  ✓ serving HTTPS with a certificate this machine trusts.');
+    say(io, '  ✓ serving HTTPS with a certificate the machine running houston trusts.');
     return 0;
   }
   explainSelfSignedAcme(io, host, meta, mode, r, tls.MODE_ACME);
@@ -707,6 +742,13 @@ export async function trustCa(io: CliIo, uninstall: boolean, show: boolean): Pro
   const [installed, how] = await local.trust(crt, uninstall);
   if (installed) {
     say(io, `✓ CA ${uninstall ? 'removed from' : 'installed into'} ${how}.`);
+    if (!uninstall) {
+      say(
+        io,
+        '  That is the machine running houston: a browser on another computer still warns, ' +
+          'and never opens a .localhost name at all (`--domain` gives one that does).',
+      );
+    }
     say(
       io,
       '  Restart the browser to pick it up. Firefox keeps its own store — ' +

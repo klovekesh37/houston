@@ -51,9 +51,9 @@ function samlPreset(
     paramsHelp: {
       users: 'number of Keycloak test users (default 5)',
       idp_host:
-        'hostname YOUR BROWSER reaches Keycloak on ' +
-        '(default localhost; set it when the browser is ' +
-        'not on this machine)',
+        'hostname YOUR BROWSER reaches Keycloak on (default localhost: a browser on the ' +
+        'machine running houston only; from another computer create the workspace with ' +
+        'HTTPS on a domain instead, and Keycloak is at <workspace URL>/keycloak)',
     },
     ports: [...presetPorts('saml')],
     guides: [
@@ -74,7 +74,7 @@ function samlPreset(
         know: [
           `SAML sends your browser to http://${idpHost}:${String(KC_PORT)}: that address must resolve and be reachable from wherever the browser runs.`,
           idpHost === 'localhost'
-            ? 'It is localhost, so the browser must be on this machine; from another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>.'
+            ? `It is localhost, so the browser must be on the machine running houston. ${keycloak.FROM_ANOTHER_COMPUTER}`
             : '',
           `In the Keycloak console switch the realm (top left) to '${KC_REALM}': the users are not in master. The 'temporary admin' banner there is normal in dev mode.`,
         ],
@@ -86,8 +86,8 @@ function samlPreset(
       ...(idpHost !== 'localhost'
         ? []
         : [
-            "  It is 'localhost', so the browser must be on THIS machine. From another",
-            '  machine, re-create with:  --bind 0.0.0.0 --set idp_host=<this host>',
+            "  It is 'localhost', so the browser must be on the machine running houston.",
+            keycloak.FROM_ANOTHER_COMPUTER,
             '  (Keycloak refuses a request that arrives on any other name.)',
           ]),
       `Keycloak admin console: http://${idpHost}:${String(KC_PORT)}  (admin / admin)`,

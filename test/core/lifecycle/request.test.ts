@@ -122,19 +122,19 @@ describe('reading a create request', () => {
         {
           params: { idp_host: 'rc.example.com' },
           messages: [
-            "the saml preset will address its own service as 'rc.example.com', taken from the URL you gave — that is the name the browser follows, and its default names this machine. Override with `--set idp_host=...`.",
+            "the saml preset will address its own service as 'rc.example.com', taken from the URL you gave — that is the name the browser follows, and its default names only the machine running houston. Override with `--set idp_host=...`.",
           ],
         },
         {
           params: { idp_host: 'idp.example.com' },
           messages: [
-            "the oidc preset will address its own service as 'idp.example.com', taken from the URL you gave — that is the name the browser follows, and its default names this machine. Override with `--set idp_host=...`.",
+            "the oidc preset will address its own service as 'idp.example.com', taken from the URL you gave — that is the name the browser follows, and its default names only the machine running houston. Override with `--set idp_host=...`.",
           ],
         },
         {
           params: { presigned: 'true', s3_host: 'rc.example.com' },
           messages: [
-            "the s3_minio preset will address its own service as 'rc.example.com', taken from the URL you gave — that is the name the browser follows, and its default names this machine. Override with `--set s3_host=...`.",
+            "the s3_minio preset will address its own service as 'rc.example.com', taken from the URL you gave — that is the name the browser follows, and its default names only the machine running houston. Override with `--set s3_host=...`.",
           ],
         },
         { params: {}, messages: [] },

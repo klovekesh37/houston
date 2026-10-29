@@ -29,7 +29,7 @@ function triageOf(d) {
     push(ctx.SERVER_ONLINE ? "Docker is not answering" : "Server unavailable",
          ctx.SERVER_ONLINE ? "Nothing here can report its state, start or stop until it is back."
            : "The server is unavailable. Last known workspace data is shown until it returns.",
-         [["Check this box", ctx.openDoctor, true]]);
+         [["Check this server", ctx.openDoctor, true]]);
     return out;
   }
   if (d.state === "down") {
@@ -60,12 +60,12 @@ function triageOf(d) {
     // The free-memory sentence only when the number is actually known -- the home
     // stage fetches it, and inventing one would be worse than leaving it out.
     const free = ctx.HOME.cap && ctx.HOME.cap.known
-      ? ` This box has ${ctx.fmtGb(Math.max(0, (ctx.HOME.cap.available_mb || 0)
+      ? ` This server has ${ctx.fmtGb(Math.max(0, (ctx.HOME.cap.available_mb || 0)
                                           - (ctx.HOME.cap.reserve_mb || 0)))} free.` : "";
     push(n ? `Rocket.Chat has restarted ${n}×` : "Rocket.Chat is restarting",
          "That is usually memory pressure — the kernel kills it and Docker starts it "
          + "again — or an error during boot, which the logs name." + free,
-         [logs, ["Check this box", ctx.openDoctor]]);
+         [logs, ["Check this server", ctx.openDoctor]]);
   } else if (ctx.healthClass(d) === "bad") {
     // Running, answering, and reporting itself unhealthy: its healthcheck is what
     // knows why, and the logs are where it says so.
@@ -117,10 +117,10 @@ function triageOf(d) {
   // rather than a broken route -- so it has to be said next to the workspace.
   const route = ((ctx.EDGE && ctx.EDGE.routes) || []).find((r) => r.name === d.name);
   if (route && route.reachable === false) {
-    push("The edge cannot reach this workspace",
-         `${d.public_url || "Its https name"} answers 502. The route exists; the `
-         + "edge is not on this workspace's network.",
-         [["Look at the edge", ctx.openEdge, true]]);
+    push("Its HTTPS address is not connected",
+         `${d.public_url || "Its HTTPS address"} answers 502 (Bad Gateway). The workspace may `
+         + "be fine; the shared HTTPS front door has lost its connection to it.",
+         [["HTTPS details", ctx.openEdge, true]]);
   }
   return out;
 }
@@ -179,7 +179,12 @@ function renderDetail() {
       ? ctx.el("span", { class: "pchips" }, ...names.flatMap((n, i) => (i ? ["+", ctx.el("span", { class: "pchip" }, n)] : [ctx.el("span", { class: "pchip" }, n)])))
       : d.preset);
   }
-  if (d.licensed) sub.append(ctx.el("span", { class: "pill plain" }, "Licensed"));
+  // Amber when Rocket.Chat refused it: given is not accepted (a license is bound to one URL).
+  if (d.licensed) sub.append(d.license_refused
+    ? ctx.el("span", { class: "pill warn", title: "Rocket.Chat refused this workspace's license: "
+        + "one works only at the address it was issued for. Put the address right, then Take "
+        + "down and Bring up: Bring up asks Rocket.Chat again." }, "License refused")
+    : ctx.el("span", { class: "pill plain" }, "Licensed"));
   sub.append(ctx.el("i", {}, "·"), ":" + d.host_port);
   if (d.created_by) {
     sub.append(ctx.el("i", {}, "·"), d.created_by + (d.created_by === ctx.ME ? " (you)" : ""));
@@ -208,7 +213,9 @@ function renderDetail() {
   }
   const actions = ctx.el("div", { class: "d-actions" });
   if (d.state !== "?") {
-    actions.append(ctx.el("a", { href: d.root_url, target: "_blank", style: "text-decoration:none" },
+    const open = d.open_url || d.root_url;
+    actions.append(ctx.el("a", { href: open, target: "_blank", rel: "noreferrer", style: "text-decoration:none",
+      ...(ctx.remoteLoopback(open) ? { title: ctx.LOOPBACK_TITLE } : {}) },
       ctx.el("button", { class: "btn primary" }, "↗ Open RC")));
   }
   if (!ctx.SERVER_ONLINE) {
@@ -288,7 +295,7 @@ function renderTab() {
     // panel stated it nowhere. `Port` gave up its place: it is already in the identity
     // line under the title AND in the URL box below, so it was the one fact on this
     // grid stated three times, while the runtime was stated nowhere.
-    const where = d.runtime === "kubernetes" ? "Kubernetes" : "Compose";
+    const where = d.runtime === "kubernetes" ? "Kubernetes" : "Docker";
     // AND WHICH CLUSTER, by the name a person knows, linking to its row on the Clusters
     // page: the panel said "Kubernetes" and the ARN sat in a note card further down.
     let runsOn = d.deployment ? `${where} · ${d.deployment}` : where;
@@ -306,7 +313,7 @@ function renderTab() {
       kv("RC Version", d.rc_version), kv("MongoDB", d.mongo_tag),
       kv("Runs on", runsOn),
       kv("Uptime", d.uptime || "—", d.uptime ? "green" : ""),
-      kv("Scenario", (Array.isArray(d.presets) && d.presets.length > 1 ? d.presets.join(" + ") : d.preset) || "default"),
+      kv("Preset", (Array.isArray(d.presets) && d.presets.length > 1 ? d.presets.join(" + ") : d.preset) || "default"),
       // healthClass() knows unhealthy/starting/healthy; the kv only understood the
       // literal string "healthy", so a container reporting "running" rendered plain.
       kv("Health", d.health || d.state || "—", ctx.HEALTH_TONE[ctx.healthClass(d)] || ""));
@@ -343,38 +350,36 @@ function renderTab() {
       body.append(card);
       ctx.startStats();
     }
+    // The address Open RC follows (the https name, else --root-url's, else ROOT_URL), so
+    // the box and the button never name two places. ROOT_URL itself is unchanged and,
+    // when it differs, shown beneath as what the server calls itself.
+    const open = d.open_url || d.root_url;
     const url = ctx.el("div", { class: "urlbox" },
       ctx.el("div", {}, ctx.el("div", { class: "k" }, "URL"),
-        ctx.el("a", { href: d.root_url, target: "_blank" }, d.root_url)),
-      ctx.el("button", { class: "copy", onclick: () => copy(d.root_url) }, "copy"));
+        ctx.el("a", { href: open, target: "_blank" }, open)),
+      ctx.el("button", { class: "copy", onclick: () => copy(open) }, "copy"));
     body.append(url);
-    // ADDITIVE, and deliberately so. The URL above is Rocket.Chat's own ROOT_URL and
-    // stays exactly as it is -- houston's login, PAT, seeding and load-test calls
-    // all go through it, and RC advertises it to browsers for links, OAuth callbacks
-    // and CORS. Rewriting it for the convenience of a remote reader would change
-    // what the server tells every client about itself. So this is a NOTICE: it says
-    // what the address means from where you are standing, and changes nothing.
+    if (d.root_url && d.root_url !== open) body.append(box2("On the server", d.root_url, d.root_url));
+    // A NOTICE, only when the address above is localhost and this page is read from
+    // another computer: there it names the reader's own computer. A public address needs none.
     const remote = ctx.remoteHost();
-    if (remote) {
+    if (ctx.remoteLoopback(open)) {
       const wide = ctx.WIDE_BINDS.includes(String(d.bind_host || ""));
       const port = d.host_port;
       if (wide) {
         body.append(ctx.el("p", { class: "banner" },
           `You are reading this from ${remote}, and “localhost” above means `
-          + `YOUR machine. This workspace publishes on every interface, so from here `
+          + `YOUR computer. This workspace publishes on every interface, so from here `
           + `it is at:`));
-        body.append(box2("From this machine", `http://${remote}:${port}`,
+        body.append(box2("From your browser", `http://${remote}:${port}`,
                          `http://${remote}:${port}`));
       } else {
         body.append(ctx.el("p", { class: "banner warn" },
-          `You are reading this from ${remote}, and “localhost” above means YOUR `
-          + `machine — not the server. This workspace publishes on `
-          + `${d.bind_host || "127.0.0.1"}, so only the server itself can reach it. `
-          + `To reach a workspace from here, create it with Bind host 0.0.0.0 under `
-          + `Advanced options — or have an admin run `
-          + `\`houston config set bind_host 0.0.0.0\` once for the whole box. `
-          + `Workspaces ship a fixed admin/admin123, so do that only on a network `
-          + `you trust.`));
+          `You are reading this from ${remote}, so “localhost” is YOUR computer: this `
+          + `workspace answers only on the server. To open one from your browser, create it `
+          + `with HTTPS (Let's Encrypt) on a name that reaches the server. Bind host 0.0.0.0 `
+          + `under More options also works, but opens it and its preset's consoles, with `
+          + `their fixed logins, to anyone who can reach the server.`));
       }
     }
     // The admin login was only ever shown in the create dialog's result box, so
@@ -388,7 +393,7 @@ function renderTab() {
     }
     // The env tab masks credentials and points the reader at the compose file on
     // disk; this is where that file lives.
-    if (d.workspace) body.append(box2("Workspace", d.workspace, d.workspace));
+    if (d.workspace) body.append(box2("Files on the server", d.workspace, d.workspace));
   } else if (ctx.dstate.tab === "logs") {
     ctx.renderLogs(body, d);
   } else if (ctx.dstate.tab === "containers") {
@@ -405,12 +410,12 @@ function renderTab() {
       body.append(ctx.el("p", { class: "empty" },
         d.state === "?" ? (ctx.SERVER_ONLINE ? "Docker is unavailable." : "Server unavailable — pod and container state is unknown.")
           : kube ? `No pods in houston-${d.name} — this workspace is ${d.state}.`
-          : "No containers — this repro is down."));
+          : "No containers — this workspace is down."));
     }
     if (kube) {
       body.append(ctx.el("p", { class: "hint" },
         "Pods, not containers: on Kubernetes this is every pod in the workspace's "
-        + "namespace — Rocket.Chat, MongoDB and any scenario service. A pod that "
+        + "namespace — Rocket.Chat, MongoDB and any service its preset adds. A pod that "
         + "cannot start says why here (ImagePullBackOff, CrashLoopBackOff)."));
     }
   } else if (ctx.dstate.tab === "env") {

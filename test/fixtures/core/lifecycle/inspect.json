@@ -72,8 +72,10 @@
       "preset": "default",
       "ci_build": "",
       "licensed": false,
+      "license_refused": false,
       "root_url": "http://localhost:3100",
       "public_url": "",
+      "open_url": "http://localhost:3100",
       "host_port": 3100,
       "login": {
         "user": "admin",
@@ -103,10 +105,12 @@
     "presets": [],
     "ci_build": "",
     "licensed": false,
+    "license_refused": false,
     "health": "healthy",
     "url": "http://localhost:3001",
     "root_url": "http://localhost:3001",
     "public_url": "",
+    "open_url": "http://localhost:3001",
     "login": {
       "user": "admin",
       "password": "admin123"

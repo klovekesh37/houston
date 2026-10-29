@@ -664,6 +664,12 @@ input:focus, select:focus, textarea:focus {
    wrapped onto a second line and pushed its own message down with it. */
 .logrow .ls { flex: 0 0 7rem; color: var(--muted); }
 .logrow .lm { flex: 1; color: var(--ink); }
+/* At phone width the three columns took ~267px of 390, leaving the message ~50px and
+   a word a line: there the message goes under them, the full width of the view. */
+@media (max-width: 560px) {
+  .logrow { flex-wrap: wrap; row-gap: 0; }
+  .logrow .lm { flex-basis: 100%; }
+}
 [data-theme="dark"] .logrow .lm { color: #c9d1d9; }
 .ll.lv-error, .ll.lv-fatal { color: var(--red); }
 /* An error's message takes the red of the theme it is in. It was a literal `#ffb4b0`

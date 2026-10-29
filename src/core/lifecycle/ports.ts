@@ -11,9 +11,15 @@ import { type Preset } from '../../lib/presets/types';
 import { reproLock } from '../runner/locks';
 import * as paths from '../runner/paths';
 import * as portSeam from '../runner/ports';
-import { type Metadata, listMeta, readMeta } from '../runner/record';
+import { type Metadata, listMeta, readMeta, recordedOwner } from '../runner/record';
 
 import { INTERACTIVE_LOCK_WAIT } from './types';
+
+/** `'bob-t1' (bob's)`: the holder of a port, with its owner when the record names one. */
+function holder(meta: Metadata): string {
+  const owner = recordedOwner(meta);
+  return `'${meta.name}'${owner === '' ? '' : ` (${owner}'s)`}`;
+}
 
 /** A list of ports, spelled as the message has always spelled it: `[8081]`, `[9090, 5050]`. */
 function portList(ports: readonly number[]): string {
@@ -75,7 +81,7 @@ export interface SideHolder {
 async function sideClaims(
   wanted: ReadonlySet<number>,
   exclude: string,
-): Promise<{ held: SideHolder | null; own: Set<number> }> {
+): Promise<{ held: SideHolder | null; own: Set<number>; whose: string }> {
   let own = new Set<number>();
   for (const meta of await listMeta()) {
     const claimed = claimedPorts(meta);
@@ -84,9 +90,10 @@ async function sideClaims(
       continue;
     }
     const overlap = [...claimed].filter((value) => wanted.has(value)).sort((a, b) => a - b);
-    if (overlap.length > 0) return { held: { name: meta.name, ports: overlap }, own };
+    if (overlap.length > 0)
+      return { held: { name: meta.name, ports: overlap }, own, whose: holder(meta) };
   }
-  return { held: null, own };
+  return { held: null, own, whose: '' };
 }
 
 /**
@@ -111,11 +118,14 @@ export async function sidecarHolder(
 export async function checkSidecarPorts(pre: Preset, exclude = ''): Promise<void> {
   if (pre.ports.length === 0) return;
   const wanted = new Set(pre.ports);
-  const { held, own } = await sideClaims(wanted, exclude);
+  const { held, own, whose } = await sideClaims(wanted, exclude);
   if (held !== null) {
+    // Its owner's call, not the reader's: on a shared server the holder is often a colleague's.
     throw new ConflictError(
       `preset '${pre.name}' publishes port(s) ${portList(held.ports)}, already claimed ` +
-        `by repro '${held.name}' - delete it first: houston down --name ${held.name} --volumes`,
+        `by workspace ${whose}. A preset's ports are fixed, so only one workspace on this ` +
+        `machine can use them at a time; its owner frees them with houston down --name ` +
+        `${held.name} --volumes (that deletes its data)`,
     );
   }
   for (const port of [...wanted].filter((p) => !own.has(p)).sort((a, b) => a - b)) {
@@ -145,10 +155,12 @@ export async function checkMonitorPorts(exclude = ''): Promise<void> {
         monitoring.some((value) => digits(value) === port),
       );
       throw new ConflictError(
-        `monitoring needs port(s) ${portList(overlap)}, already used by repro ` +
+        `monitoring needs port(s) ${portList(overlap)}, already used by workspace ` +
+          `${holder(meta)}. Monitoring's ports are fixed, so only one workspace on this machine ` +
+          'can use them at a time; its owner frees them with ' +
           (onlyMonitoring
-            ? `'${meta.name}' (its monitoring) - stop it first: houston monitor --name ${meta.name} --off`
-            : `'${meta.name}' - delete it first: houston down --name ${meta.name} --volumes`),
+            ? `houston monitor --name ${meta.name} --off (the workspace's data is kept; its monitoring data is deleted)`
+            : `houston down --name ${meta.name} --volumes (that deletes its data)`),
       );
     }
   }
@@ -199,7 +211,7 @@ export async function pickHostPortLocked(port: number, pre: Preset, exclude = ''
   if (port) {
     if (port + span - 1 > portSeam.PORT_MAX) {
       throw new ValidationError(
-        `--port ${String(port)}: a ${String(pre.instances)}-instance repro needs ports ` +
+        `--port ${String(port)}: a ${String(pre.instances)}-instance workspace needs ports ` +
           `up to ${String(port + span - 1)} (past 65535)`,
       );
     }
@@ -231,7 +243,7 @@ export async function pickHostPortLocked(port: number, pre: Preset, exclude = ''
       }
       if (used.has(candidate)) {
         throw new ConflictError(
-          `port ${String(candidate)} is already claimed by another repro (see \`houston list\`)`,
+          `port ${String(candidate)} is already claimed by another workspace (see \`houston list\`)`,
         );
       }
       if (!own.has(candidate) && !(await portSeam.portFree(candidate))) {

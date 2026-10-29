@@ -231,13 +231,23 @@ function scenarioOf(meta: Metadata): string {
 }
 
 /**
- * What the panel badges: the CI build a workspace runs (its ghcr tag, or ''), and whether it
- * was given a license. Always present, so the panel reads one shape.
+ * What the panel badges: the CI build a workspace runs (its ghcr tag, or ''), whether it
+ * was given a license, and whether Rocket.Chat refused it when `ready` last asked. Always
+ * present, so the panel reads one shape.
  */
-function buildAndLicense(meta: Metadata): { ci_build: string; licensed: boolean } {
+function buildAndLicense(meta: Metadata): {
+  ci_build: string;
+  licensed: boolean;
+  license_refused: boolean;
+} {
   const prefix = `${BUILD_IMAGE}:`;
   const tag = meta.rcImage.startsWith(prefix) ? meta.rcImage.slice(prefix.length) : '';
-  return { ci_build: isBuildTag(tag) ? tag : '', licensed: bag(meta.extra).licensed === true };
+  const extra = bag(meta.extra);
+  return {
+    ci_build: isBuildTag(tag) ? tag : '',
+    licensed: extra.licensed === true,
+    license_refused: extra.license_status === 'refused',
+  };
 }
 
 /** The side ports and replicas are published on the workspace's recorded bind. */
@@ -256,9 +266,9 @@ export function reproLinks(meta: Metadata): { label: string; url: string; kind: 
   const links = [{ label: 'Rocket.Chat', url: externalUrl(meta), kind: 'rc' }];
   const extra = bag(meta.extra);
   const host = linkHost(meta);
-  if (meta.publicUrl) {
+  if (externalUrl(meta) !== meta.rootUrl) {
     // Keep the plain http way in as well: with the local CA the browser warns until
-    // `trust-ca` has run, and this is the link that always just works.
+    // `trust-ca` has run, and behind a proxy or tunnel this is the link that works here.
     links.push({ label: 'direct HTTP', url: meta.rootUrl, kind: 'rc' });
   }
   const n = extra.instances;
@@ -404,6 +414,10 @@ export async function summary(meta: Metadata): Promise<Record<string, unknown>> 
     // create dialog offered only `root_url`, the http://localhost port, which from any other
     // machine is that machine's own. "" without HTTPS, as the list row and the panel say.
     public_url: meta.publicUrl,
+    // What a person OPENS: the https name, else the address `--root-url` advertised (a
+    // proxy's, a tunnel's), else the loopback port. Every "Open" took `public_url || root_url`,
+    // which behind a tunnel is http://localhost -- the one address nobody outside can use.
+    open_url: externalUrl(meta),
     host_port: meta.hostPort,
     login: { user: config.ADMIN_USERNAME, password: meta.adminPassword || config.ADMIN_PASSWORD },
     pinned: meta.pinned,
@@ -526,6 +540,7 @@ export async function rowFor(
     ...clusterOf(meta),
     // The https URL when `up --https` was used; "" otherwise.
     public_url: meta.publicUrl,
+    open_url: externalUrl(meta),
     tls: isTruthy(extra.tls) ? String(extra.tls) : '',
     preset: scenarioOf(meta),
     ...presetsOf(meta),

@@ -136,6 +136,11 @@ describe('the secure serve boundary', () => {
     expect(opened).toEqual(['http://localhost:0/setup#k=one-time-key']);
     expect(h.out[0]).toBe('houston GUI: http://localhost:0/setup#k=one-time-key\n');
     expect(h.out.join('')).toContain('single-use');
+    // localhost is the server: a reader on a laptop is told the link is not theirs, and how in.
+    expect(h.out.join('')).toContain(
+      'it opens only in a browser on the machine running houston (localhost is that one).\n' +
+        '  From your computer: ssh -L 0:localhost:0 <you>@<this server>, then open the same URL.',
+    );
     expect(h.dependencies.writePid).toHaveBeenCalledWith(
       '/tmp/isolated-houston/serve.pid',
       process.pid,
@@ -236,6 +241,33 @@ describe('the secure serve boundary', () => {
       'auth: named accounts over PLAIN HTTP on a reachable interface',
     );
     expect(h.dependencies.openBrowser).not.toHaveBeenCalled();
+  });
+
+  it('tells a loopback serve behind a proxy on this machine to trust it, so the cookie is Secure', async () => {
+    // --allow-host on a loopback bind is a local proxy (nginx, cloudflared): reachable from
+    // the internet through it, so "nothing crosses a network" and "--bind 0.0.0.0" were wrong.
+    const h = harness();
+    await run(h, { allowHost: ['rc.example.com'], noOpen: true });
+
+    const out = h.out.join('');
+    expect(out).toContain('--trust-proxy 127.0.0.1');
+    expect(out).not.toContain('nothing crosses a network');
+    expect(out).not.toContain('reachable from this machine only');
+    expect(out).not.toContain('Add --bind 0.0.0.0');
+    expect(out).not.toContain('reachable only from a browser on the machine running houston');
+  });
+
+  it('says nothing misleading once the local proxy is trusted', async () => {
+    const h = harness();
+    await run(h, { allowHost: ['rc.example.com'], trustProxy: ['127.0.0.1'], noOpen: true });
+
+    const out = h.out.join('');
+    expect(out).toContain(
+      'auth: named accounts over https when the proxy says so, trusted from 127.0.0.1',
+    );
+    expect(out).not.toContain('names who may reach this');
+    expect(out).not.toContain('reachable from this machine only');
+    expect(out).not.toContain('reachable only from a browser on the machine running houston');
   });
 
   it('trusts only the declared proxy network and leaves HTTPS to forwarded headers', async () => {
@@ -594,6 +626,10 @@ describe('the secure serve boundary', () => {
     await run(h, {});
 
     expect(h.out[0]).toBe('houston GUI: http://localhost:7070/\n');
+    expect(h.out.join('')).toContain(
+      '  reachable only from a browser on the machine running houston.\n' +
+        '  From your computer: ssh -L 7070:localhost:7070 <you>@<this server>, then open the same URL.\n',
+    );
     expect(order).toEqual([
       'tighten',
       `app after ${String(h.out.length)} announced`,

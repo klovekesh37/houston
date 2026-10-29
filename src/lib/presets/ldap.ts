@@ -41,8 +41,14 @@ import { emptyPreset, type Preset } from './types';
  */
 const UI_PORT = presetPort('ldap');
 
-/** Multi-arch (amd64/arm/arm64), and the standard pairing with osixia/openldap. */
-const UI_IMAGE = 'osixia/phpldapadmin:0.9.0';
+/**
+ * phpLDAPadmin 2, the maintained line (amd64/arm64). osixia/phpldapadmin:0.9.0 shipped 1.2.5
+ * on a PHP nobody patches any more; 2.3.12 is the security release built on PHP 8.4.27.
+ */
+const UI_IMAGE = 'phpldapadmin/phpldapadmin:2.3.12';
+
+/** What it listens on inside: it runs as www-data, so not 80. */
+export const UI_CONTAINER_PORT = 8080;
 
 /**
  * A Service wearing this label is published on the host port it names. One convention for
@@ -51,9 +57,17 @@ const UI_IMAGE = 'osixia/phpldapadmin:0.9.0';
  */
 export const UI_PORT_LABEL = 'houston.io/ui-port';
 
-/** osixia imports custom LDIF from here on first boot (with `--copy-service`). */
-const BOOTSTRAP_PATH =
-  '/container/service/slapd/assets/config/bootstrap/ldif/custom/50-rc-users.ldif';
+/**
+ * OpenLDAP 2.6 LTS (Symas packages, Debian 13), amd64/arm64: a maintained drop-in for
+ * osixia/openldap:1.5.0, whose OpenLDAP 2.4.57 and Debian 10 are both past end of life. The
+ * same environment drives it, read-only user included. Pinned by digest: one small publisher,
+ * and a moved tag would change the directory under a ticket.
+ */
+const DIRECTORY_IMAGE =
+  'ghcr.io/intechcore/openldap:2.6.16-1@sha256:04a95ae6131d8f21ee15b025c2dc7318c2922c9249fa469c7a780cceddba06f1';
+
+/** The image applies every LDIF here on first boot (`ldapadd -c`: existing entries skipped). */
+const BOOTSTRAP_PATH = '/bootstrap/50-rc-users.ldif';
 const GROUP_CN = 'rc-users';
 const GID = '5000';
 const PARAMS_HELP: Readonly<Record<string, string>> = Object.freeze({
@@ -83,8 +97,8 @@ const PARAMS_HELP: Readonly<Record<string, string>> = Object.freeze({
     'presets: localhost, or keycloak for oidc)',
 });
 
-/** Where osixia reads its TLS files, by the names `slapdEnv` gives them. */
-const CERTS_DIR = '/container/service/slapd/assets/certs';
+/** Where the image reads its TLS files, in place, by the names `slapdEnv` gives them. */
+const CERTS_DIR = '/container/certs';
 const CERT_FILES = ['ldap.crt', 'ldap.key', 'ca.crt'] as const;
 /** The Kubernetes Secret `withCertificate` adds and the Deployment mounts. */
 const TLS_SECRET = 'openldap-tls';
@@ -110,12 +124,14 @@ export const GENERATOR = String.raw`#!/bin/sh
 # same parameters, users first, then rc-users, then the lab groups when asked for.
 set -eu
 awk -v n="$HOUSTON_LDAP_USERS" -v base="$HOUSTON_LDAP_BASE_DN" -v domain="$HOUSTON_LDAP_DOMAIN" \
-    -v groups="$HOUSTON_LDAP_GROUPS" '
+    -v groups="$HOUSTON_LDAP_GROUPS" -v admin="$LDAP_ADMIN_PASSWORD" '
 function group(cn, gid, first, last,    i) {
   printf "\ndn: cn=%s,ou=groups,%s\nobjectClass: top\nobjectClass: posixGroup\ncn: %s\ngidNumber: %s\n", cn, base, cn, gid
   for (i = first; i <= last; i++) printf "memberUid: user%d\n", i
 }
 BEGIN {
+  printf "dn: cn=admin,%s\nobjectClass: simpleSecurityObject\nobjectClass: organizationalRole\ncn: admin\nuserPassword: %s\n\n", base, admin
+  printf "dn: ou=people,%s\nchangetype: delete\n\n", base
   printf "dn: ou=Users,%s\nobjectClass: organizationalUnit\nou: Users\n\n", base
   printf "dn: ou=groups,%s\nobjectClass: organizationalUnit\nou: groups\n\n", base
   for (i = 1; i <= n; i++) {
@@ -135,8 +151,8 @@ BEGIN {
 `;
 
 const GENERATOR_PATH = '/houston/gen-users.sh';
-/** Generate the directory, then start slapd exactly as `--copy-service` always has. */
-const GENERATE_THEN_RUN = `sh ${GENERATOR_PATH} ${BOOTSTRAP_PATH} && exec /container/tool/run --copy-service`;
+/** Generate the directory, then hand over to the image's own entrypoint, as its CMD does. */
+const GENERATE_THEN_RUN = `sh ${GENERATOR_PATH} ${BOOTSTRAP_PATH} && exec /usr/local/bin/docker-entrypoint.sh slapd`;
 
 function generated(it: LDAPIntent): boolean {
   return it.users > SHIPPED_USERS_MAX;
@@ -246,6 +262,34 @@ function isAd(it: LDAPIntent): boolean {
 /** The service Rocket.Chat dials, phpLDAPadmin reads and the certificate is issued for. */
 function hostOf(it: LDAPIntent): string {
   return isAd(it) ? AD_HOST : 'openldap';
+}
+
+/** The directory's administrator, as phpLDAPadmin is signed in to: a DN and its password. */
+function adminLogin(it: LDAPIntent): [string, string] {
+  return isAd(it)
+    ? [`CN=Administrator,CN=Users,${it.baseDn}`, AD_ADMIN_PASSWORD]
+    : [`cn=admin,${it.baseDn}`, it.adminPassword];
+}
+
+/** phpLDAPadmin 2's settings, one source for both runtimes. */
+function uiEnv(it: LDAPIntent): Record<string, string> {
+  const [dn, password] = adminLogin(it);
+  return {
+    LDAP_HOST: hostOf(it),
+    LDAP_BASE_DN: it.baseDn,
+    // The bind it reads the schema with before anyone has signed in: the same throwaway
+    // admin the notes print, on a directory reachable only inside the workspace.
+    LDAP_USERNAME: dn,
+    LDAP_PASSWORD: password,
+    // Signed in with the whole DN, as the notes and the guide say (2.x defaults to uid)...
+    LDAP_LOGIN_ATTR: 'dn',
+    LDAP_LOGIN_ATTR_DESC: 'Login DN',
+    // ...and only an entry of these classes may sign in (2.x defaults to posixAccount,
+    // which neither administrator is).
+    LDAP_LOGIN_OBJECTCLASS: isAd(it) ? 'user' : 'organizationalRole',
+    // Samba has no entryUUID; AD names its entries by objectGUID.
+    ...(isAd(it) ? { LDAP_GUIDKEY: 'objectguid' } : {}),
+  };
 }
 
 /** The image's environment, and what the seed reads. */
@@ -418,17 +462,20 @@ function idpParts(it: LDAPIntent): IdpParts | null {
         ? ['Keycloak asks each user to set up an authenticator app at their first sign-in.']
         : []),
       ...(!saml && it.idpHost === 'keycloak'
-        ? ['The browser needs a hosts entry for Keycloak:', '    127.0.0.1  keycloak']
+        ? [
+            'A browser on the machine running houston needs a hosts entry for Keycloak:',
+            '    127.0.0.1  keycloak',
+          ]
         : []),
       ...(it.idpHost === 'localhost' || it.idpHost === 'keycloak'
-        ? ['From another machine: --bind 0.0.0.0 --set idp_host=<this host>']
+        ? [keycloak.FROM_ANOTHER_COMPUTER]
         : []),
       `Keycloak admin console: ${host}  (admin / admin, realm '${keycloak.REALM}'; the users are under User federation > directory)`,
     ],
   };
 }
 
-/** osixia's read-only user, for `--set bind=service`. */
+/** The image's read-only user (LDAP_READONLY_USER), for `--set bind=service`. */
 const READONLY_USER = 'readonly';
 const READONLY_PASSWORD = 'readonly';
 
@@ -442,7 +489,7 @@ export interface LDAPIntent {
   readonly adminPassword: string;
   /** `--set groups=on`: the lab groups and a group-restricted login. */
   readonly groups: boolean;
-  /** `--set bind=service`: Rocket.Chat binds as osixia's read-only user, not the admin. */
+  /** `--set bind=service`: Rocket.Chat binds as the directory's read-only user, not the admin. */
   readonly bind: string;
   /** `--set tls=ldaps|starttls`: a certificate from houston's CA; `none` changes nothing. */
   readonly tls: string;
@@ -482,9 +529,32 @@ function labMembers(group: string, users: number): number[] {
   return all;
 }
 
+/**
+ * slapd makes `cn=admin,<base>` the root account, and neither osixia nor its replacement
+ * creates its entry. phpLDAPadmin 1.2.5 signed in on the bind alone; 2.x looks the DN up and
+ * refuses one that does not exist ("rootdn to login (not supported)"). Its classes are the ones
+ * `LDAP_LOGIN_OBJECTCLASS` admits; Rocket.Chat's `(objectclass=inetOrgPerson)` never syncs it.
+ */
+function adminEntry(baseDn: string, password: string): string {
+  return (
+    `dn: cn=admin,${baseDn}\nobjectClass: simpleSecurityObject\n` +
+    `objectClass: organizationalRole\ncn: admin\nuserPassword: ${password}\n`
+  );
+}
+
+/**
+ * The image seeds `ou=people` beside `ou=groups`, and houston's users live in `ou=Users`: an
+ * empty second people branch in every tree. `ldapadd` honours an explicit changetype.
+ */
+function emptyPeopleGone(baseDn: string): string {
+  return `dn: ou=people,${baseDn}\nchangetype: delete\n`;
+}
+
 function ldif(it: LDAPIntent): string {
   const { baseDn, domain, users } = it;
   const blocks = [
+    adminEntry(baseDn, it.adminPassword),
+    emptyPeopleGone(baseDn),
     `dn: ou=Users,${baseDn}\nobjectClass: organizationalUnit\nou: Users\n`,
     `dn: ou=groups,${baseDn}\nobjectClass: organizationalUnit\nou: groups\n`,
   ];
@@ -737,7 +807,7 @@ function syncEnv(it: LDAPIntent): Record<string, string> {
   };
 }
 
-/** osixia's environment: the directory, and the read-only user when it is bound as. */
+/** The directory's environment (osixia's names, which the image keeps), and the read-only user. */
 function slapdEnv(it: LDAPIntent): Record<string, string> {
   return {
     LDAP_ORGANISATION: 'Houston',
@@ -751,8 +821,8 @@ function slapdEnv(it: LDAPIntent): Record<string, string> {
           LDAP_READONLY_USER_PASSWORD: READONLY_PASSWORD,
         }
       : {}),
-    // houston's certificate instead of osixia's self-made one, and no client certificate
-    // asked for: osixia's default `demand` refuses every Rocket.Chat connection.
+    // houston's certificate instead of the image's self-signed one, and no client certificate
+    // asked for: the default `demand` refuses every Rocket.Chat connection.
     ...(it.tls === 'none'
       ? {}
       : {
@@ -765,7 +835,7 @@ function slapdEnv(it: LDAPIntent): Record<string, string> {
   };
 }
 
-/** The certificate files' Compose mounts, one file each so osixia's own files stay writable. */
+/** The certificate files' Compose mounts, one file each, read in place (0644). */
 function certVolumes(it: LDAPIntent): string[] {
   if (it.tls === 'none') return [];
   const dir = isAd(it) ? AD_CERTS_DIR : CERTS_DIR;
@@ -807,7 +877,7 @@ function directoryDescription(it: LDAPIntent): string {
     );
   }
   return (
-    `OpenLDAP (osixia) seeded with ${String(it.users)} user(s) + group ` +
+    `OpenLDAP (v2.6.x) seeded with ${String(it.users)} user(s) + group ` +
     `'${GROUP_CN}'; RC wired for LDAP login. Log in as user1 / user1.`
   );
 }
@@ -823,7 +893,7 @@ function adNotes(it: LDAPIntent): string[] {
       : []),
     ...(it.groups
       ? [
-          `Groups: rocket-chat holds staff, which holds every user but the last; rocket-admin (user1); employee (everyone). Login asks for rocket-chat membership through the nesting (AD's in-chain rule), so user${String(it.users)} is refused. With an Enterprise licence, rocket-admin members get the admin role and employee members join #employees at login.`,
+          `Groups: rocket-chat holds staff, which holds every user but the last; rocket-admin (user1); employee (everyone). Login asks for rocket-chat membership through the nesting (AD's in-chain rule), so user${String(it.users)} is refused. With an Enterprise license, rocket-admin members get the admin role and employee members join #employees at login.`,
           'Samba returns every member of a large group at once; Windows AD splits one past 1,500 members into ranges, which this directory does not reproduce.',
         ]
       : []),
@@ -849,15 +919,13 @@ function guideFor(it: LDAPIntent): PresetGuide {
       : `OpenLDAP with ${n} users and the group rc-users; Rocket.Chat signs them in.`,
     setup: hostsEntry
       ? {
-          why: 'Add this line to /etc/hosts (needs sudo); it is how your browser reaches Keycloak at the address Rocket.Chat uses.',
+          why: keycloak.HOSTS_ENTRY_WHY,
           line: '127.0.0.1  keycloak',
         }
       : null,
     signIn: [
       [`user1 … user${n}`, 'same as the name', 'Rocket.Chat, LDAP login'],
-      ad
-        ? [`CN=Administrator,CN=Users,${it.baseDn}`, AD_ADMIN_PASSWORD, 'phpLDAPadmin, as a DN']
-        : [`cn=admin,${it.baseDn}`, it.adminPassword, 'phpLDAPadmin, as a DN'],
+      [...adminLogin(it), 'phpLDAPadmin, as a DN'],
       ...(sso
         ? ([
             [`user1 … user${n}`, 'same as the name', `press '${button}' on the login page`],
@@ -877,12 +945,12 @@ function guideFor(it: LDAPIntent): PresetGuide {
         ? ad
           ? [
               `rocket-chat holds staff (every user but the last); rocket-admin holds user1; employee holds everyone. Login asks for rocket-chat membership through the nesting (AD's in-chain rule), so user${n} is refused.`,
-              'With an Enterprise licence rocket-admin members get the admin role and employee members join #employees at login.',
+              'With an Enterprise license rocket-admin members get the admin role and employee members join #employees at login.',
               'Samba returns every member of a large group at once; Windows AD splits one past 1,500 members into ranges, which this directory does not reproduce.',
             ]
           : [
               `Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all). Only rocket-chat may log in: user${n} is refused by the group filter.`,
-              'With an Enterprise licence (--license or --reg-token), rocket-admin members get the admin role and employee members join #employees at login.',
+              'With an Enterprise license (--license, or the Enterprise license field when creating; or a registration token), rocket-admin members get the admin role and employee members join #employees at login.',
             ]
         : []),
       it.bind === 'service'
@@ -900,9 +968,9 @@ function guideFor(it: LDAPIntent): PresetGuide {
         ? 'Keycloak asks each user to set up an authenticator app at the first sign-in.'
         : '',
       hostsEntry
-        ? 'The hosts entry points at this machine, so the browser must be on it. From another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>, which needs no hosts entry.'
+        ? `The hosts entry works only for a browser on the machine running houston. ${keycloak.FROM_ANOTHER_COMPUTER}`
         : sso && it.idpHost === 'localhost'
-          ? 'Keycloak is reached on localhost, so the browser must be on this machine; from another machine re-create with --bind 0.0.0.0 --set idp_host=<this host>.'
+          ? `Keycloak is reached on localhost, so the browser must be on the machine running houston. ${keycloak.FROM_ANOTHER_COMPUTER}`
           : '',
     ],
   });
@@ -915,7 +983,7 @@ function notesFor(it: LDAPIntent): string[] {
     `Rocket.Chat users are user1..user${String(it.users)}, password same as name.`,
     ...(it.groups
       ? [
-          `Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all). Only rocket-chat may log in: user${String(it.users)} is refused by the group filter. With an Enterprise licence (--license or --reg-token), rocket-admin members get the admin role and employee members join #employees at login.`,
+          `Groups: rocket-chat (all but the last user), rocket-admin (user1), employee (all). Only rocket-chat may log in: user${String(it.users)} is refused by the group filter. With an Enterprise license (--license, or the Enterprise license field when creating; or a registration token), rocket-admin members get the admin role and employee members join #employees at login.`,
         ]
       : []),
     ...(it.bind === 'service'
@@ -929,15 +997,14 @@ function notesFor(it: LDAPIntent): string[] {
 function openldapService(it: LDAPIntent): Record<string, unknown> {
   return generated(it)
     ? {
-        image: 'osixia/openldap:1.5.0',
+        image: DIRECTORY_IMAGE,
         entrypoint: ['/bin/sh', '-c', GENERATE_THEN_RUN],
         environment: { ...slapdEnv(it), ...generatorEnv(it) },
         volumes: [`./ldap/gen-users.sh:${GENERATOR_PATH}:ro`, ...certVolumes(it)],
         restart: 'unless-stopped',
       }
     : {
-        image: 'osixia/openldap:1.5.0', // multi-arch (amd64/arm64) — no platform pin
-        command: ['--copy-service'], // required to import custom bootstrap LDIF
+        image: DIRECTORY_IMAGE,
         environment: slapdEnv(it),
         volumes: [`./ldap/50-rc-users.ldif:${BOOTSTRAP_PATH}:ro`, ...certVolumes(it)],
         restart: 'unless-stopped',
@@ -952,15 +1019,12 @@ function composeAdapter(it: LDAPIntent): Preset {
     // A directory you cannot look at is hard to reproduce against: "is the user there,
     // and what attributes does it have" is the first question of nearly every LDAP
     // ticket, and answering it meant `docker exec ... ldapsearch`.
+    // Plain HTTP: the directory is on a private network with a fixed throwaway password, and
+    // an HTTPS workspace serves it through its own name instead (`withPublicUrl`).
     phpldapadmin: {
       image: UI_IMAGE,
-      environment: {
-        PHPLDAPADMIN_LDAP_HOSTS: host,
-        // The directory is on a private network with a fixed throwaway password; HTTPS
-        // here would only add a certificate warning.
-        PHPLDAPADMIN_HTTPS: 'false',
-      },
-      ports: [`${String(UI_PORT)}:80`],
+      environment: uiEnv(it),
+      ports: [`${String(UI_PORT)}:${String(UI_CONTAINER_PORT)}`],
       depends_on: [host],
       restart: 'unless-stopped',
     },
@@ -1008,7 +1072,7 @@ function directoryFiles(it: LDAPIntent): [string, string][] {
 }
 
 /** The phpLDAPadmin browser UI, which is the only way to see what LDAP holds. */
-function phpldapadminWorkload(labels: Record<string, string>, host: string): [Bag, Bag] {
+function phpldapadminWorkload(labels: Record<string, string>, it: LDAPIntent): [Bag, Bag] {
   // phpLDAPadmin, and the label that gets it published. A Service carrying
   // `houston.io/ui-port` is forwarded to that host port by the Kubernetes lifecycle -- the
   // declaration lives on the Service that defines the thing, rather than in a second
@@ -1031,13 +1095,11 @@ function phpldapadminWorkload(labels: Record<string, string>, host: string): [Ba
             {
               name: 'phpldapadmin',
               image: UI_IMAGE,
-              env: [
-                { name: 'PHPLDAPADMIN_LDAP_HOSTS', value: host },
-                { name: 'PHPLDAPADMIN_HTTPS', value: 'false' },
-              ],
-              ports: [{ containerPort: 80 }],
+              env: Object.entries(uiEnv(it)).map(([name, value]) => ({ name, value })),
+              ports: [{ containerPort: UI_CONTAINER_PORT }],
+              // Laravel's own health route: `/` answers a redirect to the sign-in page.
               readinessProbe: {
-                httpGet: { path: '/', port: 80 },
+                httpGet: { path: '/up', port: UI_CONTAINER_PORT },
                 initialDelaySeconds: 3,
                 periodSeconds: 3,
                 failureThreshold: 30,
@@ -1054,7 +1116,8 @@ function phpldapadminWorkload(labels: Record<string, string>, host: string): [Ba
     metadata: { name: 'phpldapadmin', labels: uiLabels },
     spec: {
       selector: { app: uiLabels.app },
-      ports: [{ name: 'http', port: 80, targetPort: 80 }],
+      // The forward to the host port reads `targetPort`; an Ingress reaches the Service's 80.
+      ports: [{ name: 'http', port: 80, targetPort: UI_CONTAINER_PORT }],
     },
   };
   return [uiDeployment, uiService];
@@ -1075,10 +1138,8 @@ function openldapWorkload(it: LDAPIntent, labels: Record<string, string>): [Bag,
           containers: [
             {
               name: 'openldap',
-              image: 'osixia/openldap:1.5.0',
-              ...(generated(it)
-                ? { command: ['/bin/sh', '-c', GENERATE_THEN_RUN] }
-                : { args: ['--copy-service'] }),
+              image: DIRECTORY_IMAGE,
+              ...(generated(it) ? { command: ['/bin/sh', '-c', GENERATE_THEN_RUN] } : {}),
               env: Object.entries({
                 ...slapdEnv(it),
                 ...(generated(it) ? generatorEnv(it) : {}),
@@ -1222,7 +1283,7 @@ function kubernetesManifest(it: LDAPIntent): string {
     ),
   };
   const [deployment, service] = isAd(it) ? adWorkload(it, labels) : openldapWorkload(it, labels);
-  const [uiDeployment, uiService] = phpldapadminWorkload(labels, hostOf(it));
+  const [uiDeployment, uiService] = phpldapadminWorkload(labels, it);
   return [configMap, deployment, service, uiDeployment, uiService]
     .map((doc) => safeDump(doc))
     .join('---\n');

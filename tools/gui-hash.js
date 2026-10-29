@@ -5,7 +5,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const EXPECTED = '5f95af584f621dcd0473fdd3ecfab3929b6b1eccc0405f136c69cd9e790e4656';
+const EXPECTED = '30ff68009956394f624361440ef10934894ffb44c956ac0ca6fee1d1ad907cff';
+// Re-recorded for the 2026-10-21 live audit: a create shown as Creating on the page that
+// started it, and kept out of Home's "Needs you" (it read `down`); the Logs tab's message
+// under its columns at phone width, where it had ~50px; and an EKS build with the Nodes
+// field cleared sending the 3 its price was quoted for, not a 0 the server now refuses.
 // Re-recorded for Enter in the Delete dialog's name field: it presses Delete once the name
 // is right, where the method=dialog form closed the dialog with nothing done.
 // Re-recorded for the pane's foot: Take down (the containers go, the data stays) and Delete

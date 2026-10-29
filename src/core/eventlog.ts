@@ -443,8 +443,8 @@ export function event(ev: Event): void {
  * A GUI job beginning. The record `web/jobs` could never keep: its registry is in memory,
  * so a restart loses even the knowledge that a job existed.
  */
-export function jobStarted(_jobId: string, kind: string, label: string): void {
-  write({ ...base('job-start'), job_kind: kind, label });
+export function jobStarted(_jobId: string, kind: string, label: string, verb = ''): void {
+  write({ ...base('job-start'), job_kind: kind, label, ...(verb ? { verb } : {}) });
 }
 
 export function jobEnded(
@@ -453,8 +453,15 @@ export function jobEnded(
   label: string,
   status: string,
   error: string,
+  verb = '',
 ): void {
-  const rec: Record<string, unknown> = { ...base('job-end'), job_kind: kind, label, status };
+  const rec: Record<string, unknown> = {
+    ...base('job-end'),
+    job_kind: kind,
+    label,
+    status,
+    ...(verb ? { verb } : {}),
+  };
   if (error) rec.msg = redact(String(error));
   write(rec);
 }

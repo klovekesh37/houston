@@ -166,9 +166,12 @@ export async function requireRunning(name: string): Promise<Metadata> {
         `\`houston start --name ${target}\``,
     );
   }
+  // With its version: `up` requires one, and a bare `up --name` was a usage error.
+  const { rcVersion } = await readMeta(target);
   throw new NotReadyError(
     `${quotedText(target)} has no containers (it was \`down\`ed). Upgrades run Rocket.Chat's ` +
-      `migrations on boot, so it has to be up first: \`houston up --name ${target}\``,
+      'migrations on boot, so it has to be up first: ' +
+      `\`houston up --version ${rcVersion} --name ${target}\``,
   );
 }
 
@@ -238,13 +241,17 @@ export function mongoMove(
   if (curMongo !== null && newMongo !== null && seriesOf(newMongo) !== seriesOf(curMongo)) {
     // Refused, not attempted. Mongo majors must be stepped one at a time with a
     // featureCompatibilityVersion bump between each; doing it in one move is how the
-    // data is lost.
+    // data is lost. The way that works is a dump restored into a new workspace.
     const steps = seriesSteps(curMongo, newMongo);
     mongoChange =
       `Rocket.Chat ${resolved.rcVersion} pairs with MongoDB ${resolved.mongoTag}, ` +
       `but ${quotedText(name)} runs MongoDB ${meta.mongoTag}. MongoDB majors have to be ` +
-      `stepped one at a time (${steps.join(' -> ')}) with a featureCompatibilityVersion bump ` +
-      'at each step; houston will not do that in a single move';
+      `stepped one at a time (${steps.join(' -> ')}), which houston does not do in place` +
+      (compareVersions(newMongo, curMongo) > 0
+        ? `. To carry the data across: houston backup --name ${name}, then houston up ` +
+          `--version ${resolved.rcVersion} --name ${name}-new, then houston restore <bundle> ` +
+          `--name ${name}-new --allow-upgrade`
+        : '');
     blocked = blocked !== '' ? blocked : mongoChange;
   } else if (curMongo !== null && newMongo !== null && compareVersions(newMongo, curMongo) !== 0) {
     warnings.push(
@@ -311,7 +318,7 @@ export async function plan(
 
   if (isTruthy(bagOf(meta.extra).tls)) {
     warnings.push(
-      'this repro terminates TLS; its certificate and Traefik configuration are ' +
+      'this workspace terminates TLS; its certificate and Traefik configuration are ' +
         'left exactly as they are',
     );
   }
@@ -541,21 +548,19 @@ export async function refuseOrWarn(
 ): Promise<Bag> {
   const p = await plan(target, toVersion, { offline });
   if (!isTruthy(p.allowed) && !force) {
-    throw new ValidationError(`${String(p.blocked_reason)}. Pass --force to try anyway.`);
+    // `--force` DOES NOT DO WHAT "try anyway" IMPLIES for a MongoDB major (a blocked plan
+    // with one names it as its reason), so that refusal says what it does instead.
+    throw new ValidationError(
+      isTruthy(p.mongo_blocked) && p.blocked_reason === p.mongo_blocked
+        ? `${String(p.mongo_blocked)}. \`--force\` upgrades Rocket.Chat only and leaves ` +
+            'MongoDB where it is.'
+        : `${String(p.blocked_reason)}. Pass --force to try anyway.`,
+    );
   }
   if (isTruthy(p.mongo_blocked)) {
-    // `--force` DOES NOT DO WHAT THE REFUSAL IMPLIES, so it says so rather than
-    // silently proceeding.
-    if (!force) {
-      throw new ValidationError(
-        `${String(p.mongo_blocked)} \`--force\` upgrades Rocket.Chat only and leaves ` +
-          'MongoDB where it is, which is usually not what you want; `backup` then ' +
-          'a fresh `up` at the new version is.',
-      );
-    }
     warn(
       emit,
-      `--force: upgrading Rocket.Chat ONLY. ${String(p.mongo_blocked)} MongoDB stays at its ` +
+      `--force: upgrading Rocket.Chat ONLY. ${String(p.mongo_blocked)}. MongoDB stays at its ` +
         'current version and the record keeps naming it, so this workspace is a ' +
         'combination houston does not pair by itself.',
       { phase: 'upgrade' },

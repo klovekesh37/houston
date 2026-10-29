@@ -167,7 +167,7 @@ describe('retained job output in History', () => {
     expect(await row.locator('.jstatus').textContent()).toBe('failed');
     const recorded = page
       .locator('#jobs-list div.jobrow')
-      .filter({ hasText: 'scale: alice-failed' });
+      .filter({ hasText: 'Add bulk test data: alice-failed' });
     expect(await recorded.locator('.jstatus').allTextContents()).toEqual(['failed', 'accepted']);
     await row.click();
     await page.waitForFunction(
@@ -222,6 +222,29 @@ describe('retained job output in History', () => {
     expect(await page.locator('#job-stop').isHidden()).toBe(true);
   });
 
+  test('recorded activity names each kind in plain words, and an unknown kind as written', async () => {
+    // The rows read `scale: alice-failed`, `teardown: x`, `down-volumes`: the audit's kinds.
+    for (const [kind, label] of [
+      ['down-volumes', 'alice-gone'],
+      ['down', 'alice-kept'],
+      ['teardown', 'alice-either'],
+      ['chown', 'alice-t1 alice -> bob'],
+      ['kube', 'alice-legacy'],
+    ]) {
+      audit.audit('alice', kind as string, label as string, { origin: 'session', outcome: 'ok' });
+    }
+    await historyAfterRefresh();
+    await page.locator('#jobs-list div.jobrow', { hasText: 'alice-gone' }).waitFor();
+    const said = await page.locator('#jobs-list div.jobrow .jkind').allTextContents();
+    expect(said).toEqual([
+      'kube: alice-legacy',
+      'Hand over: alice-t1 alice -> bob',
+      'Take down or delete: alice-either',
+      'Take down: alice-kept',
+      'Delete: alice-gone',
+    ]);
+  });
+
   test('History preserves member scoping and old audit entries without promising retained output', async () => {
     const own = await seed('alice-own');
     const other = await seed('bob-private', 'bob');
@@ -231,7 +254,9 @@ describe('retained job output in History', () => {
     expect(await page.locator(`button[data-job-id="${other.id}"]`).count()).toBe(0);
     expect(await page.locator('#jobs-list').innerText()).not.toContain('bob-private');
     const legacy = page.locator('#jobs-list div.jobrow').filter({ hasText: 'old-seed' });
-    expect(await legacy.locator('.jstatus').textContent()).toBe('seed');
+    // Recorded, not "done": a line with no outcome was written when the job was accepted.
+    expect(await legacy.locator('.jstatus').textContent()).toBe('recorded');
+    expect(await legacy.locator('.jkind').textContent()).toBe('Add sample data: old-seed');
     expect(await page.locator('#jobs-list').innerText()).toContain(
       'cleared when this server restarts',
     );

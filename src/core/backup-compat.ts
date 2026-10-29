@@ -72,7 +72,7 @@ export function compatibility(manifest: Bag, meta: Metadata): Compatibility {
   const preset = manifest.preset;
   if (isTruthy(preset) && String(preset) !== meta.preset) {
     warnings.push(
-      `the dump came from preset ${quotedText(String(preset))} but this repro is ` +
+      `the dump came from preset ${quotedText(String(preset))} but this workspace is ` +
         `${quotedText(meta.preset)}; the data may reference services that do not exist here.`,
     );
   }

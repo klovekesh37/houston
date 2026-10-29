@@ -74,6 +74,28 @@ describe("a preset's guide for the scenario card", () => {
     ).toMatchObject({ setup: null, know: ['kept'] });
   });
 
+  it.each([
+    ['saml', {}],
+    ['oidc', {}],
+    ['oidc', { idp_host: 'idp.example.test' }],
+    ['ldap', { idp: 'oidc' }],
+    ['ldap', { idp: 'saml' }],
+  ])(
+    'over HTTPS %s %j sends the browser to Keycloak at the path, with nothing to set up',
+    (name, params) => {
+      // The card kept "SAML sends your browser to http://localhost:8081" and the step "Add the
+      // hosts entry above." with the box it pointed at removed.
+      const [served] = withPublicUrl(
+        load(name, params),
+        'https://ws.example.test',
+        'docker',
+      ).guides;
+      const lines = [...(served?.steps ?? []), ...(served?.know ?? [])].join('\n');
+      expect(lines).not.toMatch(/http:\/\/|hosts entry|--bind|localhost/u);
+      expect(lines).toContain('Keycloak is at https://ws.example.test/keycloak');
+    },
+  );
+
   it('drops the blank lines a conditional part leaves', () => {
     expect(guide('x', { steps: ['a', '', '  '], know: [''] })).toEqual({
       name: 'x',

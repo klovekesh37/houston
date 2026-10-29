@@ -105,9 +105,14 @@ export function metadata(values: Partial<Metadata> = {}): Metadata {
   };
 }
 
-/** What a human or a browser should open -- the https URL if there is one. */
+/**
+ * What a human or a browser should open -- the https URL if there is one, else the one
+ * `--root-url` advertised (a proxy's, a tunnel's), else houston's own loopback address.
+ */
 export function externalUrl(meta: Metadata): string {
-  return meta.publicUrl || meta.rootUrl;
+  // `extra` is null in a hand-edited record, and the detail panel still has to render it.
+  const extra = meta.extra as Record<string, unknown> | null;
+  return meta.publicUrl || String(extra?.advertised_url ?? '') || meta.rootUrl;
 }
 
 /**
@@ -128,6 +133,14 @@ export function externalUrl(meta: Metadata): string {
  */
 export function adminPass(meta: Metadata): string {
   return meta.adminPassword || config.ADMIN_PASSWORD;
+}
+
+/** Who owns it, as `ownership.ownerOf` reads it, for a message: '' when the record names nobody. */
+export function recordedOwner(meta: Metadata): string {
+  const extra = (meta.extra as Record<string, unknown> | null) ?? {};
+  const owner =
+    typeof extra.owner === 'string' && extra.owner !== '' ? extra.owner : extra.created_by;
+  return typeof owner === 'string' ? owner : '';
 }
 
 /**
@@ -237,7 +250,7 @@ export async function readMeta(name: string): Promise<Metadata> {
   if (!pathExists(record)) {
     throw new MissingRecordError(
       `${quotedText(name)} has no repro.json, so it is a half-written workspace rather than one ` +
-        `houston can act on — finish it with \`houston up --name ${name}\`, or remove ` +
+        `houston can act on — finish it with \`houston up --version <version> --name ${name}\`, or remove ` +
         `it with \`houston down --name ${name} --volumes\``,
     );
   }

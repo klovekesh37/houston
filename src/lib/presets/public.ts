@@ -8,11 +8,11 @@
  * what to route in `extra.public_paths`; the edge (Compose) and an Ingress (Kubernetes) do
  * the routing.
  *
- * Each UI serves from its path itself -- Mailpit's web root, Keycloak's relative path, the
- * demo page copied under its path, phpLDAPadmin's server path -- so no edge or Ingress
- * rewrites a prefix, which ingress controllers each do their own way. The MinIO console has
- * no such setting (it only names its public address and expects the prefix stripped), so a
- * small nginx of its own, `minio-ui`, strips it on both runtimes. `/livechat` is not
+ * Each UI serves from its path itself where it can -- Mailpit's web root, Keycloak's relative
+ * path, the demo page copied under its path -- so no edge or Ingress rewrites a prefix, which
+ * ingress controllers each do their own way. The MinIO console and phpLDAPadmin 2 have no
+ * such setting (they expect the prefix stripped), so a small nginx of each one's own,
+ * `minio-ui` and `ldap-ui`, strips it on both runtimes. `/livechat` is not
  * available: Rocket.Chat serves its own widget there on the same host.
  */
 import { withoutLocalSetup } from './guides';
@@ -85,6 +85,41 @@ const MINIO_UI_CONF = `server {
 }
 `;
 
+/**
+ * Short on purpose: the edge reaches it as `houston-<name>-ldap-ui-1`, a DNS label, and
+ * `phpldapadmin-ui` would have been the longest container it routes to (`naming.DERIVED_MAX`).
+ */
+const LDAPADMIN_UI = 'ldap-ui';
+
+/**
+ * phpLDAPadmin 2 has no server-path setting (1.x's PHPLDAPADMIN_SERVER_PATH is gone): it serves
+ * from / and builds every link from `X-Forwarded-Prefix`, which it believes from the private
+ * ranges its image trusts by default (APP_TRUST_PROXIES: 10/8, 127/8, 172.16/12, 192.168/16 --
+ * a Docker or Podman network, a k3s or EKS-default pod). So this strips the prefix and names
+ * it, as the maintainer's own configuration does (leenooks/phpLDAPadmin#435).
+ *
+ * ponytail: nginx resolves `phpldapadmin` once, at start, as `minio-ui` does `minio`; a pod
+ * network outside those ranges would need APP_TRUST_PROXIES set on phpLDAPadmin too.
+ */
+function ldapadminUiConf(upstreamPort: number): string {
+  return `server {
+  listen 80;
+  absolute_redirect off;
+  location = / { return 302 ${LDAPADMIN_PATH}/; }
+  location = ${LDAPADMIN_PATH} { return 301 ${LDAPADMIN_PATH}/; }
+  location ${LDAPADMIN_PATH}/ {
+    proxy_pass http://phpldapadmin:${String(upstreamPort)}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+    proxy_set_header X-Forwarded-Port $http_x_forwarded_port;
+    proxy_set_header X-Forwarded-Prefix ${LDAPADMIN_PATH};
+  }
+}
+`;
+}
+
 const bag = (value: unknown): Bag =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Bag) : {};
 
@@ -141,11 +176,11 @@ function addRedirects(realm: string, publicUrl: string): string {
  * merged, and s3_minio's presigned-mode hosts entry is worded line for line like oidc's.
  */
 const KEYCLOAK_HOST_NOTES: readonly (readonly [string, number])[] = [
-  ['OIDC needs one host entry', 6],
-  ["  It is 'localhost', so the browser must be on THIS machine", 3],
+  ['OIDC needs one host entry', 5],
+  ["  It is 'localhost', so the browser must be on the machine running houston", 3],
   // ldap's SSO notes: the sentence, then the entry to paste on its own line.
-  ['The browser needs a hosts entry for Keycloak', 2],
-  ['From another machine: --bind 0.0.0.0 --set idp_host=', 1],
+  ['A browser on the machine running houston needs a hosts entry for Keycloak', 2],
+  ['From another computer, create the workspace with HTTPS on a domain', 1],
 ];
 
 function dropRuns(notes: readonly string[], runs: typeof KEYCLOAK_HOST_NOTES): string[] {
@@ -325,6 +360,19 @@ export function withPublicUrl(pre: Preset, publicUrl: string, runtime: string): 
     }
     // The hosts entry and `idp_host` were for a browser reaching Keycloak by port.
     out.notes = dropRuns(out.notes, KEYCLOAK_HOST_NOTES);
+    // And the card's: a line sending the browser to Keycloak's port becomes the path.
+    const byPort = new RegExp(`http://[A-Za-z0-9.-]+:${String(exposed)}`, 'u');
+    out.guides = out.guides.map((one) =>
+      one.signIn.some(([, , where]) => where.startsWith('Keycloak'))
+        ? {
+            ...one,
+            know: [
+              `Keycloak is at ${base}${KEYCLOAK_PATH}, on the workspace's own address: any browser that opens Rocket.Chat reaches it.`,
+              ...one.know.filter((line) => !byPort.test(line)),
+            ],
+          }
+        : one,
+    );
     // Every address the notes give for Keycloak (its port, under any idp_host) is the path now.
     out.notes = out.notes.map((note) =>
       note.replace(
@@ -395,19 +443,51 @@ export function withPublicUrl(pre: Preset, publicUrl: string, runtime: string): 
   }
 
   if (has('phpldapadmin')) {
-    const [container, exposed] = ports(pre, 'phpldapadmin', docs, 80);
+    // Compose reaches the container's own port; Kubernetes reaches the Service's.
+    const [container, exposed] = ports(pre, 'phpldapadmin', docs, 8080);
+    const conf = ldapadminUiConf(kube ? exposed : container);
     paths.push({
       preset: 'ldap',
       path: LDAPADMIN_PATH,
-      service: 'phpldapadmin',
-      container_port: container,
-      service_port: exposed,
+      service: LDAPADMIN_UI,
+      container_port: 80,
+      service_port: 80,
     });
-    const env = { PHPLDAPADMIN_SERVER_PATH: LDAPADMIN_PATH };
-    if (kube) addEnv(containerOf(find(docs, 'Deployment', 'phpldapadmin') as Bag), env);
-    else {
+    const port = presetPort('ldap');
+    if (kube) {
+      // The host port forwards to the nginx now, which sends / to /phpldapadmin/.
+      const uiService = find(docs, 'Service', 'phpldapadmin');
+      if (uiService !== undefined) delete bag(bag(uiService.metadata).labels)['houston.io/ui-port'];
+      docs.push(
+        safeLoadAll(
+          k8sManifests({
+            name: LDAPADMIN_UI,
+            image: NGINX_IMAGE,
+            ports: [[port, 80]],
+            ui: { [LDAPADMIN_UI]: [port, 80] },
+            files: { 'default.conf': conf },
+            mounts: [
+              {
+                name: 'files',
+                mountPath: '/etc/nginx/conf.d/default.conf',
+                subPath: 'default.conf',
+              },
+            ],
+          }),
+        ).map(bag),
+      );
+    } else {
+      // Its port is the nginx's now, so http://localhost:<port> keeps opening it.
       const svc = bag(out.services.phpldapadmin);
-      svc.environment = { ...bag(svc.environment), ...env };
+      delete svc.ports;
+      out.services[LDAPADMIN_UI] = {
+        image: NGINX_IMAGE,
+        volumes: [`./ldap/${LDAPADMIN_UI}.conf:/etc/nginx/conf.d/default.conf:ro`],
+        ports: [`${String(port)}:80`],
+        depends_on: ['phpldapadmin'],
+        restart: 'unless-stopped',
+      };
+      out.files = [...out.files, [`ldap/${LDAPADMIN_UI}.conf`, conf]];
     }
     out.notes = rewrite(
       out.notes,

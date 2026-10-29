@@ -70,6 +70,103 @@ describe('announcing readiness', () => {
   });
 });
 
+describe('the license Rocket.Chat was given', () => {
+  it('says and records a refusal, records an acceptance, and records nothing it could not ask', async () => {
+    // Measured live: a license bound to another URL was installed and refused ("Url
+    // validation failed"); `up` said nothing and the panel badged the workspace Licensed.
+    jest.resetModules();
+    let answers: (boolean | null)[] = [];
+    const asked: string[] = [];
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual<object>('../../../src/core/runner/queries'),
+      rcState: async () => 'running',
+      rcRestartCount: async () => 0,
+    }));
+    jest.doMock('../../../src/core/rcapi', () => ({
+      ...jest.requireActual<object>('../../../src/core/rcapi'),
+      waitReady: async () => ({ version: '8.9.0' }),
+      completeSetupWizard: async () => false,
+      licenseValid: async (rootUrl: string) => {
+        asked.push(rootUrl);
+        return answers.length > 0 ? answers.shift() : null;
+      },
+      getSetting: async () => 'https://ticket.example.test',
+    }));
+    jest.doMock('../../../src/core/lifecycle/admin', () => ({
+      login: async () => ({ token: 't', userId: 'u' }),
+    }));
+    jest.doMock('../../../src/core/postready', () => ({ runPostReady: async () => undefined }));
+    try {
+      const ready = require('../../../src/core/lifecycle/ready') as typeof ReadyNS;
+      const record = require('../../../src/core/runner/record') as typeof RecordNS;
+      const pauses: number[] = [];
+      const run = async (extra: Record<string, unknown>) => {
+        const meta = record.metadata({
+          name: 'lic',
+          rcVersion: '8.9.0',
+          rootUrl: 'http://localhost:3000',
+          extra,
+        });
+        await record.writeRecord('lic', meta);
+        const said: string[] = [];
+        const emit = (event: Event) => said.push(event.message);
+        await ready.checkLicense(meta, { token: 't', userId: 'u' }, emit, async (ms) => {
+          pauses.push(ms);
+        });
+        return { said, status: (await record.readMeta('lic')).extra.license_status };
+      };
+      // `ready` asks: a workspace it finishes off is asked and its answer recorded.
+      answers = [true];
+      const meta = record.metadata({
+        name: 'lic',
+        rcVersion: '8.9.0',
+        rootUrl: 'http://localhost:3000',
+        extra: { licensed: true },
+      });
+      await record.writeRecord('lic', meta);
+      const said: string[] = [];
+      await ready.waitAndFinalize(meta, (event: Event) => said.push(event.message), 300, false);
+      expect(said).toContain('Rocket.Chat accepted the license');
+      expect((await record.readMeta('lic')).extra.license_status).toBe('valid');
+      // Refused every time it is asked: said, with the address it is checked against.
+      answers = [false, false, false, false];
+      const refused = await run({ licensed: true });
+      expect(pauses).toEqual([5000, 5000, 5000]);
+      expect(refused.status).toBe('refused');
+      expect(refused.said.filter((line) => line.includes('license'))).toEqual([
+        expect.stringContaining(
+          'Rocket.Chat refused the license: one is valid only at the address it was issued ' +
+            "for and until it expires, and this workspace's Site_Url is " +
+            'https://ticket.example.test.',
+        ) as unknown,
+      ]);
+      // Still being applied when first asked: the second ask is the answer.
+      answers = [false, true];
+      const late = await run({ licensed: true, license_status: 'refused' });
+      expect(late.status).toBe('valid');
+      expect(late.said).toContain('Rocket.Chat accepted the license');
+      // Could not ask: nothing recorded and nothing said, rather than a guess.
+      answers = [];
+      const unknown = await run({ licensed: true, license_status: 'valid' });
+      expect(unknown.status).toBe('valid');
+      expect(unknown.said.filter((line) => line.includes('license'))).toEqual([]);
+      // Never given one: never asked.
+      asked.length = 0;
+      expect((await run({})).status).toBeUndefined();
+      expect(asked).toEqual([]);
+    } finally {
+      for (const module of [
+        '../../../src/core/runner/queries',
+        '../../../src/core/rcapi',
+        '../../../src/core/lifecycle/admin',
+        '../../../src/core/postready',
+      ])
+        jest.dontMock(module);
+      jest.resetModules();
+    }
+  });
+});
+
 describe('starting the stack for the GUI, over a stale systemd unit', () => {
   it('hands the streamed up to the recreate, which is what makes it start', async () => {
     // The GUI's Bring it up streams `compose up`; that path bypassed `engine.up`, so its
@@ -240,6 +337,55 @@ describe('a workspace that does not become ready', () => {
     seen.cause = null;
     await failure(300);
     expect(seen.ticks).toBe(2);
+  });
+
+  it('says a stopped Docker workspace is stopped and how to start it, not to read its logs', async () => {
+    // Audit #18: `houston ready` on a stopped workspace said "container is not running (check
+    // `logs`)". Rocket.Chat runs `restart: always`, so only a stop leaves it `exited`. What
+    // docker really answers, measured: `compose ps` lists running containers only, so the
+    // stopped one is `absent` there, and `compose ls --all` keeps its project, all exited.
+    jest.resetModules();
+    let projects: Record<string, string> = { 'houston-paused': 'exited(3)' };
+    jest.doMock('../../../src/core/runner/queries', () => ({
+      ...jest.requireActual<object>('../../../src/core/runner/queries'),
+      rcState: async () => 'absent',
+      projectStates: async () => projects,
+      rcRestartCount: async () => 0,
+      servicesByProject: async () => ({}),
+    }));
+    jest.doMock('../../../src/core/rcapi', () => {
+      const actual = jest.requireActual<typeof RcapiNS>('../../../src/core/rcapi');
+      // Nothing answers; the liveness check decides, as the real wait's does.
+      return {
+        ...actual,
+        waitReady: async (
+          _root: string,
+          { isAlive }: { isAlive?: () => boolean | Promise<boolean> } = {},
+        ) => {
+          if (isAlive !== undefined && !(await isAlive())) {
+            throw new actual.NotReady('Rocket.Chat container is not running (check `logs`)');
+          }
+          throw new actual.NotReady('Rocket.Chat did not become ready within 1s');
+        },
+      };
+    });
+    jest.doMock('../../../src/core/diagnose', () => ({
+      ...jest.requireActual<object>('../../../src/core/diagnose'),
+      diagnoseFailure: async () => null,
+    }));
+    const ready = require('../../../src/core/lifecycle/ready') as typeof ReadyNS;
+    const { metadata } = require('../../../src/core/runner/record') as typeof RecordNS;
+    const meta = metadata({ name: 'paused', project: 'houston-paused', rcVersion: '8.5.1' });
+    const failure = async (): Promise<Error> =>
+      (await ready.waitServing(meta, () => undefined, 1).catch((error: unknown) => error)) as Error;
+    const stopped = await failure();
+    expect(stopped.constructor.name).toBe('NotReadyError');
+    expect(stopped.message).toBe(
+      "'paused' is stopped — `houston start --name paused` brings it back",
+    );
+    // A container that is gone (taken down: no project left) is not called stopped.
+    projects = {};
+    expect((await failure()).message).toContain('check `logs`');
   });
 });
 

@@ -303,12 +303,14 @@ describe('a create publishes its complete port allocation before releasing the l
       await holder(`monitor-holder-${kind}`, main, extra);
       const remedy =
         kind === 'monitor'
-          ? `(its monitoring) - stop it first: houston monitor --name monitor-holder-${kind} --off`
-          : `- delete it first: houston down --name monitor-holder-${kind} --volumes`;
+          ? `houston monitor --name monitor-holder-${kind} --off`
+          : `houston down --name monitor-holder-${kind} --volumes`;
       await expect(
         create(`monitor-conflict-${kind}`, { port: port + 1, monitor: true }),
       ).rejects.toThrow(
-        `monitoring needs port(s) [9090], already used by repro 'monitor-holder-${kind}' ${remedy}`,
+        `monitoring needs port(s) [9090], already used by workspace 'monitor-holder-${kind}'. ` +
+          "Monitoring's ports are fixed, so only one workspace on this machine can use them " +
+          `at a time; its owner frees them with ${remedy}`,
       );
       expect(await paths.exists(`monitor-conflict-${kind}`)).toBe(false);
       expect(deployed).toEqual([]);

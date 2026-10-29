@@ -89,7 +89,7 @@ export function resolveServices(
     }
     if (targets.length === 0) {
       throw new Error(
-        `no service '${alias}' in this repro (services: ${[...services].sort().join(', ')})`,
+        `no service '${alias}' in this workspace (services: ${[...services].sort().join(', ')})`,
       );
     }
     for (const t of targets) resolved[t] = lim;
@@ -222,7 +222,7 @@ export async function apply(name: string, perService: Record<string, Limit>): Pr
     for (const [svc, lim] of Object.entries(perService)) {
       const ids = await serviceContainerIds(name, svc);
       if (ids.length === 0) {
-        throw new Error(`no running container for service '${svc}' — is the repro up?`);
+        throw new Error(`no running container for service '${svc}' — is the workspace up?`);
       }
       for (const cid of ids) {
         const [nano, mem, swap] = await inspectLimits(cid);

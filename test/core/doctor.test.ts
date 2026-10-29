@@ -1089,7 +1089,7 @@ describe('the remaining single-subject rows', () => {
         {
           check: 'ports',
           status: 'ok',
-          message: 'Port 3000 free (repros auto-pick from 3000; next free: 4321)',
+          message: 'Port 3000 free (workspaces auto-pick from 3000; next free: 4321)',
         },
       ],
       [

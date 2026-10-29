@@ -23,6 +23,7 @@ import { ACME_ISSUER, CA_ISSUER, tlsSecretFor } from '../kube/certmanager';
 import { forwardAlive } from '../kube/forward';
 import { CONTEXT as KUBE_CONTEXT, RELEASE, isOurs } from '../kube/names';
 import { MONITORING_NAMESPACE } from '../kube/monitoring';
+import { podRows } from '../kube/status';
 import { OPERATOR_MIN_MONGO, OPERATOR_NAMESPACE } from '../kube/operator';
 import { ownedKubeconfig } from '../kube/exec';
 import * as paths from '../runner/paths';
@@ -249,7 +250,7 @@ export function scenarioGroup(meta: Metadata): NoteGroup[] {
   if (notes.length === 0) return [];
   // kind="scenario", not a title the panel has to recognise by its prefix.
   return [
-    noteGroup(`Scenario · ${presetsLabel(pre.name)}`, {
+    noteGroup(`Preset · ${presetsLabel(pre.name)}`, {
       kind: 'scenario',
       body: notes,
       // A YAML preset has no guide: the card then reads these notes as it always has.
@@ -480,8 +481,8 @@ export function openTheWayIn(
   return noteGroup('2 · Open the way in', {
     body: [
       'Rocket.Chat is reached through a port-forward, which is tied to its pod ' +
-        `and dies with it. This is the one houston started, so run it again if ` +
-        `${root} stops answering:`,
+        `and dies with it. This is the one houston started, so run it again, in a shell ` +
+        `on the machine running houston, if ${root} stops answering:`,
     ],
     commands: [
       `kubectl -n ${ns} port-forward ${addr}deployment/${release}-rocketchat ${String(port)}:3000`,
@@ -515,21 +516,23 @@ export function howToWorkWithIt(
     isOurs(context)
       ? noteGroup('1 · Point kubectl and helm at this cluster', {
           body: [
-            'houston keeps its own kubeconfig so creating a cluster cannot move the ' +
+            'These commands run in a shell on the machine running houston. houston keeps ' +
+              'its own kubeconfig so creating a cluster cannot move the ' +
               'context you were using. A bare `kubectl` will not see this workspace ' +
               'until it is pointed here, and every command below assumes it:',
           ],
           commands: [`export KUBECONFIG=${ownedKubeconfig()}`],
         })
-      : noteGroup('1 · Your kubectl already reaches this workspace', {
+      : noteGroup("1 · Point kubectl at this workspace's cluster", {
           // houston never moves kubectl's current context (a build puts it back where it
           // was), so the commands below reach this cluster only once it is pointed here.
           // "Every command below runs against '<context>'" and "# expect <context>" read as
           // a promise that was false on any box whose kubectl pointed somewhere else.
           body: [
             'This workspace lives in an existing cluster, so there is nothing to ' +
-              'export -- houston used the kubeconfig this machine already has and wrote ' +
-              'none of its own. The commands below use kubectl’s current context; point it ' +
+              'export -- houston used the kubeconfig the machine running houston already ' +
+              'has and wrote none of its own. The commands below run in a shell there and ' +
+              'use kubectl’s current context; point it ' +
               `at '${context}' first, or add \`--context ${context}\` to each of them.`,
           ],
           commands: [
@@ -554,11 +557,16 @@ export async function kubernetesNoteGroups(meta: Metadata): Promise<NoteGroup[]>
   const release = toText(extra.release) || RELEASE;
   const context = toText(extra[config.EXTRA_CONTEXT]) || KUBE_CONTEXT;
   const micro = String(topology.axesOfMeta(meta).deployment ?? '') === topology.MICROSERVICES;
-  // What the chart and MongoDB run, which is all the record can count: five for a monolith
-  // (NATS runs regardless), nine for microservices, one more per extra Rocket.Chat replica.
-  // A preset's own services are not in it. "about 5" stood beside nine running pods.
-  const pods = (micro ? 9 : 5) + Math.max(0, (Number(extra.instances) || 1) - 1);
-  const presetPods = (meta.preset || 'default') !== 'default' ? ', plus what its preset runs' : '';
+  // COUNTED, not predicted: what the chart runs differs by chart version, and a fixed "5"
+  // stood beside a chart-7.0.2 monolith's two pods (and "about 5" beside nine). A cluster
+  // that does not answer gives no pods, and then nothing is counted rather than guessed.
+  const pods = await podRows(meta.name, { context });
+  const running = pods.filter((pod) => pod.state === 'running').length;
+  const podsRow =
+    pods.length === 0
+      ? 'not counted: the cluster did not answer'
+      : `${String(pods.length)} in its namespace, ` +
+        `${running === pods.length ? 'all' : String(running)} running`;
   const bindHost = toText(extra.bind_host);
   const port = meta.hostPort || 3000;
   const root = meta.rootUrl || `http://localhost:${String(port)}`;
@@ -576,16 +584,16 @@ export async function kubernetesNoteGroups(meta: Metadata): Promise<NoteGroup[]>
       rows: [
         ['Cluster', clusterRow],
         ['Namespace', ns],
-        ['Arrangement', micro ? 'microservices' : 'monolith'],
-        ['Pods', `${String(pods)} for Rocket.Chat and MongoDB${presetPods}`],
+        ['Shape', micro ? 'microservices' : 'monolith'],
+        ['Pods', podsRow],
         // Said, not refused: a license can be added after the workspace is up.
-        ...(micro && extra.licensed !== true
+        ...(micro && (extra.licensed !== true || extra.license_status === 'refused')
           ? [
               [
                 'License',
-                'microservices are an Enterprise feature: without a license, Rocket.Chat ' +
-                  'replicas after the first stop ("Enterprise license not found"). Add one ' +
-                  'with `--license` or in Rocket.Chat under Workspace > Subscription.',
+                'microservices are an Enterprise feature: without an Enterprise license, every ' +
+                  'Rocket.Chat replica after the first stops ("Enterprise license not found"). ' +
+                  'Add one with `--license` or in Rocket.Chat under Workspace > Subscription.',
               ] as [string, string],
             ]
           : []),
@@ -594,7 +602,8 @@ export async function kubernetesNoteGroups(meta: Metadata): Promise<NoteGroup[]>
               [
                 'Costs',
                 'the cluster bills by the hour whether or not this workspace runs — ' +
-                  '`houston cluster overview` prices it',
+                  '`houston cluster overview` on the machine running houston prices it, ' +
+                  "as the GUI's Clusters page does",
               ] as [string, string],
             ]
           : []),

@@ -251,7 +251,7 @@ async function applyScenarioAndSecrets(
     const count = manifests.length;
     info(
       emit,
-      `applying the ${presetsLabel(preset?.name ?? '')} scenario — ` +
+      `applying the ${presetsLabel(preset?.name ?? '')} preset — ` +
         `${String(count)} resource${count === 1 ? '' : 's'}`,
       { phase: 'provision', pct: 25 },
     );
@@ -275,7 +275,7 @@ async function applyScenarioAndSecrets(
   }
   if (license !== '') {
     // Not added to `rendered`: that is written to the workspace for a human to read.
-    info(emit, 'installing the licence Secret', { phase: 'boot' });
+    info(emit, 'installing the license Secret', { phase: 'boot' });
     await apply(licenseSecretManifest(name, { license, owner }), { namespace, context });
   }
 }

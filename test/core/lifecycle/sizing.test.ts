@@ -210,15 +210,26 @@ import type * as PolicyNS from '../../testsetup-policy';
 import type * as RequestNS from '../../../src/core/lifecycle/request';
 import type * as TypesNS from '../../../src/core/lifecycle/types';
 import type * as CreateDockerNS from '../../../src/core/lifecycle/create-docker';
+import type * as RecordNS from '../../../src/core/runner/record';
 
 interface Stated {
   available: number;
   total?: number;
   capacity?: [number, number] | null;
   plan?: () => Promise<{ context: string; distribution: string; create: boolean }>;
+  metas?: RecordNS.Metadata[];
+  /** `compose ls` by project, as `projectStates` answers it; null when it could not ask. */
+  states?: Record<string, string> | null;
 }
 
-function preflight({ available, total = 10_000, capacity = null, plan }: Stated) {
+function preflight({
+  available,
+  total = 10_000,
+  capacity = null,
+  plan,
+  metas = [],
+  states = {},
+}: Stated) {
   jest.resetModules();
   // `runner/host` is a GUARDED module: this owns it for the case and keeps the healthy
   // engine, and the cleanup below puts the suite's guard back rather than `dontMock`ing it.
@@ -229,7 +240,11 @@ function preflight({ available, total = 10_000, capacity = null, plan }: Stated)
   }));
   jest.doMock('../../../src/core/runner/record', () => ({
     ...jest.requireActual<object>('../../../src/core/runner/record'),
-    listMeta: async () => [],
+    listMeta: async () => metas,
+  }));
+  jest.doMock('../../../src/core/runner/queries', () => ({
+    ...jest.requireActual<object>('../../../src/core/runner/queries'),
+    projectStates: async () => states,
   }));
   if (plan !== undefined) {
     jest.doMock('../../../src/core/kube/context', () => ({
@@ -251,6 +266,7 @@ describe('the capacity preflight', () => {
       (require('../../testsetup-policy') as typeof PolicyNS).healthyHost(),
     );
     jest.dontMock('../../../src/core/runner/record');
+    jest.dontMock('../../../src/core/runner/queries');
     jest.dontMock('../../../src/core/kube/context');
     jest.resetModules();
   });
@@ -367,6 +383,47 @@ describe('the capacity preflight', () => {
     await expect(
       sizing.checkCapacity(types.createReq({ version: '8.5.1', monitor: true })),
     ).rejects.toThrow(errors.PreflightError);
+  });
+
+  it('labels each workspace in the refusal with its owner, and sends the reader to their own', async () => {
+    // On a shared server the list was every workspace in the home, colleagues' included,
+    // unlabelled, with advice to stop one: the obvious pick was often somebody else's.
+    const record = jest.requireActual<typeof RecordNS>('../../../src/core/runner/record');
+    const metas = [
+      record.metadata({ name: 'bob-t1', project: 'houston-bob-t1', extra: { created_by: 'bob' } }),
+      record.metadata({
+        name: 'alice-t2',
+        project: 'houston-alice-t2',
+        extra: { created_by: 'alice', owner: 'carol' },
+      }),
+      record.metadata({ name: 'rc851', project: 'houston-rc851' }),
+    ];
+    const refusal = async (states: Record<string, string> | null): Promise<string> => {
+      const { sizing, types } = preflight({ available: 1000, metas, states });
+      let said = '';
+      await sizing
+        .checkCapacity(types.createReq({ version: '8.5.1' }))
+        .catch((error: unknown) => (said = String(error)));
+      return said;
+    };
+    // RUNNING ONES FIRST, AND SAID: they are what stopping frees. A stopped one (`exited`)
+    // and a taken-down one (absent from `compose ls`) are listed after, unmarked. A running
+    // workspace counts its exited one-shot setup container too, sorted first: measured live,
+    // `startsWith('running')` marked none.
+    const said = await refusal({
+      'houston-bob-t1': 'exited(2)',
+      'houston-alice-t2': 'exited(1), running(2)',
+      'houston-rc851': 'running(2)',
+    });
+    expect(said).toContain(
+      '3 workspace(s) on the machine running houston, running ones first: ' +
+        "alice-t2 (carol's, running), rc851 (running), bob-t1 (bob's)",
+    );
+    // `compose ls` could not be asked: nothing is called running, in the record's order.
+    expect(await refusal(null)).toContain("first: bob-t1 (bob's), alice-t2 (carol's), rc851\n");
+    expect(said).toContain('stop one of YOUR running ones');
+    expect(said).toContain("ask the owner before stopping anyone else's");
+    expect(said).toContain('houston stop --name <it>      (keeps its data)');
   });
 
   it('warns about the ceiling before it is hit, not only in the refusal', async () => {

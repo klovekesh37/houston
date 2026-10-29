@@ -47,7 +47,7 @@ describe('the voice preset', () => {
   it('says it needs a licence in the part of its description the create dialog shows', () => {
     // The GUI's create dialog shows a description's first sentence (options.js firstSentence).
     const firstSentence = (d: string): string => (/^.*?[.!?](?=\s|$)/u.exec(d) ?? [d])[0];
-    expect(firstSentence(load('voice').description)).toContain('licence with the Voice add-on');
+    expect(firstSentence(load('voice').description)).toContain('license with the Voice add-on');
   });
 
   it('gives the GUI no false default for ice_servers', () => {
@@ -186,7 +186,7 @@ describe('the voice preset', () => {
     expect(notes).toContain(
       "docker exec houston-<name>-freeswitch-1 fs_cli -x 'originate {media_webrtc=true}sofia/internal/1002@drachtio &echo'",
     );
-    expect(notes).toContain('this machine');
+    expect(notes).toContain('a browser on the machine running houston only');
   });
 
   it('runs calls between users on Kubernetes, and refuses sip_integration=on there', () => {

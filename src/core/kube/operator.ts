@@ -899,7 +899,54 @@ async function uninstallOperator(context: string, emit: Emit): Promise<boolean> 
     );
     return false;
   }
+  await removeTheOperatorWebhook(context, emit);
+  info(
+    emit,
+    'the MongoDB operator is gone; its CRDs stay on purpose — removing them would delete ' +
+      "every MongoDBCommunity in the cluster, another workspace's database included",
+    { phase: 'teardown' },
+  );
   return true;
+}
+
+/** Registered by the operator itself at startup: no Helm label, so `helm uninstall` leaves it. */
+const OPERATOR_WEBHOOK = 'mdbpolicy.mongodb.com';
+
+/**
+ * Delete that webhook, which would otherwise point at a Service just deleted -- but only when
+ * every hook in it points into houston's operator namespace. Anything else is somebody else's
+ * operator; and a read refused or absent leaves it be, since it fails open (`Ignore`).
+ */
+async function removeTheOperatorWebhook(context: string, emit: Emit): Promise<void> {
+  const answer = await askObject('validatingwebhookconfiguration', OPERATOR_WEBHOOK, { context });
+  if (!present(answer)) return;
+  const hooks: unknown[] = Array.isArray(answer.doc.webhooks) ? answer.doc.webhooks : [];
+  const into = hooks.map(
+    (hook) =>
+      (hook as { clientConfig?: { service?: { namespace?: unknown } } } | null)?.clientConfig
+        ?.service?.namespace,
+  );
+  if (into.length === 0 || into.some((namespace) => namespace !== OPERATOR_NAMESPACE)) return;
+  const res = await kube.run(
+    [
+      'kubectl',
+      '--context',
+      context,
+      'delete',
+      'validatingwebhookconfiguration',
+      OPERATOR_WEBHOOK,
+      '--ignore-not-found',
+    ],
+    { timeout: APPLY_TIMEOUT, own: isOurs(context) },
+  );
+  if (res.returncode !== 0) {
+    warn(
+      emit,
+      `the operator's webhook ${OPERATOR_WEBHOOK} could not be removed (it fails open, so ` +
+        `nothing is blocked): ${why(res)}`,
+      { phase: 'teardown' },
+    );
+  }
 }
 
 /**

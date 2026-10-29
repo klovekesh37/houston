@@ -21,6 +21,21 @@ export const OIDC_CLIENT_SECRET = 'rc-oidc-secret';
 /** RC Custom OAuth name -> settings key + /_oauth/keycloak callback. */
 export const OIDC_PROVIDER = 'keycloak';
 
+/**
+ * Keycloak by its port works only for a browser on the machine running houston: the way in
+ * from another computer, HTTPS first and the wide bind second, with what that opens.
+ */
+export const FROM_ANOTHER_COMPUTER =
+  'From another computer, create the workspace with HTTPS on a domain: Keycloak is then at ' +
+  '<workspace URL>/keycloak, with no hosts entry. Or re-create with --bind 0.0.0.0 ' +
+  '--set idp_host=<server address>, which opens Rocket.Chat and Keycloak, fixed logins ' +
+  'and all, to anyone who can reach their ports.';
+
+/** Why the `127.0.0.1  keycloak` hosts entry, and on which machine. */
+export const HOSTS_ENTRY_WHY =
+  'Add this line to /etc/hosts on the machine running houston (needs sudo) and use a browser ' +
+  'there: it is how the browser reaches Keycloak at the address Rocket.Chat uses.';
+
 function samlMapper(name: string, userProperty: string): Bag {
   return {
     name,

@@ -50,7 +50,7 @@ import { diagnoseFailure } from '../diagnose';
 import { attach, backendContainer } from '../edge/networks';
 import { hasAcme, issueLocalCert } from '../edge/acme';
 import { foreignEdge, portHolder, running as edgeRunning } from '../edge/engine';
-import { ensureRunning } from '../edge/runtime';
+import { challengeStale, ensureRunning } from '../edge/runtime';
 import { register as registerRoute } from '../edge/routes';
 import { dockerKernelVersion, engine as hostEngine } from '../runner/host';
 import * as engine from '../runner/engine';
@@ -371,7 +371,7 @@ export async function reuse(
   if (req.monitor && !isTruthy(meta.extra.monitoring)) {
     mismatch.push('monitoring (existing: not attached)');
   }
-  if (req.license !== '') mismatch.push('the licence');
+  if (req.license !== '') mismatch.push('the license');
   if (mismatch.length > 0) {
     // A rebuild onto another preset removes what the old one kept -- an s3_minio workspace's
     // uploads -- so that is said where --force is offered, not discovered after it.
@@ -379,10 +379,22 @@ export async function reuse(
       presetName !== '' && presetName !== meta.preset && (meta.preset || 'default') !== 'default'
         ? ` (a --force rebuild as '${presetName}' removes the data '${meta.preset}' kept)`
         : '';
+    // A VERSION is not a --force: that skips the upgrade's backup and lets a downgrade
+    // through. `upgrade` backs up first and refuses one.
+    const newVersion =
+      resolved !== null && resolved.rcVersion !== meta.rcVersion ? resolved.rcVersion : '';
+    const others = mismatch.length > (newVersion === '' ? 0 : 1);
     const msg =
       `'${name}' already exists and is reused as-is, ignoring requested ` +
       mismatch.join('; ') +
-      `. Use --force to rebuild it${dropsData}, or --fresh to also wipe its data.`;
+      '.' +
+      (newVersion === ''
+        ? ''
+        : ` To move it to ${newVersion} and keep its data: houston upgrade --name ${name} ` +
+          `--to ${newVersion} (it backs up first, and refuses a downgrade); for a separate ` +
+          'workspace on that version, use another --name.') +
+      (others ? ` Use --force to rebuild it${dropsData}.` : '') +
+      ' --fresh rebuilds it empty.';
     warn(emit, msg, {
       phase: 'create',
       code: 'VERSION_IGNORED_ON_REUSE',
@@ -470,6 +482,13 @@ export async function carryRecordedAxes(req: CreateReq, name: string): Promise<v
   // Its monitoring too, as a Kubernetes re-up keeps it: `up --force` without --monitor
   // dropped Prometheus and Grafana without a word. `houston monitor --off` drops them.
   req.monitor ||= isTruthy(meta.extra.monitoring);
+  // And the address Rocket.Chat advertises: `up --force` put ROOT_URL back to loopback under
+  // a proxied workspace, leaving Site_Url on the old name. Not from a workspace houston served
+  // over HTTPS (that URL is its TLS name), nor into a rebuild that asks for TLS -- which
+  // `--email` does too, on the name the record holds (`resolveTls`).
+  if (!req.rootUrl && !meta.publicUrl && !req.https && !req.domain && !req.acmeEmail) {
+    req.rootUrl = String(meta.extra.advertised_url ?? '');
+  }
 }
 
 /** Runtime x deployment x scenario, decided before anything else reads the request. */
@@ -706,7 +725,7 @@ export async function claimPorts(plan: CreatePlan): Promise<void> {
     plan.reproName,
     plan.emit,
   );
-  // After the TLS decision, which `--email` alone or the record can make too, and before
+  // After the TLS decision, which the record can make too, and before
   // anything is written: `resolveTls` only reads, and certificates are issued later.
   await refuseNamesTheEdgeCannotReach(plan);
 }
@@ -1282,12 +1301,13 @@ export async function refuseAForeignEdge(): Promise<void> {
   // the certificate, the route file and the whole edge project had been written.
   const stolen = await foreignEdge();
   if (stolen) {
+    const home = stolen.replace(/\/edge\/?$/u, '');
     throw new ConflictError(
-      'the shared edge on this box belongs to another HOUSTON_HOME ' +
-        `(${stolen}). Starting one from here would REPLACE it and take down ` +
-        'every https name it serves, because compose keys the project by name ' +
-        'and both homes use the same one. Use that home, or stop its edge ' +
-        'first.',
+      `the shared edge on this machine belongs to another houston home (${home}), usually ` +
+        'houston run with sudo or as another user. Starting one from here would REPLACE it ' +
+        'and take down every https name it serves, because compose keys the project by name ' +
+        `and both homes use the same one. Run this the same way (or with HOUSTON_HOME=${home}), ` +
+        'or stop that edge first.',
     );
   }
 }
@@ -1315,8 +1335,10 @@ export async function startTheEdge(plan: CreatePlan, local: boolean): Promise<vo
   // not at install, not by `serve`, since whether the GUI has a public hostname is an
   // unrelated question. It has to happen where docker work legitimately happens, though:
   // putting it in resolveTls made a resolve function start containers, and the TEST SUITE
-  // then started a real edge that held :443 and broke a live run.
-  if (!(await edgeRunning()) || (!local && !hasAcme())) {
+  // then started a real edge that held :443 and broke a live run. A running edge whose
+  // challenge `acme.challenge` has since changed goes through it too: skipped here, the
+  // change never reached the container (measured behind a tunnel: TLS-ALPN kept).
+  if (!(await edgeRunning()) || (!local && (!hasAcme() || challengeStale()))) {
     info(plan.emit, 'starting the edge (one Traefik, :80 and :443 for every name)', {
       phase: 'tls',
     });
@@ -1362,7 +1384,8 @@ export async function registerTheName(plan: CreatePlan, local: boolean): Promise
       plan.emit,
       `requesting a certificate from Let's Encrypt ` +
         `(${tlsspec.acmeStaging ? 'staging' : 'production'}) ` +
-        `for ${tlsspec.host} — the edge does this in the background; ` +
+        `for ${tlsspec.host}, which must resolve to the machine running houston — the edge ` +
+        'does this in the background; ' +
         `confirm with \`houston tls-status -n ${plan.reproName}\``,
       { phase: 'tls' },
     );
@@ -1374,7 +1397,10 @@ export async function registerTheName(plan: CreatePlan, local: boolean): Promise
   } else {
     info(
       plan.emit,
-      `registering ${tlsspec.host} — covered by the wildcard, no certificate request`,
+      // The wildcard is a CERTIFICATE; it was read as a DNS record, which it is not.
+      `registering ${tlsspec.host} — the edge's wildcard certificate covers it, no ` +
+        'certificate request; the name must still resolve to the machine running houston ' +
+        '(one wildcard DNS record covers every such name)',
       {
         phase: 'tls',
       },

@@ -404,7 +404,8 @@ export async function portHolder(port = 443): Promise<string> {
       // different HOUSTON_HOME has exactly our container name, so it was excluded as
       // "us" and reported as "something outside Docker".
       if (name === CONTAINER && mine) continue;
-      if (name === CONTAINER) return `an edge from another HOUSTON_HOME (${quotedText(name)})`;
+      if (name === CONTAINER)
+        return `an edge from another houston home, usually houston run with sudo or as another user (${quotedText(name)})`;
       const proj = await dockerRun([
         'inspect',
         name,

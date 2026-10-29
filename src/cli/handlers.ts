@@ -335,14 +335,14 @@ async function seedPreamble(
     if (exc.includes('429') || exc.toLowerCase().includes('too many requests')) {
       throw new ReproError(
         `can't seed — Rocket.Chat's login rate limiter is refusing (${exc}). The workspace is ` +
-          'up; wait about a minute and retry, or turn the limiter off for this repro with ' +
+          'up; wait about a minute and retry, or turn the limiter off for this workspace with ' +
           `\`houston api -n ${toTextAny(meta.name)} -X POST /settings/` +
           `${(require('../lib/config') as typeof ConfigNS).RC_RATE_LIMITER_SETTING} ` +
           `-d '{"value": false}'\`.`,
       );
     }
     throw new ReproError(
-      `can't seed — repro not ready (\`houston ready --name ${toTextAny(meta.name)}\`): ${exc}`,
+      `can't seed — workspace not ready (\`houston ready --name ${toTextAny(meta.name)}\`): ${exc}`,
     );
   }
   try {
@@ -507,6 +507,7 @@ function printSeedResult(
     );
   }
   row('DMs', s.dms, seconds('dms'));
+  if (isTruthy(s.users)) say(io, '  Seeded users sign in with their username as the password.');
   const planned = bag(s.planned);
   if (planned.rooms_total !== undefined)
     say(
@@ -758,6 +759,13 @@ const CONFIG_KEYS: Readonly<Record<string, string>> = Object.freeze({
   'sso.provision': 'sso.provision',
 });
 
+/** The owner a workspace's record names, for a result line; '' for nobody or no record. */
+async function recordOwner(name: string): Promise<string> {
+  const runnerRecord = require('../core/runner/record') as typeof RecordNS;
+  const meta = await runnerRecord.readMeta(name).catch(() => null);
+  return meta === null ? '' : runnerRecord.recordedOwner(meta);
+}
+
 /**
  * The owner leads the prompt, because on a shared box the thing you most need to know first
  * is whose data it is -- and is still said under `--yes`, where there is no prompt to read
@@ -799,7 +807,11 @@ async function confirmPrune(
   const pruning = require('../core/lifecycle/pruning') as typeof PruningNS;
   const namespaces = require('../core/kube/namespace') as typeof KubeNamespaceNS;
   const me = audit.actor();
-  say(io, 'These down repros will be deleted — containers, data volumes, and records:');
+  say(
+    io,
+    'These workspaces were taken down with `houston down`; their containers, kept data and ' +
+      'records will be deleted for good (stopped ones are not touched):',
+  );
   for (const name of targets) {
     const owner = await ownership.ownerOf(name);
     say(
@@ -812,7 +824,7 @@ async function confirmPrune(
     say(
       io,
       "These Kubernetes namespaces are labelled houston's but no local record explains " +
-        'them — their PersistentVolumeClaims go too:',
+        'them — their data (PersistentVolumeClaims) goes too:',
     );
     for (const ns of stray) {
       // The same three answers the service decides on, so the prompt cannot promise a
@@ -882,8 +894,12 @@ async function dispatch(
         );
       }
       if (volumes) await confirmDestruction(io, name, yes, dependencies);
+      // Read BEFORE the teardown: with --volumes the record that names the owner is gone after.
+      const runnerRecord = require('../core/runner/record') as typeof RecordNS;
+      const was = await runnerRecord.readMeta(name).catch(() => null);
+      const owner = was === null ? '' : runnerRecord.recordedOwner(was);
       const result = await destroy.teardown(name, { volumes, confirm: true, emit });
-      const data = { ...result, name, volumes };
+      const data = { ...result, name, volumes, owner };
       if (!active() && volumes && result.removed === false) {
         return commandOutcome(data, 5);
       }
@@ -1234,7 +1250,7 @@ async function dispatch(
         say(
           io,
           'bulk Mongo prefill: users are credential-less and messages fire no app hooks — ' +
-            'for scale/perf repros, not feature testing.',
+            'for scale and performance tests, not feature testing.',
         );
         return await data.runScale(meta.name, text(o.scale), events.nullEmit);
       }
@@ -1687,7 +1703,8 @@ async function runCluster(
     }
     return await eks.createCluster(name, {
       region: text(o.region),
-      nodes: number(o.nodes) || eks.DEFAULT_NODES,
+      // A typed 0 is refused, not replaced: only an absent value takes the default.
+      nodes: o.nodes === undefined ? eks.DEFAULT_NODES : number(o.nodes),
       zone: stripText(text(o.zone)),
       ...(Object.keys(subnets).length === 0 ? {} : { subnets }),
       expiresDays,
@@ -1922,7 +1939,8 @@ function renderClusterNext(io: CliIo, report: Bag): void {
  * the row's `context` says exactly which. k3s cannot be told from its name, so it stays k8s.
  */
 function whereWord(row: Bag): string {
-  if (display(row.runtime) !== 'kubernetes') return 'compose';
+  // `docker` in the table only: --json keeps the runtime's own value.
+  if (display(row.runtime) !== 'kubernetes') return 'docker';
   const context = toText(row.context);
   if (context.startsWith('arn:aws:eks:')) return 'eks';
   if (context.startsWith('kind-')) return 'kind';
@@ -2293,7 +2311,8 @@ function fmtDuration(secs: number): string {
 /** How the certificate was obtained. */
 function tlsLabel(meta: RecordNS.Metadata): string {
   const labels: Readonly<Record<string, string>> = {
-    local: 'local CA (houston trust-ca)',
+    // A *.houston.localhost name: no browser on another computer ever opens it.
+    local: 'local CA, a browser on the machine running houston only (houston trust-ca)',
     acme: "Let's Encrypt",
     own: 'supplied certificate',
   };
@@ -2335,10 +2354,9 @@ function summaryPanel(
   ];
   const owner = meta.extra.created_by ?? '';
   if (isTruthy(owner)) rows.push(['Owner', toTextAny(owner)]);
-  if (isTruthy(meta.publicUrl)) {
-    rows.push(['TLS', tlsLabel(meta)]);
-    rows.push(['Direct HTTP', meta.rootUrl]);
-  }
+  if (isTruthy(meta.publicUrl)) rows.push(['TLS', tlsLabel(meta)]);
+  // houston's own way in, whenever the URL above is somebody else's (TLS, a proxy, a tunnel).
+  if (record.externalUrl(meta) !== meta.rootUrl) rows.push(['Direct HTTP', meta.rootUrl]);
   rows.push(...extraRows);
   writePanel(io, meta.name, rows);
   const instances = meta.extra.instances;
@@ -2349,6 +2367,28 @@ function summaryPanel(
       io.writeOut(`    rocketchat-${String(at)}: http://localhost:${String(meta.hostPort + at)}\n`);
     }
   }
+  sshHint(io, record.externalUrl(meta));
+}
+
+/**
+ * Over SSH, `localhost` is the server, not the reader's computer: one line saying how to
+ * open `url` from there. Read here, not in core: it is about this terminal.
+ */
+export function sshHint(io: CliIo, url: string): void {
+  if (!isTruthy(process.env.SSH_CONNECTION) && !isTruthy(process.env.SSH_CLIENT)) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) return;
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+  io.writeOut(
+    '  localhost is the machine running houston. From your computer: ' +
+      `ssh -L ${port}:localhost:${port} <you>@<this server>, then open the URL; or create it ` +
+      'with --domain for an address anyone can open.\n',
+  );
 }
 
 /**
@@ -2918,12 +2958,26 @@ export async function renderHuman(
         const what = kube
           ? 'namespace, PersistentVolumeClaim and record'
           : 'containers, data volume, and record';
-        io.writeOut(`✓ ${quotedText(name)} removed (${what}).\n`);
+        const owner = display(result.owner);
+        io.writeOut(
+          `✓ ${quotedText(name)} removed (${what}${owner === '' ? '' : `; owned by ${owner}`}).\n`,
+        );
       } else {
         const kept = kube ? 'the namespace and its PersistentVolumeClaim are kept' : 'data kept';
-        io.writeOut(`✓ ${quotedText(name)} down (${kept}).\n`);
-        io.writeOut(`  bring it back: houston up --version <same> --name ${name}\n`);
-        io.writeOut('  delete for good: add --volumes, or run `houston prune`\n');
+        // The kept record knows the version: `<same>` sent the reader to `list` to look it up.
+        const runnerRecord = require('../core/runner/record') as typeof RecordNS;
+        const was = await runnerRecord.readMeta(name).catch(() => null);
+        const owner = was === null ? '' : runnerRecord.recordedOwner(was);
+        io.writeOut(
+          `✓ ${quotedText(name)} down (${kept}${owner === '' ? '' : `; owned by ${owner}`}).\n`,
+        );
+        io.writeOut(
+          `  bring it back: houston up --version ${was?.rcVersion || '<same>'} --name ${name}\n`,
+        );
+        io.writeOut(
+          '  delete for good: add --volumes (`houston prune` deletes every taken-down ' +
+            'workspace, not just this one)\n',
+        );
         // ON A CLOUD CLUSTER the kept disk is a bill: small, but it outlives the cluster
         // if the cluster goes first, and `cluster delete` refuses while it exists.
         const request = require('../core/lifecycle/request') as typeof RequestNS;
@@ -2944,7 +2998,7 @@ export async function renderHuman(
       if (invocation.options.off === true) {
         const kept = isTruthy(result.rc_setting_reset)
           ? ''
-          : ' (metrics setting left as-is — repro not reachable)';
+          : ' (metrics setting left as-is — workspace not reachable)';
         io.writeOut(`✓ monitoring detached from ${shown}${kept}\n`);
         if (result.stack_removed === false) {
           io.writeOut(
@@ -2990,23 +3044,36 @@ export async function renderHuman(
     case 'start':
     case 'stop':
     case 'restart': {
-      const name = quotedText(display(result.name, display(invocation.options.name)));
-      const suffix = path === 'stop' ? ' (resume with `houston start`)' : '';
+      const name = display(result.name, display(invocation.options.name));
+      // Whose it is, because without --name this acted on the default the whole home shares.
+      const owned = await recordOwner(name);
+      const notes = [
+        ...(owned === '' ? [] : [`owned by ${owned}`]),
+        ...(path === 'stop' ? ['resume with `houston start`'] : []),
+      ];
+      const suffix = notes.length === 0 ? '' : ` (${notes.join('; ')})`;
       // The `✓` line and nothing more: `start` and `restart` have always ignored
       // `needs_ready`, which is the GUI's to act on; the scaling-back-up warning already
       // names `houston ready`. This added `  run: houston ready --name X` on Kubernetes.
       io.writeOut(
-        `✓ ${name} ${path === 'start' ? 'started' : path === 'stop' ? 'stopped' : 'restarted'}${suffix}.\n`,
+        `✓ ${quotedText(name)} ${path === 'start' ? 'started' : path === 'stop' ? 'stopped' : 'restarted'}${suffix}.\n`,
       );
       return;
     }
-    case 'use':
-      io.writeOut(`✓ default repro is now ${quotedText(display(result.default))}.\n`);
+    case 'use': {
+      const name = display(result.default);
+      const owned = await recordOwner(name);
+      io.writeOut(
+        `✓ default workspace is now ${quotedText(name)}` +
+          `${owned === '' ? '' : ` (owned by ${owned})`}. Commands run without --name act on ` +
+          'it, for everyone using this houston home.\n',
+      );
       return;
+    }
     case 'list': {
       const repros = bags(result.repros);
       if (repros.length === 0) {
-        io.writeOut('No repros yet. Create one with `houston up --version <X.Y.Z>`.\n');
+        io.writeOut('No workspaces yet. Create one with `houston up --version <X.Y.Z>`.\n');
         return;
       }
       // `list`'s established tests and widths: truthiness for the default and pinned marks,
@@ -3025,10 +3092,10 @@ export async function renderHuman(
             `${ljust(display(row.rc_version), 9)} ${ljust(display(row.mongo_tag), 7)} ` +
             `${ljust(whereWord(row), 8)} ` +
             `${ljust(display(row.host_port), 6)} ${ljust(display(row.state), 10)} ` +
-            `${isTruthy(row.public_url) ? display(row.public_url) : display(row.root_url)}\n`,
+            `${isTruthy(row.open_url) ? display(row.open_url) : display(row.root_url)}\n`,
         );
       }
-      io.writeOut('\n* = default repro   · = pinned\n');
+      io.writeOut('\n* = default workspace   · = pinned\n');
       return;
     }
     case 'info': {
@@ -3117,6 +3184,7 @@ export async function renderHuman(
         }
         if (result.restarted !== false)
           io.writeOut(`  verify: houston env --name ${display(result.name)}\n`);
+        else io.writeOut('  to apply it: re-run the same `houston env` without --no-restart\n');
       }
       return;
     case 'tls-status':
@@ -3204,12 +3272,16 @@ export async function renderHuman(
       );
       io.writeOut(`    ${display(result.path)}\n`);
       // The sidecar warning line prints its text as given -- two spaces, no `⚠` -- and the
-      // hint has TWO spaces after `restore it:`. This printed `⚠ ` and one.
+      // hint has TWO spaces after `roll back to it:`. This printed `⚠ ` and one.
       if (Array.isArray(manifest.sidecar_volumes) && manifest.sidecar_volumes.length > 0)
         io.writeOut(
           `  sidecar data is NOT included: ${manifest.sidecar_volumes.map(String).join(', ')}\n`,
         );
-      io.writeOut(`  restore it:  houston restore ${display(result.path)}\n`);
+      // Restore with no --name goes back INTO this workspace, dropping what it holds now.
+      io.writeOut(
+        `  roll back to it:  houston restore ${display(result.path)}   ` +
+          `(replaces ${display(result.name)}'s data; add --new for a separate copy)\n`,
+      );
       return;
     }
     case 'backups': {
@@ -3252,7 +3324,10 @@ export async function renderHuman(
           `  ${display(result.from_version)} data now runs on ${display(result.to_version)} — ` +
             'Rocket.Chat has migrated it\n',
         );
-      if (display(result.url) !== '') io.writeOut(`  ${display(result.url)}\n`);
+      if (display(result.url) !== '') {
+        io.writeOut(`  ${display(result.url)}\n`);
+        sshHint(io, display(result.url));
+      }
       return;
     case 'upgrade': {
       if (invocation.options.rollback === true) {
@@ -3374,7 +3449,7 @@ export async function renderHuman(
       if (Object.keys(bag(result.repros)).length > 0) {
         const repros = bag(result.repros);
         io.writeOut(
-          `  repros: ${display(repros.total)} total, ${display(repros.running)} running\n`,
+          `  workspaces: ${display(repros.total)} total, ${display(repros.running)} running\n`,
         );
       }
       io.writeOut(
@@ -3491,11 +3566,12 @@ export async function renderHuman(
           );
           say(io, `  adopted   ${adopted.join(', ')} — left as they were`);
         }
+        // A cluster with a zone names the workspace <name>.<zone> by itself.
         if (isTruthy(result.cname_target))
           say(
             io,
             '  then: houston up --version 8.5.1 --name t1 --runtime kubernetes ' +
-              `--context ${context} --domain <your name>`,
+              `--context ${context}${isTruthy(result.zone) ? '' : ' --domain <hostname>'}`,
           );
         const short = (display(result.context) || context).split('/').pop() ?? context;
         say(io, `next  houston up --version <version> --name <ticket> --context ${short}`);
@@ -3533,12 +3609,13 @@ export async function renderHuman(
               '`houston doctor` says so once that passes',
           );
         else say(io, '  no expiry set — nothing will remind you this is running');
+        const prepared = bag(result.prepared);
         say(
           io,
           '  point a workspace at it: houston up --version 8.5.1 ' +
-            `--name TICKET-1234 --context ${name} --domain <your name>`,
+            `--name TICKET-1234 --context ${name}` +
+            (isTruthy(prepared.zone) ? '' : ' --domain <hostname>'),
         );
-        const prepared = bag(result.prepared);
         if (isTruthy(prepared.cname_target)) {
           const zone = toText(prepared.zone) || '<your zone>';
           say(

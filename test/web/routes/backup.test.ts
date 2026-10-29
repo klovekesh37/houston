@@ -313,6 +313,36 @@ describe('compatibility', () => {
     expect(free.json().held).toBeNull();
   });
 
+  it("says whether this viewer may use the bundle, so a colleague's restore is not offered", async () => {
+    // "Restore into <workspace> instead" was offered on a colleague's bundle and the server
+    // refused the click. The as-new answer now carries the same refusal, '' when allowed.
+    await users.add('bob3', PASSWORD, 'member');
+    const signin = await app.inject({
+      method: 'POST',
+      url: '/api/session',
+      payload: { user: 'bob3', password: PASSWORD },
+      headers: { host: 'localhost' },
+    });
+    const bob = String(signin.headers['set-cookie'] ?? '').split(';')[0] ?? '';
+    fs.mkdirSync(backup.backupsDir(), { recursive: true });
+    fs.writeFileSync(inside('carols.rcbak'), 'bundle');
+    jest.mocked(backup.bundleOwner).mockResolvedValue('carol');
+    const ask = async (cookie: string) =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/backups/compatibility',
+          payload: { bundle: inside('carols.rcbak') },
+          headers: { host: 'localhost', cookie },
+        })
+      ).json().refusal;
+    expect(await ask(bob)).toBe(
+      "this backup is carol's data — only carol or an admin can use or delete it",
+    );
+    expect(await ask(admin)).toBe('');
+    jest.mocked(backup.bundleOwner).mockResolvedValue('');
+  });
+
   it('and restore both need a bundle', async () => {
     expect((await post('/api/backups/compatibility', {})).statusCode).toBe(400);
     expect((await post('/api/restore', {})).statusCode).toBe(400);

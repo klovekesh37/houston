@@ -51,17 +51,17 @@ function runningRow(r) {
       ctx.el("div", { class: "t" }, r.name),
       ctx.el("div", { class: "m" }, [r.rc_version, r.preset || "default", whereOf(r)].filter(Boolean).join(" · "))),
     ctx.el("span", { class: "m" + (bad ? " warn" : "") }, bad ? health : (r.uptime || "")),
-    ctx.el("a", { class: "btn sm", href: r.public_url || r.root_url, target: "_blank", rel: "noreferrer",
-      title: "Open Rocket.Chat itself, in a new tab" }, "Open"));
+    ctx.el("a", { class: "btn sm", href: r.open_url || r.root_url, target: "_blank", rel: "noreferrer",
+      title: ctx.remoteLoopback(r.open_url || r.root_url) ? ctx.LOOPBACK_TITLE : "Open Rocket.Chat itself, in a new tab" }, "Open"));
 }
 
 // It leads with what limits this tool: `up` refuses without headroom, so "room for
 // about 2 more" is the sentence that decides what you do next.
 function capacityCard(cap) {
-  const box = ctx.el("div", { class: "hcard dash capcard" }, ctx.el("h3", {}, "Memory on this machine"));
+  const box = ctx.el("div", { class: "hcard dash capcard" }, ctx.el("h3", {}, "Memory on this server"));
   if (!cap || !cap.known) {
     box.append(ctx.el("p", { class: "m", style: "margin:0;font-family:var(--sans);font-size:13px" },
-      "houston reads /proc/meminfo, which this machine does not have — so it "
+      "houston reads /proc/meminfo, which this server does not have — so it "
       + "cannot say how much room is left, and `up` will not refuse on memory here."));
     return box;
   }
@@ -72,11 +72,11 @@ function capacityCard(cap) {
     ctx.el("span", { class: "wh", style: "font-size:14px" }, `of ${gb(cap.total_mb)} GB in use`)));
   box.append(ctx.el("div", { class: "bar" },
     ctx.el("i", { class: "used", style: `width:${pct(usedMb)}%;background:var(--accent-fill)` }),
-    ctx.el("i", { class: "reserved", style: `width:${pct(cap.reserve_mb)}%;background:var(--line2)`, title: "kept back for the machine itself" })));
+    ctx.el("i", { class: "reserved", style: `width:${pct(cap.reserve_mb)}%;background:var(--line2)`, title: "kept back for the server itself" })));
   const kube = (cap.room_by_runtime || {})["kubernetes-microservices"];
   const tight = cap.room < 1;
   box.append(ctx.el("div", { class: "wh" + (tight ? " warn" : ""), style: "font-size:13px" + (tight ? ";color:var(--amber)" : "") },
-    tight ? "Not enough room for another workspace on this machine."
+    tight ? "Not enough room for another workspace on this server."
       : `Room for about ${cap.room} more on Docker` + (typeof kube === "number" ? `, or ${kube} more on Kubernetes.` : ".")));
   return box;
 }
@@ -91,11 +91,13 @@ function attentionItems() {
   }
   const broken = ((ctx.EDGE && ctx.EDGE.routes) || []).filter((r) => !r.reachable);
   for (const r of broken) {
-    out.push([`The edge cannot reach ${r.name}`,
-      "Its https name answers 502 rather than erroring, so it looks like a broken "
-      + "workspace instead of a broken route.", ctx.openEdge, "Look"]);
+    out.push([`${r.name}'s HTTPS address is not connected`,
+      "It answers 502 (Bad Gateway). The workspace may be fine; the shared HTTPS front "
+      + "door has lost its connection to it.", ctx.openEdge, "HTTPS details"]);
   }
-  for (const r of ctx.ALL_REPROS.filter((x) => x.state === "down")) {
+  // Not one with an action in flight: an unfinished create reads `down`, and Home asked
+  // for attention about a workspace that was still being made.
+  for (const r of ctx.ALL_REPROS.filter((x) => x.state === "down" && !ctx.pendingOn(x.name))) {
     out.push([`${r.name} is down`,
       `It still holds port :${r.host_port} and its data volume.`,
       () => selectRepro(r.name), "Review"]);
@@ -167,7 +169,7 @@ function renderHome() {
         ctx.el("h2", {}, "Create your first workspace"),
         ctx.el("p", {}, "A workspace is a Rocket.Chat of the version you choose, with its own MongoDB and any services it needs, such as LDAP, SAML or email."),
         ctx.el("button", { class: "btn solid", type: "button", onclick: () => ctx.openCreate() }, "+ Create a workspace"),
-        ctx.el("p", { class: "small" }, "First you pick where it runs, then the Rocket.Chat version. Docker on this machine is free and right for most workspaces."))
+        ctx.el("p", { class: "small" }, "First you pick where it runs, then the Rocket.Chat version. Docker on this server is free and right for most workspaces."))
       : ctx.el("div", { class: "hcard dash" }, ctx.el("p", { style: "margin:0;color:var(--muted)" },
         "No workspaces yet. Workspaces your team creates appear here.")));
   }
@@ -208,7 +210,7 @@ async function openScenarios() {
   ctx.$("#actpane").innerHTML = "";
   const panel = ctx.$("#detail");
   panel.innerHTML = "";
-  const head = ctx.el("div", { class: "home-head" }, ctx.el("h1", {}, "Scenarios"),
+  const head = ctx.el("div", { class: "home-head" }, ctx.el("h1", {}, "Presets"),
     ctx.el("p", {}, "What each one adds to a plain Rocket.Chat, and what you have to do to use it."));
   const body = ctx.el("div", { class: "home-body" });
   body.append(ctx.el("p", { class: "empty" }, "loading…"));
@@ -221,12 +223,12 @@ async function openScenarios() {
   for (const s of list) {
     const card = ctx.el("div", { class: "hcard scen" });
     const h = ctx.el("div", { class: "hcard-h" }, ctx.el("b", {}, s.name));
-    if (s.requires_license) h.append(ctx.el("span", { class: "pill small" }, "needs a licence"));
+    if (s.requires_license) h.append(ctx.el("span", { class: "pill small" }, "needs a license"));
     card.append(h);
     const inner = ctx.el("div", { class: "scen-b" });
     if (s.description) inner.append(ctx.el("p", { class: "scen-d" }, s.description));
     if (s.notes && s.notes.length) {
-      inner.append(ctx.el("div", { class: "section-label" }, "Using this scenario"));
+      inner.append(ctx.el("div", { class: "section-label" }, "Using this preset"));
       inner.append(ctx.noteBlock(s.notes));
     }
     card.append(inner);
@@ -316,11 +318,11 @@ function scenarioCard(d, parsed, shown) {
   const head = ctx.el("div", { class: "panelcard-h" },
     ctx.el("span", { class: "section-label flat" },
       scenario
-        ? "Scenario · " + (Array.isArray(d.presets) && d.presets.length > 1 ? d.presets.join(" + ") : scenario)
+        ? "Preset · " + (Array.isArray(d.presets) && d.presets.length > 1 ? d.presets.join(" + ") : scenario)
         : "What is in this workspace"));
   if (scenario) {
     head.append(ctx.el("button", { class: "linkbtn", onclick: openScenarios },
-      "About this scenario ↗"));
+      "About this preset ↗"));
   }
   card.append(head);
 
@@ -357,9 +359,9 @@ function scenarioCard(d, parsed, shown) {
     card.append(ctx.el("div", { class: "setup" },
       ctx.el("span", { class: "setup-i" }, "▲"),
       ctx.el("span", { class: "setup-t" },
-        ctx.el("b", {}, "Do this once, on your machine"),
+        ctx.el("b", {}, "For a browser on this server: do this once"),
         ctx.el("span", { class: "setup-w" },
-          "This scenario cannot work until the line below exists. Needs sudo."),
+          "This preset cannot work until the line below exists. Needs sudo."),
         ctx.el("code", {}, setup.value)),
       ctx.el("button", { class: "cp", onclick: () => ctx.copy(setup.value) }, "Copy")));
   }
@@ -384,6 +386,13 @@ function scenarioCard(d, parsed, shown) {
                            what: note ? note.what : "", creds: note ? note.creds : "",
                            sub: note ? note.sub : "" }));
   }
+  // Read from another computer, a localhost link opens there, where nothing runs.
+  if ([d.open_url || d.root_url, d.grafana_url, ...(d.links || []).map((l) => l.url),
+       ...items.filter((i) => i.kind === "place").map((i) => i.url)].some(ctx.remoteLoopback)) {
+    card.append(ctx.el("div", { class: "panelcard-b" }, ctx.el("p", { class: "hint", id: "links-loopback" },
+      "Links to localhost open on YOUR computer; only a browser on this server can open them. "
+      + "A workspace created with HTTPS gets public links (Mailpit at /mailpit/, and so on).")));
+  }
 
   if (guides.length) {
     // Every place the notes name stays a link row, as before; only the prose moves to the guide.
@@ -406,7 +415,8 @@ function scenarioCard(d, parsed, shown) {
 // the tallest guide's height so the card never jumps, and the next guide fades in.
 function guideText(d, text) {
   return String(text).split("<name>").join(d.name || "<name>")
-    .split("<repro-url>").join(d.url || d.root_url || "<repro-url>");
+    .split("<workspace-url>").join(d.open_url || d.root_url || "<workspace-url>")
+    .split("<repro-url>").join(d.open_url || d.root_url || "<repro-url>");   // an older server's
 }
 function guidePane(d, g) {
   const wrap = ctx.el("div", { class: "guide" });
@@ -415,7 +425,7 @@ function guidePane(d, g) {
     wrap.append(ctx.el("div", { class: "setup" },
       ctx.el("span", { class: "setup-i" }, "▲"),
       ctx.el("span", { class: "setup-t" },
-        ctx.el("b", {}, "Do this once, on your machine"),
+        ctx.el("b", {}, "For a browser on this server: do this once"),
         ctx.el("span", { class: "setup-w" }, g.setup.why),
         ctx.el("code", {}, g.setup.line)),
       ctx.el("button", { class: "cp", onclick: () => ctx.copy(g.setup.line) }, "Copy")));
@@ -444,7 +454,7 @@ function guideBlock(d, guides) {
   const names = guides.map((g) => g.name);
   if (!names.includes(ctx.dstate.guideTab)) ctx.dstate.guideTab = names[0];
   const block = ctx.el("div", { class: "guide-block" },
-    ctx.el("div", { class: "guide-h" }, ctx.el("span", { class: "section-label flat" }, "Using this scenario")));
+    ctx.el("div", { class: "guide-h" }, ctx.el("span", { class: "section-label flat" }, "Using this preset")));
   const pane = ctx.el("div", { class: "guide-pane", role: "tabpanel" });
   const show = (name, animate) => {
     ctx.dstate.guideTab = name;
@@ -497,7 +507,7 @@ function guideBlock(d, guides) {
 // read -- on a cluster several round trips -- and until then this showed only "Loading…",
 // for as long as a minute on a slow EKS cluster.
 function detailShell(r) {
-  const open = r.public_url || r.root_url;
+  const open = r.open_url || r.root_url;
   const kube = (r.runtime || "docker") === "kubernetes";
   return [
     ctx.el("div", { class: "d-head" },
@@ -508,7 +518,8 @@ function detailShell(r) {
     ctx.el("div", { class: "d-sub" }, ctx.el("b", {}, r.rc_version || "?"), ctx.el("i", {}, "/"),
       `mongo ${r.mongo_tag || "?"}`, ctx.el("i", {}, "·"), whereOf(r)),
     open && r.state !== "?" ? ctx.el("div", { class: "d-actions" },
-      ctx.el("a", { href: open, target: "_blank", rel: "noreferrer", style: "text-decoration:none" },
+      ctx.el("a", { href: open, target: "_blank", rel: "noreferrer", style: "text-decoration:none",
+        ...(ctx.remoteLoopback(open) ? { title: ctx.LOOPBACK_TITLE } : {}) },
         ctx.el("button", { class: "btn primary" }, "↗ Open RC"))) : "",
     ctx.el("div", { class: "placeholder", id: "detail-reading" },
       kube ? `Reading ${r.name} from its cluster…` : `Loading ${r.name}…`),

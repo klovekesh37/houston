@@ -95,14 +95,58 @@ describe('the side ports a preset publishes, once per box', () => {
     const pre = (name: string, published: number[]) =>
       ({ name, ports: published }) as unknown as Parameters<typeof PortsNS.checkSidecarPorts>[0];
     await expect(ports.checkSidecarPorts(pre('email', [8025]))).rejects.toThrow(
-      "preset 'email' publishes port(s) [8025], already claimed by repro 'mail-src' - " +
-        'delete it first: houston down --name mail-src --volumes',
+      "preset 'email' publishes port(s) [8025], already claimed by workspace 'mail-src'. " +
+        "A preset's ports are fixed, so only one workspace on this machine can use them at a " +
+        'time; its owner frees them with houston down --name mail-src --volumes',
+    );
+    // A remedy that deletes data says so: the record holds the port even while only `down`,
+    // so this is the only way through, and it read like a routine cleanup.
+    await expect(ports.checkSidecarPorts(pre('email', [8025]))).rejects.toThrow(
+      '--volumes (that deletes its data)',
     );
     // Its own ports are not a claim against itself.
     await expect(
       ports.checkSidecarPorts(pre('email', [8025]), 'mail-src'),
     ).resolves.toBeUndefined();
     await expect(ports.checkSidecarPorts(pre('saml', [8081]))).resolves.toBeUndefined();
+  });
+
+  it("names the holder's owner and leaves freeing the port to them", async () => {
+    // On a shared server the holder is usually a colleague's: the refusal told the reader to
+    // delete it, data and all, without saying whose it was or that the port is one per machine.
+    jest.resetModules();
+    jest.doMock('../../../src/core/runner/ports', () => ({
+      ...jest.requireActual<object>('../../../src/core/runner/ports'),
+      portFree: async () => true,
+    }));
+    const record = require('../../../src/core/runner/record') as typeof RecordNS;
+    const ports = require('../../../src/core/lifecycle/ports') as typeof PortsNS;
+    await record.write(
+      'bob-t1',
+      'services: {}\n',
+      record.metadata({
+        name: 'bob-t1',
+        project: 'houston-bob-t1',
+        preset: 'email',
+        hostPort: 3000,
+        extra: { sidecar_ports: [8025], created_by: 'bob', monitoring_ports: [9090, 5050] },
+      }),
+    );
+    const pre = { name: 'email', ports: [8025] } as unknown as Parameters<
+      typeof PortsNS.checkSidecarPorts
+    >[0];
+    let said = '';
+    await ports.checkSidecarPorts(pre).catch((error: unknown) => (said = String(error)));
+    expect(said).toContain("already claimed by workspace 'bob-t1' (bob's)");
+    expect(said).toContain('only one workspace on this machine can use them');
+    expect(said).toContain('its owner frees them with houston down --name bob-t1 --volumes');
+    expect(said).not.toContain('delete it first');
+    let monitoring = '';
+    await ports.checkMonitorPorts().catch((error: unknown) => (monitoring = String(error)));
+    expect(monitoring).toContain(
+      "already used by workspace 'bob-t1' (bob's). Monitoring's ports are fixed",
+    );
+    expect(monitoring).toContain('its owner frees them with houston monitor --name bob-t1 --off');
   });
 });
 

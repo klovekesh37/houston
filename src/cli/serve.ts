@@ -559,6 +559,7 @@ function announce(
     readonly domain: string;
     readonly door: Edge | null;
     readonly loopback: boolean;
+    readonly localProxy: boolean;
     readonly setupKey: string;
     readonly trusted: readonly string[];
     readonly accounts: boolean;
@@ -566,11 +567,17 @@ function announce(
 ): void {
   const say = (line: string): void => io.writeOut(`${line}\n`);
   say(`houston GUI: ${values.url}`);
+  // localhost is the machine running serve, which is often not the reader's: say how in.
+  const local = values.loopback && values.domain === '' && !values.localProxy;
+  const port = local ? new URL(values.url).port : '';
+  const tunnel =
+    `From your computer: ssh -L ${port}:localhost:${port} <you>@<this server>, ` +
+    'then open the same URL.';
   if (values.door !== null) {
     if (values.door.wildcard) {
       say(
-        `  one *.${values.domain} certificate covers every workspace — no per-name ` +
-          'issuance, no weekly limit to hit.',
+        `  one *.${values.domain} certificate (a certificate, not a DNS record) covers every ` +
+          'workspace — no per-name issuance, no weekly limit to hit.',
       );
     } else {
       say(
@@ -579,8 +586,9 @@ function announce(
       );
     }
     say(
-      `  ${values.domain} must already resolve to this machine, or the certificate cannot ` +
-        'be issued.',
+      `  ${values.domain} and every <ticket>.${values.domain} must resolve to this server, or ` +
+        `no certificate can be issued: a DNS record for ${values.domain}, and one wildcard ` +
+        `record (*.${values.domain}) for every workspace.`,
     );
     say("  the first request may take a few seconds while Let's Encrypt issues it.");
     say(
@@ -596,12 +604,16 @@ function announce(
         ? 'https, arranged by houston'
         : values.trusted.length > 0
           ? `https when the proxy says so, trusted from ${values.trusted.join(', ')}`
-          : values.loopback
-            ? 'loopback, so nothing crosses a network'
-            : 'PLAIN HTTP on a reachable interface';
+          : values.localProxy
+            ? 'a proxy on this machine, NOT marked Secure (see the note above)'
+            : values.loopback
+              ? 'loopback, so nothing crosses a network'
+              : 'PLAIN HTTP on a reachable interface';
     say(`  auth: named accounts over ${how}`);
-    if (values.loopback && values.domain === '') {
-      say('  reachable from this machine only. To share it:');
+    if (local) {
+      say('  reachable only from a browser on the machine running houston.');
+      say(`  ${tunnel}`);
+      say('  To share it:');
       say('    houston serve --domain <name.example.com> --email you@example.com');
       say(
         '    …or, behind a lab/proxy already doing TLS: --bind 0.0.0.0 --allow-host ' +
@@ -636,6 +648,10 @@ function announce(
     }
   } else if (values.setupKey !== '') {
     say('  this link creates the first account. It is single-use and expires in 15 minutes.');
+    if (local) {
+      say('  it opens only in a browser on the machine running houston (localhost is that one).');
+      say(`  ${tunnel}`);
+    }
     say('  the part after # never reaches the server, so it cannot appear in a log.');
     say('  prefer a terminal? `houston users add <name>`, then start this again.');
   }
@@ -802,7 +818,7 @@ export async function serve(
   const parsedProxies = proxySet(options.trustProxy);
   if (!loopback && door === null) {
     say(
-      `  ⚠ binding ${bind} exposes docker control (create/delete repros + volumes) to ` +
+      `  ⚠ binding ${bind} exposes docker control (create/delete workspaces + volumes) to ` +
         'your network — use only if you mean to.',
     );
   }
@@ -810,11 +826,14 @@ export async function serve(
     say("  ⚠ --allow-host '*' accepts ANY Host header — only on a trusted/ephemeral network.");
   }
   for (const problem of parsedProxies.problems) say(`  ⚠ ${problem}`);
-  if (allowHost.length > 0 && loopback && domain === '') {
+  // A name allowed on a loopback bind is a proxy on this machine (nginx, cloudflared) that
+  // people reach from elsewhere: it needs trusting for the cookie to be Secure, not a wider bind.
+  const localProxy = allowHost.length > 0 && loopback && domain === '';
+  if (localProxy && parsedProxies.usable.length === 0) {
     say(
-      `  note: --allow-host ${allowHost[0] ?? ''} names who may reach this, but the bind is still\n` +
-        '        loopback, so nothing off this machine can. Add --bind 0.0.0.0 if you\n' +
-        '        meant to publish it.',
+      `  note: --allow-host ${allowHost[0] ?? ''} on a loopback bind is for a proxy on this\n` +
+        '        machine. If it terminates TLS, add --trust-proxy 127.0.0.1 so the session\n' +
+        '        cookie is marked Secure.',
     );
   }
   if (!loopback && door === null && allowHost.length === 0) {
@@ -879,6 +898,7 @@ export async function serve(
     domain,
     door,
     loopback,
+    localProxy,
     setupKey,
     trusted: trustedNames,
     accounts: hasAccounts,

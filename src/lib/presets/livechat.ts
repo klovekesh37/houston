@@ -155,12 +155,13 @@ function livechatSettings(registration: boolean): Record<string, string> {
 function livechatNotes(widgetUrl: string): string[] {
   return [
     `Customer website (widget embedded, cross-origin): ${widgetUrl}`,
-    'Built-in standalone widget (same-origin): <repro-url>/livechat',
+    'Built-in standalone widget (same-origin): <workspace-url>/livechat',
     "admin is an available Omnichannel agent, assigned to the 'support'",
     "  department. Visitors see 'agents online' once you're logged into RC",
     "  (that gives you presence); answer chats in RC's Omnichannel area.",
-    'Business hours & canned responses are Enterprise features — pass',
-    '  --reg-token to enable them, else configure manually.',
+    'Business hours & canned responses are Enterprise features — a registration',
+    '  token (--reg-token, or More options when creating) enables them, else',
+    '  configure them by hand.',
   ];
 }
 
@@ -233,12 +234,12 @@ export function build(params: Params): Preset {
         ],
         steps: [
           "Sign in to Rocket.Chat as admin: that gives presence, so visitors see 'agents online'.",
-          'Open the customer website, or the built-in widget at <repro-url>/livechat, and start a chat.',
+          'Open the customer website, or the built-in widget at <workspace-url>/livechat, and start a chat.',
           "Answer it in Rocket.Chat's Omnichannel area.",
         ],
         know: [
           agents > 1 ? `${String(agents)} agents are created and assigned to the department.` : '',
-          'Business hours and canned responses are Enterprise features: pass --reg-token to enable them, or configure them by hand.',
+          'Business hours and canned responses are Enterprise features: a registration token (--reg-token, or Registration token under More options when creating) enables them, or configure them by hand.',
         ],
       }),
     ],
